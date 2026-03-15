@@ -18,6 +18,11 @@ parquet = { version = "58.0", features = ["arrow"] }
 
 # anyhow gives beginner-friendly `?` error propagation in main()
 anyhow  = "1.0"
+memmap2 = "0.9"
+
+[features]
+default = []
+strict = []
 
 [dev-dependencies]
 anyhow = "1.0"

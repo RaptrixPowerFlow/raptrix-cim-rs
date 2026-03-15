@@ -18,4 +18,7 @@
 pub mod arrow_schema;
 pub mod models;
 pub mod parser;
+pub mod rpf_writer;
 pub mod test_utils;
+
+pub use rpf_writer::write_complete_rpf;

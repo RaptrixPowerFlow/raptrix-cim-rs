@@ -147,6 +147,50 @@ pub fn energy_consumers_from_reader<R: Read>(mut reader: R) -> Result<Vec<Energy
     Ok(loads)
 }
 
+/// Parsed terminal endpoint linkage used for EQ topology joins.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TerminalLink {
+    pub sequence_number: i32,
+    pub line_mrid: String,
+    pub connectivity_node_mrid: String,
+}
+
+/// Parses all `<cim:Terminal>` elements from CGMES RDF/XML and resolves
+/// references needed for topology joining.
+pub fn terminal_links_from_reader<R: Read>(mut reader: R) -> Result<Vec<TerminalLink>> {
+    let mut xml = String::new();
+    reader.read_to_string(&mut xml)?;
+    terminals_from_xml(&xml)
+}
+
+/// Parses a single EQ XML payload once and extracts both line and terminal
+/// components required for topology joins.
+pub fn eq_lines_and_terminals_from_reader<R: Read>(
+    mut reader: R,
+) -> Result<(Vec<ACLineSegment<'static>>, Vec<TerminalLink>)> {
+    let mut xml = String::new();
+    reader.read_to_string(&mut xml)?;
+
+    let line_fragments = if xml.contains("<cim:ACLineSegment") {
+        extract_elements(&xml, "cim:ACLineSegment")?
+    } else {
+        Vec::new()
+    };
+
+    let terminals = if xml.contains("<cim:Terminal") {
+        terminals_from_xml(&xml)?
+    } else {
+        Vec::new()
+    };
+
+    let mut lines = Vec::with_capacity(line_fragments.len());
+    for fragment in line_fragments {
+        lines.push(ac_line_segment_from_str(fragment)?.into_owned());
+    }
+
+    Ok((lines, terminals))
+}
+
 /// Builds branch rows from live CGMES EQ RDF/XML data.
 ///
 /// This function joins:
@@ -248,13 +292,6 @@ struct RawTerminal {
     connectivity_node: Option<RdfResourceRef>,
     #[serde(rename = "ACDCTerminal.sequenceNumber", default)]
     sequence_number: Option<i32>,
-}
-
-#[derive(Debug, Clone)]
-struct TerminalLink {
-    sequence_number: i32,
-    line_mrid: String,
-    connectivity_node_mrid: String,
 }
 
 fn terminals_from_xml(xml: &str) -> Result<Vec<TerminalLink>> {
