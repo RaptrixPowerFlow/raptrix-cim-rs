@@ -15,5 +15,6 @@
 //! [`models`] | CIM data-model types and base traits |
 //! [`parser`] | RDF/XML parsing helpers built on `quick-xml` |
 
+pub mod arrow_schema;
 pub mod models;
 pub mod parser;
