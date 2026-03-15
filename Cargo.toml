@@ -1,0 +1,16 @@
+[package]
+name = "raptrix-cim-rs"
+version = "0.1.0"
+edition = "2021"
+description = "High-performance IEC 61970 Common Information Model (CIM) parser in Rust"
+license = "MPL-2.0"
+repository = "https://github.com/MustoTechnologies/raptrix-cim-rs"
+keywords = ["cim", "iec61970", "power-systems", "xml", "parser"]
+categories = ["parsing", "science"]
+
+[dependencies]
+quick-xml = { version = "0.39.2", features = ["serialize"] }
+serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+serde = { version = "1.0", features = ["derive"] }
