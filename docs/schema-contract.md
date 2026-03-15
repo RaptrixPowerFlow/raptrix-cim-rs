@@ -1,4 +1,4 @@
-# Schema Contract
+# Schema Contract (Locked v0.5)
 
 ## Contract Policy
 
@@ -8,32 +8,102 @@
 
 ## File Metadata Keys
 
-Parquet files written by this project include:
+Every `.rpf` file must include:
 
-- raptrix.branding
-- raptrix.version
+- `raptrix.branding`
+- `raptrix.version`
 
-## Current Schema Version
+Current locked values:
 
-- v0.1.1
+- `raptrix.version = v0.5`
+- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.5 - High-performance open profile by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.`
 
-## Branch Table Contract
+## Canonical Schema Source
 
-Name | Arrow Type | Nullable | Source
---- | --- | --- | ---
-from | Int32 | false | mapped endpoint bus id
-to | Int32 | false | mapped endpoint bus id
-r | Float64 | false | ACLineSegment.r (default 0.0)
-x | Float64 | false | ACLineSegment.x (default 0.0)
-b_shunt | Float64 | false | ACLineSegment.bch (default 0.0)
-tap | Float64 | false | default 1.0 (until richer profile mapping)
-phase | Float64 | false | default 0.0 (until richer profile mapping)
-rate_a | Float64 | false | default 250.0 (placeholder)
-status | Boolean | false | default true (placeholder)
+The executable contract is defined in `src/arrow_schema.rs` and exported through:
 
-## Bus Table Contract
+- `all_table_schemas()` for canonical ordering
+- `table_schema(name)` for table lookup
 
-See src/arrow_schema.rs for the full bus schema used by powerflow_schema().
+## Locked Tables
+
+Required tables (empty tables allowed):
+
+- `metadata`
+- `buses`
+- `branches`
+- `generators`
+- `loads`
+- `fixed_shunts`
+- `switched_shunts`
+- `transformers_2w`
+- `transformers_3w`
+- `areas`
+- `zones`
+- `owners`
+- `contingencies`
+- `interfaces`
+- `dynamics_models`
+
+## Blocker Fixes Incorporated in v0.5
+
+### 1) Expanded transformer detail
+
+`transformers_2w` includes winding-level and vector fields:
+
+- `winding1_r`, `winding1_x`
+- `winding2_r`, `winding2_x`
+- `nominal_tap_ratio`
+- `vector_group` (dictionary string)
+
+`transformers_3w` includes:
+
+- per-leg impedance fields (`r_hm/x_hm`, `r_hl/x_hl`, `r_ml/x_ml`)
+- `star_bus_id` (nullable Int32, fictitious star bus when present)
+- `vector_group` (dictionary string)
+
+### 2) Dynamics model table formalized
+
+`dynamics_models` is locked with:
+
+- `bus_id` (Int32)
+- `gen_id` (dictionary string)
+- `model_type` (dictionary string)
+- `params` (Map<String, Float64>)
+
+Compatibility alias: `dynamics` is accepted by `table_schema(name)`.
+
+### 3) Contingency element payload tightened
+
+`contingencies.elements` is a list of struct with explicit fields:
+
+- `element_type` (dictionary string)
+- `branch_id` (nullable Int32)
+- `bus_id` (nullable Int32)
+- `gen_id` (nullable dictionary string)
+- `load_id` (nullable dictionary string)
+- `amount_mw` (nullable Float64)
+- `status_change` (Boolean)
+
+Allowed `element_type` values are locked to:
+
+- `branch_outage`
+- `gen_trip`
+- `load_shed`
+- `shunt_switch`
+
+### 4) Solved-result contingency scoping
+
+Export-only solved-result tables must include:
+
+- `contingency_id` (nullable dictionary string)
+
+Semantics:
+
+- `null` means base-case result.
+- non-null values key each row to a contingency case.
+
+The reusable schema helper is `solved_results_contingency_id_field()`.
 
 ## Compatibility Rules
 
@@ -44,7 +114,7 @@ See src/arrow_schema.rs for the full bus schema used by powerflow_schema().
 
 ## Change Checklist
 
-1. Update src/arrow_schema.rs.
+1. Update `src/arrow_schema.rs`.
 2. Update this file with version and column docs.
 3. Add or update test coverage for schema construction and writer outputs.
 4. Update README capability and known-limits sections.

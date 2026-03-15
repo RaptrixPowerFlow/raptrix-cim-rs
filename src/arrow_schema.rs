@@ -32,7 +32,12 @@ pub const TABLE_ZONES: &str = "zones";
 pub const TABLE_OWNERS: &str = "owners";
 pub const TABLE_CONTINGENCIES: &str = "contingencies";
 pub const TABLE_INTERFACES: &str = "interfaces";
+pub const TABLE_DYNAMICS_MODELS: &str = "dynamics_models";
+/// Backward-compatible alias for older callers.
 pub const TABLE_DYNAMICS: &str = "dynamics";
+
+/// Optional column required on export-side solved-result tables.
+pub const COLUMN_CONTINGENCY_ID: &str = "contingency_id";
 
 fn dict_utf8() -> DataType {
     DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8))
@@ -69,18 +74,27 @@ fn map_string_f64() -> DataType {
 }
 
 fn contingencies_elements_type() -> DataType {
+    // Allowed element_type values are explicitly constrained by contract docs:
+    // branch_outage, gen_trip, load_shed, shunt_switch.
     DataType::List(Arc::new(Field::new(
         "element",
         DataType::Struct(vec![
             Field::new("element_type", dict_utf8(), false),
             Field::new("branch_id", DataType::Int32, true),
             Field::new("bus_id", DataType::Int32, true),
-            Field::new("id", dict_utf8(), true),
+            Field::new("gen_id", dict_utf8(), true),
+            Field::new("load_id", dict_utf8(), true),
+            Field::new("amount_mw", DataType::Float64, true),
             Field::new("status_change", DataType::Boolean, false),
         ]
         .into()),
         false,
     )))
+}
+
+/// Standard nullable contingency id field for solved/export result tables.
+pub fn solved_results_contingency_id_field() -> Field {
+    Field::new(COLUMN_CONTINGENCY_ID, dict_utf8(), true)
 }
 
 /// File-level metadata applied to each table schema.
@@ -234,10 +248,16 @@ pub fn transformers_2w_schema() -> Schema {
             Field::new("ckt", dict_utf8(), false),
             Field::new("r", DataType::Float64, false),
             Field::new("x", DataType::Float64, false),
+            Field::new("winding1_r", DataType::Float64, false),
+            Field::new("winding1_x", DataType::Float64, false),
+            Field::new("winding2_r", DataType::Float64, false),
+            Field::new("winding2_x", DataType::Float64, false),
             Field::new("g", DataType::Float64, false),
             Field::new("b", DataType::Float64, false),
             Field::new("tap_ratio", DataType::Float64, false),
+            Field::new("nominal_tap_ratio", DataType::Float64, false),
             Field::new("phase_shift", DataType::Float64, false),
+            Field::new("vector_group", dict_utf8(), false),
             Field::new("rate_a", DataType::Float64, false),
             Field::new("rate_b", DataType::Float64, false),
             Field::new("rate_c", DataType::Float64, false),
@@ -254,6 +274,7 @@ pub fn transformers_3w_schema() -> Schema {
             Field::new("bus_h_id", DataType::Int32, false),
             Field::new("bus_m_id", DataType::Int32, false),
             Field::new("bus_l_id", DataType::Int32, false),
+            Field::new("star_bus_id", DataType::Int32, true),
             Field::new("ckt", dict_utf8(), false),
             Field::new("r_hm", DataType::Float64, false),
             Field::new("x_hm", DataType::Float64, false),
@@ -265,6 +286,7 @@ pub fn transformers_3w_schema() -> Schema {
             Field::new("tap_m", DataType::Float64, false),
             Field::new("tap_l", DataType::Float64, false),
             Field::new("phase_shift", DataType::Float64, false),
+            Field::new("vector_group", dict_utf8(), false),
             Field::new("rate_a", DataType::Float64, false),
             Field::new("rate_b", DataType::Float64, false),
             Field::new("rate_c", DataType::Float64, false),
@@ -336,8 +358,8 @@ pub fn interfaces_schema() -> Schema {
     )
 }
 
-/// v0.5 `dynamics` table schema.
-pub fn dynamics_schema() -> Schema {
+/// v0.5 `dynamics_models` table schema.
+pub fn dynamics_models_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
             Field::new("bus_id", DataType::Int32, false),
@@ -366,7 +388,7 @@ pub fn all_table_schemas() -> Vec<(&'static str, Schema)> {
         (TABLE_OWNERS, owners_schema()),
         (TABLE_CONTINGENCIES, contingencies_schema()),
         (TABLE_INTERFACES, interfaces_schema()),
-        (TABLE_DYNAMICS, dynamics_schema()),
+        (TABLE_DYNAMICS_MODELS, dynamics_models_schema()),
     ]
 }
 
@@ -387,9 +409,15 @@ pub fn table_schema(table_name: &str) -> Option<Schema> {
         TABLE_OWNERS => Some(owners_schema()),
         TABLE_CONTINGENCIES => Some(contingencies_schema()),
         TABLE_INTERFACES => Some(interfaces_schema()),
-        TABLE_DYNAMICS => Some(dynamics_schema()),
+        TABLE_DYNAMICS_MODELS => Some(dynamics_models_schema()),
+        TABLE_DYNAMICS => Some(dynamics_models_schema()),
         _ => None,
     }
+}
+
+/// Backward-compatible alias retained for older call sites.
+pub fn dynamics_schema() -> Schema {
+    dynamics_models_schema()
 }
 
 /// Backward-compatible alias retained for older call sites.
