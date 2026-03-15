@@ -18,3 +18,4 @@
 pub mod arrow_schema;
 pub mod models;
 pub mod parser;
+pub mod test_utils;

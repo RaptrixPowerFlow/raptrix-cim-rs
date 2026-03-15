@@ -1,2 +1,14 @@
-/target
+/target/
+/debug/
 Cargo.lock
+*.rs.bk
+
+# Generated Parquet outputs stay out of source control by default.
+*.parquet
+!tests/data/fixtures/*.parquet
+
+# Large or machine-local model datasets are kept outside the repo.
+/data/
+/tests/data/large/
+/tests/data/external/*
+!/tests/data/external/.gitkeep

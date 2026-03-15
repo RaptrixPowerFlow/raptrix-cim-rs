@@ -41,6 +41,9 @@
 //! [`BaseAttributes`]: crate::models::BaseAttributes
 //! [`Cow::Borrowed`]: std::borrow::Cow::Borrowed
 
+use std::io::Read;
+
+use anyhow::{bail, Result};
 use quick_xml::de::from_str;
 use serde::de::DeserializeOwned;
 
@@ -91,6 +94,62 @@ pub fn ac_line_segment_from_str(xml: &str) -> Result<ACLineSegment<'_>, ParseErr
 /// [`Cow::Borrowed`]: std::borrow::Cow::Borrowed
 pub fn energy_consumer_from_str(xml: &str) -> Result<EnergyConsumer<'_>, ParseError> {
     from_str(xml)
+}
+
+/// Parses all `<cim:ACLineSegment>` elements from a CGMES RDF/XML reader.
+///
+/// This helper is intentionally small and practical for integration tests:
+/// it reads the file into memory, extracts each `cim:ACLineSegment` XML
+/// fragment, then reuses [`ac_line_segment_from_str`] so the existing typed
+/// deserializer still does the actual CIM field parsing.
+pub fn ac_line_segments_from_reader<R: Read>(mut reader: R) -> Result<Vec<ACLineSegment<'static>>> {
+    let mut xml = String::new();
+    reader.read_to_string(&mut xml)?;
+
+    let fragments = extract_elements(&xml, "cim:ACLineSegment")?;
+    let mut lines = Vec::with_capacity(fragments.len());
+
+    for fragment in fragments {
+        lines.push(ac_line_segment_from_str(fragment)?.into_owned());
+    }
+
+    Ok(lines)
+}
+
+fn extract_elements<'a>(xml: &'a str, tag_name: &str) -> Result<Vec<&'a str>> {
+    let opening = format!("<{tag_name}");
+    let closing = format!("</{tag_name}>");
+    let mut fragments = Vec::new();
+    let mut cursor = 0;
+
+    while let Some(relative_start) = xml[cursor..].find(&opening) {
+        let start = cursor + relative_start;
+        let start_tag_end = xml[start..]
+            .find('>')
+            .map(|offset| start + offset)
+            .ok_or_else(|| anyhow::anyhow!("unterminated start tag for {tag_name}"))?;
+
+        let start_tag = &xml[start..=start_tag_end];
+        if start_tag.trim_end().ends_with("/>") {
+            fragments.push(&xml[start..=start_tag_end]);
+            cursor = start_tag_end + 1;
+            continue;
+        }
+
+        let body_start = start_tag_end + 1;
+        let relative_end = xml[body_start..]
+            .find(&closing)
+            .ok_or_else(|| anyhow::anyhow!("missing closing tag for {tag_name}"))?;
+        let end = body_start + relative_end + closing.len();
+        fragments.push(&xml[start..end]);
+        cursor = end;
+    }
+
+    if fragments.is_empty() {
+        bail!("no {tag_name} elements found in XML document");
+    }
+
+    Ok(fragments)
 }
 
 // ---------------------------------------------------------------------------
