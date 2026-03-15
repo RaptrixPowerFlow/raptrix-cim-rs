@@ -13,7 +13,7 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, Schema};
 
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.5 — High-performance open profile by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow — High-performance open CIM profile by Musto Technologies LLC\nCopyright (c) 2026 Musto Technologies LLC";
 
 /// Schema version tag embedded as file-level metadata.
 pub const SCHEMA_VERSION: &str = "v0.5";

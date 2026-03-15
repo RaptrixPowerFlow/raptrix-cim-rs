@@ -3,6 +3,10 @@ High-performance Rust implementation of the IEC 61970 Common Information Model (
 
 This project is MPL-2.0 licensed and branded for Musto Technologies LLC.
 
+Raptrix CIM-Arrow — High-performance open CIM profile by Musto Technologies LLC
+
+Copyright (c) 2026 Musto Technologies LLC
+
 ## Current Capabilities
 
 ### Input capabilities
@@ -88,9 +92,37 @@ Use these as baseline indicators, not final production benchmarks.
 - src/models: CIM data structures and traits
 - src/parser.rs: parse helpers and EQ-to-branch mapping
 - src/arrow_schema.rs: v0.5 table schemas, metadata constants, and schema registry helpers
-- src/main.rs: minimal end-to-end Parquet writer demo
+- src/main.rs: production CLI for CGMES-to-RPF conversion
 - src/test_utils.rs: test-only path helper for external CGMES data
 - tests/integration_parse.rs: ignored live-data integration test
+
+## CLI Usage
+
+Build the production CLI in release mode:
+
+- `cargo build --release`
+
+Explicit profile mode:
+
+- `cargo run --release -- convert --eq path/to/case_EQ.xml --tp path/to/case_TP.xml --sv path/to/case_SV.xml --ssh path/to/case_SSH.xml --dy path/to/case_DY.xml --output case.rpf`
+
+Auto-detect mode:
+
+- `cargo run --release -- convert --input-dir cgmes_case/ --output case.rpf`
+
+The CLI requires `--output` to end with `.rpf`. In auto-detect mode it scans the provided directory for filenames containing `EQ`, `TP`, `SV`, `SSH`, and `DY` case-insensitively, and `EQ` must be present.
+
+## Library Usage
+
+Use the public writer directly from Rust:
+
+```rust
+use raptrix_cim_rs::write_complete_rpf;
+
+fn convert(eq_path: &str, output_path: &str) -> anyhow::Result<()> {
+	write_complete_rpf(&[eq_path], output_path)
+}
+```
 
 ## Running in VS Code (Beginner-Friendly)
 
@@ -109,9 +141,9 @@ Run live SmallGrid integration test (PowerShell):
 1. $env:RAPTRIX_TEST_DATA_ROOT = "C:\tmp\CGMES_ConformityAssessmentScheme_TestConfigurations_v3-0-3\v3.0"
 2. cargo test parse_smallgrid_eq_aclinesegment -- --ignored --nocapture
 
-Run demo writer:
+Run CLI in auto-detect mode:
 
-- cargo run
+- cargo run --release -- convert --input-dir cgmes_case/ --output case.rpf
 
 ## External CGMES Setup
 
@@ -181,3 +213,9 @@ For world-class maintainability, add these next:
 
 When these templates are used consistently, feature requests can be translated
 to implementation tasks with much less ambiguity.
+
+## Branding
+
+Raptrix CIM-Arrow — High-performance open CIM profile by Musto Technologies LLC
+
+Copyright (c) 2026 Musto Technologies LLC
