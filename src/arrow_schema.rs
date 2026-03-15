@@ -15,7 +15,7 @@ pub const BRANDING: &str =
     "Raptrix CIM-Arrow — High-performance open CIM profile by Musto Technologies LLC";
 
 /// Schema version tag embedded as Parquet file-level metadata.
-pub const SCHEMA_VERSION: &str = "v0.1";
+pub const SCHEMA_VERSION: &str = "v0.1.1";
 
 /// Returns the Arrow [`Schema`] for the **buses** table of a power-flow problem.
 ///

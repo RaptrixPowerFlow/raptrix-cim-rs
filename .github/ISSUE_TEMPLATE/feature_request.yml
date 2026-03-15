@@ -1,0 +1,77 @@
+name: Feature request
+description: Request new parser, mapping, schema, or solver-facing capability.
+title: "feat: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template to define a solver requirement clearly enough for implementation.
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Solver use-case
+      description: What solver workflow needs this feature?
+      placeholder: Newton-Raphson initialization, contingency analysis, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: inputs
+    attributes:
+      label: Required inputs
+      description: Profiles, classes, fields, and cardinality assumptions.
+      placeholder: EQ + TP, ACLineSegment + Terminal + TopologicalNode, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: outputs
+    attributes:
+      label: Required outputs
+      description: Table names, columns, data types, nullability, and units.
+      placeholder: branch.rate_a Float64 non-null MVA
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation rules
+      description: Rules that must hold true for solver correctness.
+      placeholder: Every in-service branch must map to exactly two endpoints.
+    validations:
+      required: true
+  - type: textarea
+    id: performance
+    attributes:
+      label: Performance target
+      description: Throughput, memory, and dataset size expectations.
+      placeholder: Process 100k branches in under 2 seconds on reference hardware.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance tests
+      description: Required datasets and expected measurable outcomes.
+      placeholder: SmallGrid and MiniGrid row counts, required invariants, expected metadata.
+    validations:
+      required: true
+  - type: dropdown
+    id: breaking
+    attributes:
+      label: Does this change schema compatibility?
+      options:
+        - No
+        - Yes
+        - Not sure
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I reviewed docs/schema-contract.md for compatibility expectations.
+          required: true
+        - label: I reviewed existing issues/discussions for overlap.
+          required: true

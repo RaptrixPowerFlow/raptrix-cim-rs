@@ -27,25 +27,37 @@ fn parse_smallgrid_eq_aclinesegment() -> Result<()> {
     let lines = parser::ac_line_segments_from_reader(BufReader::new(file))
         .with_context(|| format!("failed to parse ACLineSegment elements from {}", path.display()))?;
 
+    let file = File::open(&path)
+        .with_context(|| format!("failed to reopen external CGMES file at {}", path.display()))?;
+    let branch_rows = parser::branch_rows_from_eq_reader(BufReader::new(file))
+        .with_context(|| {
+            format!(
+                "failed to map ACLineSegment + Terminal endpoint data from {}",
+                path.display()
+            )
+        })?;
+
     println!("Parsed {} ACLineSegment elements from {}", lines.len(), path.display());
     if let Some(first) = lines.first() {
         println!("First ACLineSegment: mRID={} r={:?} x={:?}", first.mrid(), first.r, first.x);
     }
 
     assert!(!lines.is_empty(), "expected at least one ACLineSegment in SmallGrid EQ");
+    assert!(
+        !branch_rows.is_empty(),
+        "expected at least one ACLineSegment with terminal endpoint data"
+    );
 
-    // Convert the parsed CGMES lines into the branch table expected by the
-    // Arrow schema. For now we synthesize from/to bus identifiers from the
-    // row index so the live dataset can flow through the full writer path.
-    let from_bus: Vec<i32> = (0..lines.len()).map(|index| 1001 + index as i32).collect();
-    let to_bus: Vec<i32> = (0..lines.len()).map(|index| 2001 + index as i32).collect();
-    let r: Vec<f64> = lines.iter().map(|line| line.r.unwrap_or(0.0)).collect();
-    let x: Vec<f64> = lines.iter().map(|line| line.x.unwrap_or(0.0)).collect();
-    let b_shunt: Vec<f64> = lines.iter().map(|line| line.bch.unwrap_or(0.0)).collect();
-    let tap: Vec<f64> = vec![1.0; lines.len()];
-    let phase: Vec<f64> = vec![0.0; lines.len()];
-    let rate_a: Vec<f64> = vec![250.0; lines.len()];
-    let status: Vec<bool> = vec![true; lines.len()];
+    // Convert mapped branch rows into the Arrow branch schema columns.
+    let from_bus: Vec<i32> = branch_rows.iter().map(|row| row.from_bus_id).collect();
+    let to_bus: Vec<i32> = branch_rows.iter().map(|row| row.to_bus_id).collect();
+    let r: Vec<f64> = branch_rows.iter().map(|row| row.r).collect();
+    let x: Vec<f64> = branch_rows.iter().map(|row| row.x).collect();
+    let b_shunt: Vec<f64> = branch_rows.iter().map(|row| row.b_shunt).collect();
+    let tap: Vec<f64> = vec![1.0; branch_rows.len()];
+    let phase: Vec<f64> = vec![0.0; branch_rows.len()];
+    let rate_a: Vec<f64> = vec![250.0; branch_rows.len()];
+    let status: Vec<bool> = vec![true; branch_rows.len()];
 
     let columns: Vec<ArrayRef> = vec![
         Arc::new(Int32Array::from(from_bus)) as ArrayRef,
@@ -83,7 +95,10 @@ fn parse_smallgrid_eq_aclinesegment() -> Result<()> {
     writer.write(&batch)?;
     writer.close()?;
 
-    println!("✅ Wrote {} branches to smallgrid_branches.parquet", lines.len());
+    println!(
+        "✅ Wrote {} branches to smallgrid_branches.parquet",
+        branch_rows.len()
+    );
     println!(
         "   File size: {} bytes",
         std::fs::metadata(output_path)?.len()

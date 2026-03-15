@@ -1,0 +1,61 @@
+name: Bug report
+description: Report a defect in parsing, mapping, schema, or Parquet output.
+title: "bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a bug. Please provide enough detail to reproduce the issue.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What is wrong and what did you expect?
+      placeholder: A concise description of the bug and expected behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: List exact commands and inputs.
+      placeholder: |
+        1. Set RAPTRIX_TEST_DATA_ROOT to ...
+        2. Run cargo test ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: dataset
+    attributes:
+      label: Dataset and profile context
+      description: Which CGMES dataset/profile caused the bug?
+      placeholder: SmallGrid EQ, MiniGrid TP, custom, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Actual output
+      description: Paste key logs, row counts, or error messages.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Rust version, OS, and relevant dependency versions.
+      placeholder: rustc --version, cargo --version, Windows/Linux/macOS
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
+        - label: I can provide a minimal reproduction if needed.
+          required: false
