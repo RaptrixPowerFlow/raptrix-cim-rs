@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF
+  xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+  xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#">
+  <cim:ConnectivityNode rdf:ID="CN_1">
+    <cim:IdentifiedObject.name>Node 1</cim:IdentifiedObject.name>
+  </cim:ConnectivityNode>
+
+  <cim:ACLineSegment rdf:ID="Line_1">
+    <cim:IdentifiedObject.name>Demo Line</cim:IdentifiedObject.name>
+    <cim:ACLineSegment.r>0.01</cim:ACLineSegment.r>
+    <cim:ACLineSegment.x>0.08</cim:ACLineSegment.x>
+    <cim:ACLineSegment.bch>0.0002</cim:ACLineSegment.bch>
+  </cim:ACLineSegment>
+
+  <cim:EnergyConsumer rdf:ID="Load_1">
+    <cim:IdentifiedObject.name>Demo Load</cim:IdentifiedObject.name>
+    <cim:EnergyConsumer.p>12.5</cim:EnergyConsumer.p>
+    <cim:EnergyConsumer.q>3.2</cim:EnergyConsumer.q>
+  </cim:EnergyConsumer>
+</rdf:RDF>
