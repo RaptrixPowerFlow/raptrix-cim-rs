@@ -41,11 +41,13 @@
 //! [`BaseAttributes`]: crate::models::BaseAttributes
 //! [`Cow::Borrowed`]: std::borrow::Cow::Borrowed
 
+use std::collections::{BTreeMap, HashMap};
 use std::io::Read;
 
 use anyhow::{bail, Result};
 use quick_xml::de::from_str;
 use serde::de::DeserializeOwned;
+use serde::Deserialize;
 
 use crate::models::{ACLineSegment, EnergyConsumer};
 
@@ -116,6 +118,175 @@ pub fn ac_line_segments_from_reader<R: Read>(mut reader: R) -> Result<Vec<ACLine
     Ok(lines)
 }
 
+/// Parsed branch row derived from live CGMES EQ content.
+///
+/// The `from_bus_id` and `to_bus_id` values are deterministic integer IDs
+/// assigned to unique `ConnectivityNode` references found in terminal data.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BranchRow {
+    pub line_mrid: String,
+    pub from_bus_id: i32,
+    pub to_bus_id: i32,
+    pub r: f64,
+    pub x: f64,
+    pub b_shunt: f64,
+}
+
+/// Parses all `<cim:EnergyConsumer>` elements from a CGMES RDF/XML reader.
+pub fn energy_consumers_from_reader<R: Read>(mut reader: R) -> Result<Vec<EnergyConsumer<'static>>> {
+    let mut xml = String::new();
+    reader.read_to_string(&mut xml)?;
+
+    let fragments = extract_elements(&xml, "cim:EnergyConsumer")?;
+    let mut loads = Vec::with_capacity(fragments.len());
+
+    for fragment in fragments {
+        loads.push(energy_consumer_from_str(fragment)?.into_owned());
+    }
+
+    Ok(loads)
+}
+
+/// Builds branch rows from live CGMES EQ RDF/XML data.
+///
+/// This function joins:
+/// - `ACLineSegment` electrical parameters (`r`, `x`, `bch`)
+/// - `Terminal` references (`Terminal.ConductingEquipment`)
+/// - `Terminal.ConnectivityNode` references
+///
+/// into rows that can be written directly with [`crate::arrow_schema::branch_schema`].
+pub fn branch_rows_from_eq_reader<R: Read>(mut reader: R) -> Result<Vec<BranchRow>> {
+    let mut xml = String::new();
+    reader.read_to_string(&mut xml)?;
+
+    let line_fragments = extract_elements(&xml, "cim:ACLineSegment")?;
+    let mut lines = Vec::with_capacity(line_fragments.len());
+    for fragment in line_fragments {
+        lines.push(ac_line_segment_from_str(fragment)?.into_owned());
+    }
+
+    let terminals = terminals_from_xml(&xml)?;
+    let mut terminals_by_line: HashMap<String, Vec<TerminalLink>> = HashMap::new();
+    for terminal in terminals {
+        terminals_by_line
+            .entry(terminal.line_mrid.clone())
+            .or_default()
+            .push(terminal);
+    }
+
+    let mut node_to_bus_id: BTreeMap<String, i32> = BTreeMap::new();
+    let mut next_bus_id = 1_i32;
+    for links in terminals_by_line.values() {
+        for link in links {
+            if !node_to_bus_id.contains_key(&link.connectivity_node_mrid) {
+                node_to_bus_id.insert(link.connectivity_node_mrid.clone(), next_bus_id);
+                next_bus_id += 1;
+            }
+        }
+    }
+
+    let mut rows = Vec::new();
+    for line in lines {
+        let line_id = line.base.m_rid.to_string();
+        let Some(links) = terminals_by_line.get(&line_id) else {
+            continue;
+        };
+
+        let mut unique_endpoints: Vec<&TerminalLink> = Vec::new();
+        for link in links {
+            if unique_endpoints
+                .iter()
+                .all(|existing| existing.connectivity_node_mrid != link.connectivity_node_mrid)
+            {
+                unique_endpoints.push(link);
+            }
+        }
+
+        unique_endpoints.sort_by_key(|link| (link.sequence_number, &link.connectivity_node_mrid));
+        if unique_endpoints.len() < 2 {
+            continue;
+        }
+
+        let from_node = &unique_endpoints[0].connectivity_node_mrid;
+        let to_node = &unique_endpoints[1].connectivity_node_mrid;
+
+        let Some(from_bus_id) = node_to_bus_id.get(from_node).copied() else {
+            continue;
+        };
+        let Some(to_bus_id) = node_to_bus_id.get(to_node).copied() else {
+            continue;
+        };
+
+        rows.push(BranchRow {
+            line_mrid: line_id,
+            from_bus_id,
+            to_bus_id,
+            r: line.r.unwrap_or(0.0),
+            x: line.x.unwrap_or(0.0),
+            b_shunt: line.bch.unwrap_or(0.0),
+        });
+    }
+
+    if rows.is_empty() {
+        bail!("no branch rows could be built from ACLineSegment/Terminal data");
+    }
+
+    Ok(rows)
+}
+
+#[derive(Debug, Deserialize)]
+struct RdfResourceRef {
+    #[serde(rename = "@resource")]
+    resource: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawTerminal {
+    #[serde(rename = "Terminal.ConductingEquipment", default)]
+    conducting_equipment: Option<RdfResourceRef>,
+    #[serde(rename = "Terminal.ConnectivityNode", default)]
+    connectivity_node: Option<RdfResourceRef>,
+    #[serde(rename = "ACDCTerminal.sequenceNumber", default)]
+    sequence_number: Option<i32>,
+}
+
+#[derive(Debug, Clone)]
+struct TerminalLink {
+    sequence_number: i32,
+    line_mrid: String,
+    connectivity_node_mrid: String,
+}
+
+fn terminals_from_xml(xml: &str) -> Result<Vec<TerminalLink>> {
+    let terminal_fragments = extract_elements(xml, "cim:Terminal")?;
+    let mut links = Vec::new();
+
+    for fragment in terminal_fragments {
+        let terminal: RawTerminal = from_str(fragment)?;
+        let (Some(line_ref), Some(node_ref)) =
+            (terminal.conducting_equipment, terminal.connectivity_node)
+        else {
+            continue;
+        };
+
+        links.push(TerminalLink {
+            sequence_number: terminal.sequence_number.unwrap_or(i32::MAX),
+            line_mrid: normalize_cgmes_ref(&line_ref.resource),
+            connectivity_node_mrid: normalize_cgmes_ref(&node_ref.resource),
+        });
+    }
+
+    Ok(links)
+}
+
+fn normalize_cgmes_ref(value: &str) -> String {
+    let trimmed = value.trim();
+    if let Some(index) = trimmed.rfind('#') {
+        return trimmed[index + 1..].to_string();
+    }
+    trimmed.trim_start_matches('#').to_string()
+}
+
 fn extract_elements<'a>(xml: &'a str, tag_name: &str) -> Result<Vec<&'a str>> {
     let opening = format!("<{tag_name}");
     let closing = format!("</{tag_name}>");
@@ -160,6 +331,7 @@ fn extract_elements<'a>(xml: &'a str, tag_name: &str) -> Result<Vec<&'a str>> {
 mod tests {
     use super::*;
     use crate::models::base::IdentifiedObject;
+    use std::time::Instant;
 
     #[test]
     fn parse_ac_line_segment_full() {
@@ -245,5 +417,49 @@ mod tests {
         assert_eq!(line.mrid(), "gen-001");
         assert_eq!(line.base.m_rid, "gen-001");
         assert_eq!(line.r, Some(0.1));
+    }
+
+    #[test]
+    fn benchmark_fragment_parse_speed() {
+        let line_xml = r#"<cim:ACLineSegment rdf:ID="BenchLine">
+  <IdentifiedObject.name>Bench Line</IdentifiedObject.name>
+  <ACLineSegment.r>0.01</ACLineSegment.r>
+  <ACLineSegment.x>0.08</ACLineSegment.x>
+  <ACLineSegment.bch>0.0002</ACLineSegment.bch>
+</cim:ACLineSegment>"#;
+        let load_xml = r#"<cim:EnergyConsumer rdf:ID="BenchLoad">
+  <IdentifiedObject.name>Bench Load</IdentifiedObject.name>
+  <EnergyConsumer.p>12.5</EnergyConsumer.p>
+  <EnergyConsumer.q>3.2</EnergyConsumer.q>
+</cim:EnergyConsumer>"#;
+
+        let iterations: u32 = 50_000;
+
+        let line_start = Instant::now();
+        for _ in 0..iterations {
+            let parsed = ac_line_segment_from_str(line_xml).expect("line parse should succeed");
+            assert_eq!(parsed.base.m_rid, "BenchLine");
+        }
+        let line_elapsed = line_start.elapsed();
+
+        let load_start = Instant::now();
+        for _ in 0..iterations {
+            let parsed = energy_consumer_from_str(load_xml).expect("load parse should succeed");
+            assert_eq!(parsed.base.m_rid, "BenchLoad");
+        }
+        let load_elapsed = load_start.elapsed();
+
+        println!(
+            "ACLineSegment: {} parses in {:.3?} ({:.0} parses/s)",
+            iterations,
+            line_elapsed,
+            iterations as f64 / line_elapsed.as_secs_f64()
+        );
+        println!(
+            "EnergyConsumer: {} parses in {:.3?} ({:.0} parses/s)",
+            iterations,
+            load_elapsed,
+            iterations as f64 / load_elapsed.as_secs_f64()
+        );
     }
 }
