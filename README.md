@@ -20,10 +20,23 @@ This project is MPL-2.0 licensed and branded for Musto Technologies LLC.
 
 ### Output capabilities
 
-- Build Arrow schema objects for:
-	- bus table (powerflow_schema)
-	- branch table (branch_schema)
-- Build Arrow RecordBatch objects for bus and branch data.
+- Build Arrow schema objects for the locked Raptrix PowerFlow Interchange v0.5 contract:
+	- metadata
+	- buses
+	- branches
+	- generators
+	- loads
+	- fixed_shunts
+	- switched_shunts
+	- transformers_2w
+	- transformers_3w
+	- areas
+	- zones
+	- owners
+	- contingencies
+	- interfaces
+	- dynamics_models
+- Build Arrow RecordBatch objects for demo bus and branch data.
 - Write Parquet via ArrowWriter with custom metadata:
 	- raptrix.branding
 	- raptrix.version
@@ -31,27 +44,20 @@ This project is MPL-2.0 licensed and branded for Musto Technologies LLC.
 	- example_powerflow.parquet (dummy data from main)
 	- smallgrid_branches.parquet (live CGMES integration test)
 
-## Data Contract (Current)
+## Data Contract (Locked)
 
-### Branch table columns
+- Current schema contract: v0.5
+- Canonical source: src/arrow_schema.rs
+- Contract policy and semantics: docs/schema-contract.md
 
-The branch output uses this fixed column contract:
+Key lock points now documented and enforced:
 
-- from: Int32
-- to: Int32
-- r: Float64
-- x: Float64
-- b_shunt: Float64
-- tap: Float64
-- phase: Float64
-- rate_a: Float64
-- status: Boolean
-
-For live SmallGrid integration testing today:
-
-- from and to are deterministic bus IDs derived from unique ConnectivityNode references.
-- r, x, b_shunt come from ACLineSegment values (default 0.0 when missing).
-- tap, phase, rate_a, status are currently filled with default constants.
+- deterministic table list and ordering via all_table_schemas()
+- strict table lookup via table_schema(name)
+- expanded transformer detail (2w and 3w)
+- explicit dynamics_models table
+- tightened contingencies element payload
+- solved-results contingency scoping field (contingency_id)
 
 ## How It Works
 
@@ -63,6 +69,8 @@ High-level pipeline:
 4. Join line elements with terminal endpoint references.
 5. Build Arrow arrays and RecordBatch.
 6. Write Parquet with Raptrix metadata.
+
+Note: `.rpf` Arrow IPC container support is the locked target profile; current demo writer still emits Parquet while ingestion and mapping layers evolve.
 
 Current implementation priority is a clean and testable path to Arrow/Parquet output, while keeping APIs simple for incremental model coverage.
 
@@ -79,7 +87,7 @@ Use these as baseline indicators, not final production benchmarks.
 
 - src/models: CIM data structures and traits
 - src/parser.rs: parse helpers and EQ-to-branch mapping
-- src/arrow_schema.rs: Arrow schema definitions and branding constants
+- src/arrow_schema.rs: v0.5 table schemas, metadata constants, and schema registry helpers
 - src/main.rs: minimal end-to-end Parquet writer demo
 - src/test_utils.rs: test-only path helper for external CGMES data
 - tests/integration_parse.rs: ignored live-data integration test
@@ -129,9 +137,10 @@ Large model archives should stay outside the repository.
 
 ## Known Limits (Current Scope)
 
-- Focus is currently EQ profile extraction for key equipment, not full multi-profile CGMES graph reconstruction.
+- Parsing focus is currently EQ profile extraction for key equipment, not full multi-profile CGMES graph reconstruction.
 - Branch endpoint mapping currently relies on Terminal and ConnectivityNode references present in EQ.
-- Some solver fields are default-filled until richer profile joins (TP/SV/SSH) are added.
+- Demo writer currently exercises buses/branches only; other locked v0.5 tables are schema-defined and ready for row-mapping implementation.
+- Some solver fields are default-filled in integration mapping until richer profile joins (TP/SV/SSH) are added.
 
 ## How To Request New Solver Features
 
