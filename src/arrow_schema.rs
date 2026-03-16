@@ -33,6 +33,8 @@ pub const TABLE_OWNERS: &str = "owners";
 pub const TABLE_CONTINGENCIES: &str = "contingencies";
 pub const TABLE_INTERFACES: &str = "interfaces";
 pub const TABLE_DYNAMICS_MODELS: &str = "dynamics_models";
+/// Optional detail table emitted only when connectivity-detail mode is enabled.
+pub const TABLE_CONNECTIVITY_GROUPS: &str = "connectivity_groups";
 /// Backward-compatible alias for older callers.
 pub const TABLE_DYNAMICS: &str = "dynamics";
 
@@ -371,6 +373,26 @@ pub fn dynamics_models_schema() -> Schema {
     )
 }
 
+/// Optional `connectivity_groups` table schema.
+///
+/// This table preserves TP split-bus membership while core `buses` may be
+/// collapsed to TopologicalNode level for interoperability.
+pub fn connectivity_groups_schema() -> Schema {
+    Schema::new_with_metadata(
+        vec![
+            Field::new("topological_bus_id", DataType::Int32, false),
+            Field::new("topological_node_mrid", dict_utf8(), false),
+            Field::new(
+                "connectivity_node_mrids",
+                DataType::List(Arc::new(Field::new("item", DataType::Utf8, false))),
+                false,
+            ),
+            Field::new("connectivity_count", DataType::Int32, false),
+        ],
+        schema_metadata(),
+    )
+}
+
 /// Returns all required table schemas in canonical v0.5 order.
 pub fn all_table_schemas() -> Vec<(&'static str, Schema)> {
     vec![
@@ -410,6 +432,7 @@ pub fn table_schema(table_name: &str) -> Option<Schema> {
         TABLE_CONTINGENCIES => Some(contingencies_schema()),
         TABLE_INTERFACES => Some(interfaces_schema()),
         TABLE_DYNAMICS_MODELS => Some(dynamics_models_schema()),
+        TABLE_CONNECTIVITY_GROUPS => Some(connectivity_groups_schema()),
         TABLE_DYNAMICS => Some(dynamics_models_schema()),
         _ => None,
     }

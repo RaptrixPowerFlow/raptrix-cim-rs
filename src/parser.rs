@@ -41,6 +41,7 @@
 //! [`BaseAttributes`]: crate::models::BaseAttributes
 //! [`Cow::Borrowed`]: std::borrow::Cow::Borrowed
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::io::Read;
 
@@ -49,7 +50,9 @@ use quick_xml::de::from_str;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 
-use crate::models::{ACLineSegment, EnergyConsumer};
+use crate::models::{
+    ACLineSegment, ConnectivityNodeGroup, EnergyConsumer, SynchronousMachine, TopologicalNode,
+};
 
 /// A parsing error returned by the helper functions in this module.
 pub type ParseError = quick_xml::DeError;
@@ -95,6 +98,23 @@ pub fn ac_line_segment_from_str(xml: &str) -> Result<ACLineSegment<'_>, ParseErr
 ///
 /// [`Cow::Borrowed`]: std::borrow::Cow::Borrowed
 pub fn energy_consumer_from_str(xml: &str) -> Result<EnergyConsumer<'_>, ParseError> {
+    from_str(xml)
+}
+
+/// Parses a single `<cim:SynchronousMachine>` XML fragment.
+///
+/// The returned value borrows string data from `xml` where possible
+/// (zero-copy, via [`Cow::Borrowed`]).  Call
+/// [`.into_owned()`][SynchronousMachine::into_owned] if you need a `'static`
+/// value after `xml` is dropped.
+///
+/// [`Cow::Borrowed`]: std::borrow::Cow::Borrowed
+pub fn synchronous_machine_from_str(xml: &str) -> Result<SynchronousMachine<'_>, ParseError> {
+    from_str(xml)
+}
+
+/// Parses a single `<cim:TopologicalNode>` XML fragment.
+pub fn topological_node_from_str(xml: &str) -> Result<TopologicalNode<'_>, ParseError> {
     from_str(xml)
 }
 
@@ -147,6 +167,105 @@ pub fn energy_consumers_from_reader<R: Read>(mut reader: R) -> Result<Vec<Energy
     Ok(loads)
 }
 
+/// Parses all `<cim:SynchronousMachine>` elements from a CGMES RDF/XML reader.
+pub fn synchronous_machines_from_reader<R: Read>(
+    mut reader: R,
+) -> Result<Vec<SynchronousMachine<'static>>> {
+    let mut xml = String::new();
+    reader.read_to_string(&mut xml)?;
+
+    let fragments = extract_elements(&xml, "cim:SynchronousMachine")?;
+    let mut machines = Vec::with_capacity(fragments.len());
+
+    for fragment in fragments {
+        machines.push(synchronous_machine_from_str(fragment)?.into_owned());
+    }
+
+    Ok(machines)
+}
+
+/// Parses all `<cim:TopologicalNode>` elements from a CGMES TP RDF/XML reader.
+pub fn topological_nodes_from_reader<R: Read>(
+    mut reader: R,
+) -> Result<Vec<TopologicalNode<'static>>> {
+    let mut xml = String::new();
+    reader.read_to_string(&mut xml)?;
+
+    if !xml.contains("<cim:TopologicalNode") {
+        return Ok(Vec::new());
+    }
+
+    let fragments = extract_elements(&xml, "cim:TopologicalNode")?;
+    let mut nodes = Vec::with_capacity(fragments.len());
+
+    for fragment in fragments {
+        nodes.push(topological_node_from_str(fragment)?.into_owned());
+    }
+
+    Ok(nodes)
+}
+
+/// Parses TopologicalNode -> ConnectivityNode group membership from TP/EQ links.
+///
+/// Supports both representations:
+/// - `<TopologicalNode.ConnectivityNodes rdf:resource="#..."/>`
+/// - `<ConnectivityNode.TopologicalNode rdf:resource="#..."/>`
+pub fn connectivity_node_groups_from_reader<R: Read>(
+    mut reader: R,
+) -> Result<Vec<ConnectivityNodeGroup<'static>>> {
+    let mut xml = String::new();
+    reader.read_to_string(&mut xml)?;
+
+    let mut grouped: BTreeMap<String, Vec<String>> = BTreeMap::new();
+
+    if xml.contains("<cim:TopologicalNode") {
+        let topological_fragments = extract_elements(&xml, "cim:TopologicalNode")?;
+        for fragment in topological_fragments {
+            let node: RawTopologicalNodeLinks = from_str(fragment)?;
+            let Some(topological_mrid) = node.resolved_mrid() else {
+                continue;
+            };
+            let entry = grouped.entry(topological_mrid).or_default();
+            for link in node.connectivity_nodes {
+                entry.push(normalize_cgmes_ref(&link.resource));
+            }
+        }
+    }
+
+    if xml.contains("<cim:ConnectivityNode") {
+        let connectivity_fragments = extract_elements(&xml, "cim:ConnectivityNode")?;
+        for fragment in connectivity_fragments {
+            let node: RawConnectivityNode = from_str(fragment)?;
+            let Some(connectivity_mrid) = node.resolved_mrid() else {
+                continue;
+            };
+            let Some(topological_ref) = node.topological_node else {
+                continue;
+            };
+            let topological_mrid = normalize_cgmes_ref(&topological_ref.resource);
+            grouped
+                .entry(topological_mrid)
+                .or_default()
+                .push(connectivity_mrid);
+        }
+    }
+
+    let mut out = Vec::with_capacity(grouped.len());
+    for (topological_mrid, mut connectivity_nodes) in grouped {
+        connectivity_nodes.sort_unstable();
+        connectivity_nodes.dedup();
+        out.push(ConnectivityNodeGroup {
+            topological_node_mrid: Cow::Owned(topological_mrid),
+            connectivity_node_mrids: connectivity_nodes
+                .into_iter()
+                .map(Cow::Owned)
+                .collect(),
+        });
+    }
+
+    Ok(out)
+}
+
 /// Parsed terminal endpoint linkage used for EQ topology joins.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TerminalLink {
@@ -171,14 +290,43 @@ pub fn eq_lines_and_terminals_from_reader<R: Read>(
     let mut xml = String::new();
     reader.read_to_string(&mut xml)?;
 
+    let (lines, _machines, terminals) = eq_lines_machines_and_terminals_from_xml(&xml)?;
+    Ok((lines, terminals))
+}
+
+/// Parses a single EQ XML payload once and extracts lines, machines and
+/// terminals required for topology and generator joins.
+pub fn eq_lines_machines_and_terminals_from_reader<R: Read>(
+    mut reader: R,
+) -> Result<(
+    Vec<ACLineSegment<'static>>,
+    Vec<SynchronousMachine<'static>>,
+    Vec<TerminalLink>,
+)> {
+    let mut xml = String::new();
+    reader.read_to_string(&mut xml)?;
+    eq_lines_machines_and_terminals_from_xml(&xml)
+}
+
+fn eq_lines_machines_and_terminals_from_xml(
+    xml: &str,
+) -> Result<(
+    Vec<ACLineSegment<'static>>,
+    Vec<SynchronousMachine<'static>>,
+    Vec<TerminalLink>,
+)> {
     let line_fragments = if xml.contains("<cim:ACLineSegment") {
-        extract_elements(&xml, "cim:ACLineSegment")?
+        extract_elements(xml, "cim:ACLineSegment")?
     } else {
         Vec::new()
     };
-
+    let machine_fragments = if xml.contains("<cim:SynchronousMachine") {
+        extract_elements(xml, "cim:SynchronousMachine")?
+    } else {
+        Vec::new()
+    };
     let terminals = if xml.contains("<cim:Terminal") {
-        terminals_from_xml(&xml)?
+        terminals_from_xml(xml)?
     } else {
         Vec::new()
     };
@@ -188,7 +336,12 @@ pub fn eq_lines_and_terminals_from_reader<R: Read>(
         lines.push(ac_line_segment_from_str(fragment)?.into_owned());
     }
 
-    Ok((lines, terminals))
+    let mut machines = Vec::with_capacity(machine_fragments.len());
+    for fragment in machine_fragments {
+        machines.push(synchronous_machine_from_str(fragment)?.into_owned());
+    }
+
+    Ok((lines, machines, terminals))
 }
 
 /// Builds branch rows from live CGMES EQ RDF/XML data.
@@ -292,6 +445,56 @@ struct RawTerminal {
     connectivity_node: Option<RdfResourceRef>,
     #[serde(rename = "ACDCTerminal.sequenceNumber", default)]
     sequence_number: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawTopologicalNodeLinks {
+    #[serde(rename = "@ID", default)]
+    m_rid: Option<String>,
+    #[serde(rename = "@about", default)]
+    about: Option<String>,
+    #[serde(rename = "TopologicalNode.ConnectivityNodes", default)]
+    connectivity_nodes: Vec<RdfResourceRef>,
+}
+
+impl RawTopologicalNodeLinks {
+    fn resolved_mrid(&self) -> Option<String> {
+        if let Some(mrid) = &self.m_rid {
+            return Some(normalize_cgmes_ref(mrid));
+        }
+        if let Some(about) = &self.about {
+            let mrid = normalize_cgmes_ref(about);
+            #[cfg(debug_assertions)]
+            eprintln!("Fallback: using rdf:about for mRID: {mrid}");
+            return Some(mrid);
+        }
+        None
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RawConnectivityNode {
+    #[serde(rename = "@ID", default)]
+    m_rid: Option<String>,
+    #[serde(rename = "@about", default)]
+    about: Option<String>,
+    #[serde(rename = "ConnectivityNode.TopologicalNode", default)]
+    topological_node: Option<RdfResourceRef>,
+}
+
+impl RawConnectivityNode {
+    fn resolved_mrid(&self) -> Option<String> {
+        if let Some(mrid) = &self.m_rid {
+            return Some(normalize_cgmes_ref(mrid));
+        }
+        if let Some(about) = &self.about {
+            let mrid = normalize_cgmes_ref(about);
+            #[cfg(debug_assertions)]
+            eprintln!("Fallback: using rdf:about for mRID: {mrid}");
+            return Some(mrid);
+        }
+        None
+    }
 }
 
 fn terminals_from_xml(xml: &str) -> Result<Vec<TerminalLink>> {

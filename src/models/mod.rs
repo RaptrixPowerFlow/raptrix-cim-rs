@@ -12,6 +12,7 @@
 //!        └─ Equipment (trait)
 //!             ├─ ConductingEquipment (trait)
 //!             │    └─ ACLineSegment
+//!             │    └─ SynchronousMachine
 //!             └─ EnergyConsumer
 //! ```
 //!
@@ -19,7 +20,11 @@
 //! fields common to every `IdentifiedObject`.
 
 pub mod base;
+pub mod connectivity_node_group;
 pub mod equipment;
+pub mod topological_node;
 
 pub use base::{BaseAttributes, IdentifiedObject, PowerSystemResource};
-pub use equipment::{ACLineSegment, EnergyConsumer};
+pub use connectivity_node_group::ConnectivityNodeGroup;
+pub use equipment::{ACLineSegment, EnergyConsumer, SynchronousMachine};
+pub use topological_node::TopologicalNode;

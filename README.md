@@ -17,6 +17,10 @@ Copyright (c) 2026 Musto Technologies LLC
 - Parse full RDF/XML EQ files from a reader and extract:
 	- all ACLineSegment rows
 	- all EnergyConsumer rows
+	- all SynchronousMachine rows
+- Parse TP profile topology and merge with EQ terminal connectivity:
+	- TopologicalNode bus collapse mapping
+	- ConnectivityNode group preservation for split-bus analysis
 - Build branch-ready rows from live EQ topology by joining:
 	- ACLineSegment electrical fields (r, x, bch)
 	- Terminal.ConductingEquipment references
@@ -71,8 +75,22 @@ High-level pipeline:
 2. Extract relevant CIM elements (ACLineSegment, Terminal, EnergyConsumer).
 3. Deserialize typed CIM structs with quick-xml + serde.
 4. Join line elements with terminal endpoint references.
-5. Build Arrow arrays and RecordBatch.
-6. Write Parquet with Raptrix metadata.
+5. If TP is available, collapse buses from ConnectivityNode to TopologicalNode by default.
+6. Optionally emit connectivity_groups detail table for split-bus preservation.
+7. Build Arrow arrays and RecordBatch.
+8. Write Arrow IPC `.rpf` with Raptrix metadata.
+
+## Design Decisions
+
+- Topological by default: solver-facing bus IDs are collapsed to TP TopologicalNode for interoperability with common power-flow toolchains.
+- Connectivity preserved optionally: `--connectivity-detail` keeps granular bus mapping and emits `connectivity_groups` so ML and detailed contingency workflows can reconstruct split-bus structure.
+- Split-bus contingency stub: a placeholder `split_bus` contingency element is emitted when TP groups indicate multiple connectivity nodes under one topological bus (full breaker-state parsing is intentionally deferred).
+- Benchmark note: on SmallGrid-scale datasets this merge substantially reduces bus count versus raw ConnectivityNode granularity and improves solve-stage matrix dimensions.
+
+Contribution guidance:
+
+- Follow the `SynchronousMachine` model/parser pattern when adding new CIM classes.
+- Keep zero-copy semantics in hot parsing/mapping paths (`Cow`, borrowed refs, deterministic dense IDs).
 
 Note: `.rpf` Arrow IPC container support is the locked target profile; current demo writer still emits Parquet while ingestion and mapping layers evolve.
 
@@ -144,6 +162,27 @@ Run live SmallGrid integration test (PowerShell):
 Run CLI in auto-detect mode:
 
 - cargo run --release -- convert --input-dir cgmes_case/ --output case.rpf
+
+## Running Automated Validation
+
+The repository includes a standalone pytest validator at `tests/inspect_rpf.py` that:
+
+- runs the CLI to generate a `.rpf` file from SmallGrid EQ input
+- validates all 15 canonical IPC segments are present and ordered
+- verifies `raptrix.branding` and `raptrix.version` metadata
+- checks bus and branch row counts against source EQ XML topology
+- spot-checks first branch `r`/`x` values against EQ XML
+
+Prerequisites:
+
+- `RAPTRIX_TEST_DATA_ROOT` points to the CGMES v3.0 dataset root
+- `pyarrow` and `pytest` are available in your Python environment
+
+Run:
+
+- `python -m pytest tests/inspect_rpf.py -q`
+
+If external data is unavailable, the test is marked/treated as ignored and skipped.
 
 ## External CGMES Setup
 
