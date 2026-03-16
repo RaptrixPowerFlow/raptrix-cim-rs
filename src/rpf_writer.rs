@@ -34,7 +34,7 @@ use memmap2::MmapOptions;
 use crate::arrow_schema::{
     all_table_schemas, buses_schema, branches_schema, contingencies_schema, dynamics_models_schema,
     connectivity_groups_schema, fixed_shunts_schema, generators_schema, loads_schema, metadata_schema,
-    switched_shunts_schema, BRANDING,
+    switched_shunts_schema, transformers_2w_schema, transformers_3w_schema, BRANDING,
     SCHEMA_VERSION, TABLE_AREAS, TABLE_BRANCHES, TABLE_BUSES, TABLE_CONNECTIVITY_GROUPS,
     TABLE_CONTINGENCIES, TABLE_DYNAMICS_MODELS, TABLE_FIXED_SHUNTS, TABLE_GENERATORS,
     TABLE_INTERFACES, TABLE_LOADS, TABLE_METADATA, TABLE_OWNERS, TABLE_SWITCHED_SHUNTS,
@@ -170,6 +170,52 @@ struct SwitchedShuntRow {
     v_high: f64,
     b_steps: Vec<f64>,
     current_step: i32,
+}
+
+#[derive(Debug, Clone)]
+struct Transformer2WRow<'a> {
+    from_bus_id: i32,
+    to_bus_id: i32,
+    ckt: Cow<'a, str>,
+    r: f64,
+    x: f64,
+    winding1_r: f64,
+    winding1_x: f64,
+    winding2_r: f64,
+    winding2_x: f64,
+    g: f64,
+    b: f64,
+    tap_ratio: f64,
+    nominal_tap_ratio: f64,
+    phase_shift: f64,
+    vector_group: Cow<'a, str>,
+    rate_a: f64,
+    rate_b: f64,
+    rate_c: f64,
+    status: bool,
+}
+
+#[derive(Debug, Clone)]
+struct Transformer3WRow<'a> {
+    bus_h_id: i32,
+    bus_m_id: i32,
+    bus_l_id: i32,
+    ckt: Cow<'a, str>,
+    r_hm: f64,
+    x_hm: f64,
+    r_hl: f64,
+    x_hl: f64,
+    r_ml: f64,
+    x_ml: f64,
+    tap_h: f64,
+    tap_m: f64,
+    tap_l: f64,
+    phase_shift: f64,
+    vector_group: Cow<'a, str>,
+    rate_a: f64,
+    rate_b: f64,
+    rate_c: f64,
+    status: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -357,6 +403,8 @@ pub fn write_complete_rpf_with_options(
         branch_rows,
         gen_rows,
         load_rows,
+        transformer_2w_rows,
+        transformer_3w_rows,
         fixed_shunt_rows,
         switched_shunt_rows,
         connectivity_group_rows,
@@ -378,6 +426,8 @@ pub fn write_complete_rpf_with_options(
     let branches_batch = build_branches_batch(&branch_rows)?;
     let generators_batch = build_generators_batch(&gen_rows)?;
     let loads_batch = build_loads_batch(&load_rows)?;
+    let transformers_2w_batch = build_transformers_2w_batch(&transformer_2w_rows)?;
+    let transformers_3w_batch = build_transformers_3w_batch(&transformer_3w_rows)?;
     let fixed_shunts_batch = build_fixed_shunts_batch(&fixed_shunt_rows)?;
     let switched_shunts_batch = build_switched_shunts_batch(&switched_shunt_rows)?;
     let contingencies_rows = stub_contingency_rows(split_bus_stub_elements);
@@ -397,11 +447,11 @@ pub fn write_complete_rpf_with_options(
             TABLE_LOADS => loads_batch.clone(),
             TABLE_FIXED_SHUNTS => fixed_shunts_batch.clone(),
             TABLE_SWITCHED_SHUNTS => switched_shunts_batch.clone(),
+            TABLE_TRANSFORMERS_2W => transformers_2w_batch.clone(),
+            TABLE_TRANSFORMERS_3W => transformers_3w_batch.clone(),
             TABLE_CONTINGENCIES => contingencies_batch.clone(),
             TABLE_DYNAMICS_MODELS => dynamics_models_batch.clone(),
-            TABLE_TRANSFORMERS_2W
-            | TABLE_TRANSFORMERS_3W
-            | TABLE_AREAS
+            TABLE_AREAS
             | TABLE_ZONES
             | TABLE_OWNERS
             | TABLE_INTERFACES
@@ -534,8 +584,9 @@ fn parse_eq_components_for_path(
     Vec<crate::models::ACLineSegment<'static>>,
     Vec<crate::models::SynchronousMachine<'static>>,
     Vec<crate::models::EnergyConsumer<'static>>,
+    Vec<parser::PowerTransformer<'static>>,
     Vec<parser::FixedShuntSpec>,
-    Vec<parser::SwitchedShuntSpec>,
+    Vec<crate::models::SvShuntCompensator<'static>>,
     Vec<parser::TerminalLink>,
     Vec<crate::models::TopologicalNode<'static>>,
     Vec<crate::models::ConnectivityNodeGroup<'static>>,
@@ -554,12 +605,16 @@ fn parse_eq_components_for_path(
         format!("failed to extract EnergyConsumer elements from CGMES input file at {path}")
     })?;
 
+    let transformers = parser::power_transformers_from_reader(Cursor::new(&bytes)).with_context(|| {
+        format!("failed to extract PowerTransformer elements from CGMES input file at {path}")
+    })?;
+
     let fixed_shunts = parser::fixed_shunts_from_reader(Cursor::new(&bytes)).with_context(|| {
         format!("failed to extract LinearShuntCompensator elements from CGMES input file at {path}")
     })?;
 
-    let switched_shunts = parser::switched_shunts_from_reader(Cursor::new(&bytes)).with_context(|| {
-        format!("failed to extract switched-shunt elements from CGMES input file at {path}")
+    let switched_shunts = parser::sv_shunt_compensators_from_reader(Cursor::new(&bytes)).with_context(|| {
+        format!("failed to extract SvShuntCompensator elements from CGMES input file at {path}")
     })?;
 
     let topological_nodes = parser::topological_nodes_from_reader(Cursor::new(&bytes))
@@ -576,6 +631,7 @@ fn parse_eq_components_for_path(
         lines,
         machines,
         loads,
+        transformers,
         fixed_shunts,
         switched_shunts,
         terminals,
@@ -592,7 +648,7 @@ fn parse_eq_components_for_path(
 /// Tenet 2: prepares rows that map exactly to locked `buses` and `branches`
 /// schemas without mutation.
 /// Tenet 3: EQ ingestion ownership remains in Rust by joining `EnergyConsumer`
-/// through `Terminal` references in this function.
+/// and `SvShuntCompensator` through `Terminal` references in this function.
 fn parse_eq_topology_rows(
     cgmes_paths: &[&str],
     bus_resolution_mode: BusResolutionMode,
@@ -601,6 +657,8 @@ fn parse_eq_topology_rows(
     Vec<BranchRow<'static>>,
     Vec<GenRow<'static>>,
     Vec<LoadRow<'static>>,
+    Vec<Transformer2WRow<'static>>,
+    Vec<Transformer3WRow<'static>>,
     Vec<FixedShuntRow<'static>>,
     Vec<SwitchedShuntRow>,
     Vec<ConnectivityGroupRow<'static>>,
@@ -609,6 +667,7 @@ fn parse_eq_topology_rows(
     let mut lines = Vec::new();
     let mut machines = Vec::new();
     let mut loads = Vec::new();
+    let mut transformers = Vec::new();
     let mut fixed_shunts = Vec::new();
     let mut switched_shunts = Vec::new();
     let mut terminals = Vec::new();
@@ -620,6 +679,7 @@ fn parse_eq_topology_rows(
             mut parsed_lines,
             mut parsed_machines,
             mut parsed_loads,
+            mut parsed_transformers,
             mut parsed_fixed_shunts,
             mut parsed_switched_shunts,
             mut parsed_terminals,
@@ -635,6 +695,9 @@ fn parse_eq_topology_rows(
         }
         if !parsed_loads.is_empty() {
             loads.append(&mut parsed_loads);
+        }
+        if !parsed_transformers.is_empty() {
+            transformers.append(&mut parsed_transformers);
         }
         if !parsed_fixed_shunts.is_empty() {
             fixed_shunts.append(&mut parsed_fixed_shunts);
@@ -943,6 +1006,167 @@ fn parse_eq_topology_rows(
         });
     }
 
+    transformers.sort_unstable_by(|left, right| left.base.m_rid.cmp(&right.base.m_rid));
+    let mut transformer_2w_rows = Vec::new();
+    let mut transformer_3w_rows = Vec::new();
+    for transformer in transformers {
+        let transformer_mrid = transformer.base.m_rid.as_ref();
+        let transformer_terminals = terminals_by_equipment
+            .get(transformer_mrid)
+            .with_context(|| {
+                format!("missing Terminal linkage for PowerTransformer mRID '{transformer_mrid}'")
+            })?;
+
+        let mut unique_terminals: Vec<&parser::TerminalLink> = Vec::new();
+        for terminal in transformer_terminals {
+            if unique_terminals
+                .iter()
+                .all(|existing| existing.connectivity_node_mrid != terminal.connectivity_node_mrid)
+            {
+                unique_terminals.push(*terminal);
+            }
+        }
+        unique_terminals.sort_by_key(|terminal| {
+            (
+                terminal.sequence_number,
+                terminal.connectivity_node_mrid.as_str(),
+            )
+        });
+
+        let winding_count = transformer.ends.len().max(unique_terminals.len());
+        if winding_count < 2 {
+            bail!(
+                "PowerTransformer mRID '{transformer_mrid}' has fewer than 2 winding/terminal endpoints"
+            );
+        }
+
+        let resolve_terminal_bus_id = |terminal: &parser::TerminalLink| -> Result<i32> {
+            if use_topological {
+                let topological_bus_key = conn_to_topo
+                    .get(terminal.connectivity_node_mrid.as_str())
+                    .copied()
+                    .with_context(|| {
+                        format!(
+                            "failed to resolve ConnectivityNode '{}' to TopologicalNode for PowerTransformer mRID '{transformer_mrid}'",
+                            terminal.connectivity_node_mrid
+                        )
+                    })?;
+                bus_key_to_bus_id
+                    .get(topological_bus_key)
+                    .copied()
+                    .with_context(|| {
+                        format!(
+                            "failed to resolve TopologicalNode '{}' to dense bus_id for PowerTransformer mRID '{transformer_mrid}'",
+                            topological_bus_key
+                        )
+                    })
+            } else {
+                bus_key_to_bus_id
+                    .get(terminal.connectivity_node_mrid.as_str())
+                    .copied()
+                    .with_context(|| {
+                        format!(
+                            "failed to resolve ConnectivityNode '{}' to dense bus_id for PowerTransformer mRID '{transformer_mrid}'",
+                            terminal.connectivity_node_mrid
+                        )
+                    })
+            }
+        };
+
+        let vector_group = transformer
+            .vector_group
+            .map(|value| Cow::Owned(value.into_owned()))
+            .unwrap_or_else(|| Cow::Borrowed(""));
+        let rate_a = transformer
+            .rate_a
+            .or_else(|| transformer.ends.iter().find_map(|end| end.rate))
+            .unwrap_or(0.0);
+        let rate_b = transformer.rate_b.unwrap_or(rate_a);
+        let rate_c = transformer.rate_c.unwrap_or(rate_b);
+        let status = transformer.status.unwrap_or(true);
+
+        if winding_count == 2 {
+            let from_terminal = unique_terminals.first().copied().with_context(|| {
+                format!("missing Terminal endpoint #1 for PowerTransformer mRID '{transformer_mrid}'")
+            })?;
+            let to_terminal = unique_terminals.get(1).copied().with_context(|| {
+                format!("missing Terminal endpoint #2 for PowerTransformer mRID '{transformer_mrid}'")
+            })?;
+
+            let from_bus_id = resolve_terminal_bus_id(from_terminal)?;
+            let to_bus_id = resolve_terminal_bus_id(to_terminal)?;
+
+            let winding1 = transformer.ends.first();
+            let winding2 = transformer.ends.get(1);
+            let winding1_r = winding1.and_then(|end| end.r).unwrap_or(0.0);
+            let winding1_x = winding1.and_then(|end| end.x).unwrap_or(0.0);
+            let winding2_r = winding2.and_then(|end| end.r).unwrap_or(0.0);
+            let winding2_x = winding2.and_then(|end| end.x).unwrap_or(0.0);
+
+            transformer_2w_rows.push(Transformer2WRow {
+                from_bus_id,
+                to_bus_id,
+                ckt: Cow::Borrowed("1"),
+                r: winding1_r + winding2_r,
+                x: winding1_x + winding2_x,
+                winding1_r,
+                winding1_x,
+                winding2_r,
+                winding2_x,
+                g: transformer.ends.iter().filter_map(|end| end.g).sum(),
+                b: transformer.ends.iter().filter_map(|end| end.b).sum(),
+                tap_ratio: winding1.and_then(|end| end.tap_ratio).unwrap_or(1.0),
+                nominal_tap_ratio: 1.0,
+                phase_shift: winding1.and_then(|end| end.phase_shift).unwrap_or(0.0),
+                vector_group,
+                rate_a,
+                rate_b,
+                rate_c,
+                status,
+            });
+        } else {
+            let terminal_h = unique_terminals.first().copied().with_context(|| {
+                format!("missing Terminal endpoint #1 for PowerTransformer mRID '{transformer_mrid}'")
+            })?;
+            let terminal_m = unique_terminals.get(1).copied().with_context(|| {
+                format!("missing Terminal endpoint #2 for PowerTransformer mRID '{transformer_mrid}'")
+            })?;
+            let terminal_l = unique_terminals.get(2).copied().with_context(|| {
+                format!("missing Terminal endpoint #3 for PowerTransformer mRID '{transformer_mrid}'")
+            })?;
+
+            let bus_h_id = resolve_terminal_bus_id(terminal_h)?;
+            let bus_m_id = resolve_terminal_bus_id(terminal_m)?;
+            let bus_l_id = resolve_terminal_bus_id(terminal_l)?;
+
+            let end_h = transformer.ends.first();
+            let end_m = transformer.ends.get(1);
+            let end_l = transformer.ends.get(2);
+
+            transformer_3w_rows.push(Transformer3WRow {
+                bus_h_id,
+                bus_m_id,
+                bus_l_id,
+                ckt: Cow::Borrowed("1"),
+                r_hm: end_h.and_then(|end| end.r).unwrap_or(0.0),
+                x_hm: end_h.and_then(|end| end.x).unwrap_or(0.0),
+                r_hl: end_m.and_then(|end| end.r).unwrap_or(0.0),
+                x_hl: end_m.and_then(|end| end.x).unwrap_or(0.0),
+                r_ml: end_l.and_then(|end| end.r).unwrap_or(0.0),
+                x_ml: end_l.and_then(|end| end.x).unwrap_or(0.0),
+                tap_h: end_h.and_then(|end| end.tap_ratio).unwrap_or(1.0),
+                tap_m: end_m.and_then(|end| end.tap_ratio).unwrap_or(1.0),
+                tap_l: end_l.and_then(|end| end.tap_ratio).unwrap_or(1.0),
+                phase_shift: end_h.and_then(|end| end.phase_shift).unwrap_or(0.0),
+                vector_group,
+                rate_a,
+                rate_b,
+                rate_c,
+                status,
+            });
+        }
+    }
+
     fixed_shunts.sort_unstable_by(|left, right| left.equipment_mrid.cmp(&right.equipment_mrid));
     let mut fixed_shunt_rows = Vec::with_capacity(fixed_shunts.len());
     for shunt in fixed_shunts {
@@ -1004,12 +1228,12 @@ fn parse_eq_topology_rows(
         });
     }
 
-    switched_shunts.sort_unstable_by(|left, right| left.equipment_mrid.cmp(&right.equipment_mrid));
+    switched_shunts.sort_unstable_by(|left, right| left.base.m_rid.cmp(&right.base.m_rid));
     let mut switched_shunt_rows = Vec::with_capacity(switched_shunts.len());
     for shunt in switched_shunts {
-        let shunt_mrid = shunt.equipment_mrid.as_str();
+        let shunt_mrid = shunt.base.m_rid.as_ref();
         let shunt_terminals = terminals_by_equipment.get(shunt_mrid).with_context(|| {
-            format!("missing Terminal linkage for switched shunt mRID '{shunt_mrid}'")
+            format!("missing Terminal linkage for SvShuntCompensator mRID '{shunt_mrid}'")
         })?;
 
         let selected_terminal = shunt_terminals
@@ -1022,7 +1246,7 @@ fn parse_eq_topology_rows(
                 )
             })
             .with_context(|| {
-                format!("missing Terminal linkage for switched shunt mRID '{shunt_mrid}'")
+                format!("missing Terminal linkage for SvShuntCompensator mRID '{shunt_mrid}'")
             })?;
 
         let bus_id = if use_topological {
@@ -1056,18 +1280,18 @@ fn parse_eq_topology_rows(
                 })?
         };
 
-        let mut b_steps = shunt.b_steps;
+        let mut b_steps = shunt.b_steps.unwrap_or_default();
         if b_steps.is_empty() {
             b_steps.push(0.0);
         }
 
         switched_shunt_rows.push(SwitchedShuntRow {
             bus_id,
-            status: shunt.status.unwrap_or(true),
-            v_low: 0.95,
-            v_high: 1.05,
+            status: true,
+            v_low: shunt.v_low.unwrap_or(0.95),
+            v_high: shunt.v_high.unwrap_or(1.05),
             b_steps,
-            current_step: shunt.current_step,
+            current_step: shunt.current_step.unwrap_or(0),
         });
     }
 
@@ -1133,6 +1357,8 @@ fn parse_eq_topology_rows(
         branch_rows,
         gen_rows,
         load_rows,
+        transformer_2w_rows,
+        transformer_3w_rows,
         fixed_shunt_rows,
         switched_shunt_rows,
         connectivity_group_rows,
@@ -1383,6 +1609,155 @@ fn build_loads_batch(rows: &[LoadRow<'_>]) -> Result<RecordBatch> {
     RecordBatch::try_new(schema, arrays).context("failed to build loads record batch")
 }
 
+/// Builds the `transformers_2w` table batch from resolved EQ transformer rows.
+///
+/// Tenet 2: preserves exact v0.5 schema ordering and primitive types.
+fn build_transformers_2w_batch(rows: &[Transformer2WRow<'_>]) -> Result<RecordBatch> {
+    let schema = Arc::new(transformers_2w_schema());
+
+    let mut from_bus_id_b = Int32Builder::new();
+    let mut to_bus_id_b = Int32Builder::new();
+    let mut ckt_b = StringDictionaryBuilder::<Int32Type>::new();
+    let mut r_b = Float64Builder::new();
+    let mut x_b = Float64Builder::new();
+    let mut winding1_r_b = Float64Builder::new();
+    let mut winding1_x_b = Float64Builder::new();
+    let mut winding2_r_b = Float64Builder::new();
+    let mut winding2_x_b = Float64Builder::new();
+    let mut g_b = Float64Builder::new();
+    let mut b_b = Float64Builder::new();
+    let mut tap_ratio_b = Float64Builder::new();
+    let mut nominal_tap_ratio_b = Float64Builder::new();
+    let mut phase_shift_b = Float64Builder::new();
+    let mut vector_group_b = StringDictionaryBuilder::<Int32Type>::new();
+    let mut rate_a_b = Float64Builder::new();
+    let mut rate_b_b = Float64Builder::new();
+    let mut rate_c_b = Float64Builder::new();
+    let mut status_b = BooleanBuilder::new();
+
+    for row in rows {
+        from_bus_id_b.append_value(row.from_bus_id);
+        to_bus_id_b.append_value(row.to_bus_id);
+        ckt_b.append(row.ckt.as_ref())?;
+        r_b.append_value(row.r);
+        x_b.append_value(row.x);
+        winding1_r_b.append_value(row.winding1_r);
+        winding1_x_b.append_value(row.winding1_x);
+        winding2_r_b.append_value(row.winding2_r);
+        winding2_x_b.append_value(row.winding2_x);
+        g_b.append_value(row.g);
+        b_b.append_value(row.b);
+        tap_ratio_b.append_value(row.tap_ratio);
+        nominal_tap_ratio_b.append_value(row.nominal_tap_ratio);
+        phase_shift_b.append_value(row.phase_shift);
+        vector_group_b.append(row.vector_group.as_ref())?;
+        rate_a_b.append_value(row.rate_a);
+        rate_b_b.append_value(row.rate_b);
+        rate_c_b.append_value(row.rate_c);
+        status_b.append_value(row.status);
+    }
+
+    let arrays: Vec<ArrayRef> = vec![
+        Arc::new(from_bus_id_b.finish()) as ArrayRef,
+        Arc::new(to_bus_id_b.finish()) as ArrayRef,
+        Arc::new(ckt_b.finish()) as ArrayRef,
+        Arc::new(r_b.finish()) as ArrayRef,
+        Arc::new(x_b.finish()) as ArrayRef,
+        Arc::new(winding1_r_b.finish()) as ArrayRef,
+        Arc::new(winding1_x_b.finish()) as ArrayRef,
+        Arc::new(winding2_r_b.finish()) as ArrayRef,
+        Arc::new(winding2_x_b.finish()) as ArrayRef,
+        Arc::new(g_b.finish()) as ArrayRef,
+        Arc::new(b_b.finish()) as ArrayRef,
+        Arc::new(tap_ratio_b.finish()) as ArrayRef,
+        Arc::new(nominal_tap_ratio_b.finish()) as ArrayRef,
+        Arc::new(phase_shift_b.finish()) as ArrayRef,
+        Arc::new(vector_group_b.finish()) as ArrayRef,
+        Arc::new(rate_a_b.finish()) as ArrayRef,
+        Arc::new(rate_b_b.finish()) as ArrayRef,
+        Arc::new(rate_c_b.finish()) as ArrayRef,
+        Arc::new(status_b.finish()) as ArrayRef,
+    ];
+
+    RecordBatch::try_new(schema, arrays).context("failed to build transformers_2w record batch")
+}
+
+/// Builds the `transformers_3w` table batch from resolved EQ transformer rows.
+///
+/// Tenet 2: preserves exact v0.5 schema ordering and primitive types.
+fn build_transformers_3w_batch(rows: &[Transformer3WRow<'_>]) -> Result<RecordBatch> {
+    let schema = Arc::new(transformers_3w_schema());
+
+    let mut bus_h_id_b = Int32Builder::new();
+    let mut bus_m_id_b = Int32Builder::new();
+    let mut bus_l_id_b = Int32Builder::new();
+    let mut star_bus_id_b = Int32Builder::new();
+    let mut ckt_b = StringDictionaryBuilder::<Int32Type>::new();
+    let mut r_hm_b = Float64Builder::new();
+    let mut x_hm_b = Float64Builder::new();
+    let mut r_hl_b = Float64Builder::new();
+    let mut x_hl_b = Float64Builder::new();
+    let mut r_ml_b = Float64Builder::new();
+    let mut x_ml_b = Float64Builder::new();
+    let mut tap_h_b = Float64Builder::new();
+    let mut tap_m_b = Float64Builder::new();
+    let mut tap_l_b = Float64Builder::new();
+    let mut phase_shift_b = Float64Builder::new();
+    let mut vector_group_b = StringDictionaryBuilder::<Int32Type>::new();
+    let mut rate_a_b = Float64Builder::new();
+    let mut rate_b_b = Float64Builder::new();
+    let mut rate_c_b = Float64Builder::new();
+    let mut status_b = BooleanBuilder::new();
+
+    for row in rows {
+        bus_h_id_b.append_value(row.bus_h_id);
+        bus_m_id_b.append_value(row.bus_m_id);
+        bus_l_id_b.append_value(row.bus_l_id);
+        star_bus_id_b.append_null();
+        ckt_b.append(row.ckt.as_ref())?;
+        r_hm_b.append_value(row.r_hm);
+        x_hm_b.append_value(row.x_hm);
+        r_hl_b.append_value(row.r_hl);
+        x_hl_b.append_value(row.x_hl);
+        r_ml_b.append_value(row.r_ml);
+        x_ml_b.append_value(row.x_ml);
+        tap_h_b.append_value(row.tap_h);
+        tap_m_b.append_value(row.tap_m);
+        tap_l_b.append_value(row.tap_l);
+        phase_shift_b.append_value(row.phase_shift);
+        vector_group_b.append(row.vector_group.as_ref())?;
+        rate_a_b.append_value(row.rate_a);
+        rate_b_b.append_value(row.rate_b);
+        rate_c_b.append_value(row.rate_c);
+        status_b.append_value(row.status);
+    }
+
+    let arrays: Vec<ArrayRef> = vec![
+        Arc::new(bus_h_id_b.finish()) as ArrayRef,
+        Arc::new(bus_m_id_b.finish()) as ArrayRef,
+        Arc::new(bus_l_id_b.finish()) as ArrayRef,
+        Arc::new(star_bus_id_b.finish()) as ArrayRef,
+        Arc::new(ckt_b.finish()) as ArrayRef,
+        Arc::new(r_hm_b.finish()) as ArrayRef,
+        Arc::new(x_hm_b.finish()) as ArrayRef,
+        Arc::new(r_hl_b.finish()) as ArrayRef,
+        Arc::new(x_hl_b.finish()) as ArrayRef,
+        Arc::new(r_ml_b.finish()) as ArrayRef,
+        Arc::new(x_ml_b.finish()) as ArrayRef,
+        Arc::new(tap_h_b.finish()) as ArrayRef,
+        Arc::new(tap_m_b.finish()) as ArrayRef,
+        Arc::new(tap_l_b.finish()) as ArrayRef,
+        Arc::new(phase_shift_b.finish()) as ArrayRef,
+        Arc::new(vector_group_b.finish()) as ArrayRef,
+        Arc::new(rate_a_b.finish()) as ArrayRef,
+        Arc::new(rate_b_b.finish()) as ArrayRef,
+        Arc::new(rate_c_b.finish()) as ArrayRef,
+        Arc::new(status_b.finish()) as ArrayRef,
+    ];
+
+    RecordBatch::try_new(schema, arrays).context("failed to build transformers_3w record batch")
+}
+
 fn build_fixed_shunts_batch(rows: &[FixedShuntRow<'_>]) -> Result<RecordBatch> {
     let schema = Arc::new(fixed_shunts_schema());
 
@@ -1411,6 +1786,10 @@ fn build_fixed_shunts_batch(rows: &[FixedShuntRow<'_>]) -> Result<RecordBatch> {
     RecordBatch::try_new(schema, arrays).context("failed to build fixed_shunts record batch")
 }
 
+/// Builds the `switched_shunts` table batch from `SvShuntCompensator` joins.
+///
+/// Tenet 1: appends list values directly from parsed row vectors.
+/// Tenet 2: preserves locked v0.5 switched_shunts schema ordering and types.
 fn build_switched_shunts_batch(rows: &[SwitchedShuntRow]) -> Result<RecordBatch> {
     let schema = Arc::new(switched_shunts_schema());
 

@@ -26,5 +26,8 @@ pub mod topological_node;
 
 pub use base::{BaseAttributes, IdentifiedObject, PowerSystemResource};
 pub use connectivity_node_group::ConnectivityNodeGroup;
-pub use equipment::{ACLineSegment, EnergyConsumer, SynchronousMachine};
+pub use equipment::{
+	ACLineSegment, EnergyConsumer, SvShuntCompensator, SynchronousMachine, Transformer2W,
+	Transformer3W,
+};
 pub use topological_node::TopologicalNode;

@@ -50,8 +50,10 @@ use quick_xml::de::from_str;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 
+use crate::models::base::BaseAttributes;
 use crate::models::{
-    ACLineSegment, ConnectivityNodeGroup, EnergyConsumer, SynchronousMachine, TopologicalNode,
+    ACLineSegment, ConnectivityNodeGroup, EnergyConsumer, SvShuntCompensator, SynchronousMachine,
+    TopologicalNode,
 };
 
 /// A parsing error returned by the helper functions in this module.
@@ -113,6 +115,11 @@ pub fn synchronous_machine_from_str(xml: &str) -> Result<SynchronousMachine<'_>,
     from_str(xml)
 }
 
+/// Parses a single `<cim:SvShuntCompensator>` XML fragment.
+pub fn sv_shunt_compensator_from_str(xml: &str) -> Result<SvShuntCompensator<'_>, ParseError> {
+    from_str(xml)
+}
+
 /// Parses a single `<cim:TopologicalNode>` XML fragment.
 pub fn topological_node_from_str(xml: &str) -> Result<TopologicalNode<'_>, ParseError> {
     from_str(xml)
@@ -161,13 +168,43 @@ pub struct FixedShuntSpec {
     pub b_mvar: Option<f64>,
 }
 
-/// Parsed switched shunt payload derived from EQ profile XML.
+/// Parsed PowerTransformer with attached winding-end parameters.
 #[derive(Debug, Clone, PartialEq)]
-pub struct SwitchedShuntSpec {
-    pub equipment_mrid: String,
+pub struct PowerTransformer<'a> {
+    pub base: BaseAttributes<'a>,
     pub status: Option<bool>,
-    pub b_steps: Vec<f64>,
-    pub current_step: i32,
+    pub vector_group: Option<Cow<'a, str>>,
+    pub rate_a: Option<f64>,
+    pub rate_b: Option<f64>,
+    pub rate_c: Option<f64>,
+    pub ends: Vec<PowerTransformerEnd>,
+}
+
+impl<'a> PowerTransformer<'a> {
+    pub fn into_owned(self) -> PowerTransformer<'static> {
+        PowerTransformer {
+            base: self.base.into_owned(),
+            status: self.status,
+            vector_group: self.vector_group.map(|value| Cow::Owned(value.into_owned())),
+            rate_a: self.rate_a,
+            rate_b: self.rate_b,
+            rate_c: self.rate_c,
+            ends: self.ends,
+        }
+    }
+}
+
+/// Parsed PowerTransformerEnd payload used for 2w/3w mapping.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PowerTransformerEnd {
+    pub end_number: i32,
+    pub r: Option<f64>,
+    pub x: Option<f64>,
+    pub g: Option<f64>,
+    pub b: Option<f64>,
+    pub tap_ratio: Option<f64>,
+    pub phase_shift: Option<f64>,
+    pub rate: Option<f64>,
 }
 
 /// Parses all `<cim:EnergyConsumer>` elements from a CGMES RDF/XML reader.
@@ -215,6 +252,80 @@ pub fn synchronous_machines_from_reader<R: Read>(
     Ok(machines)
 }
 
+/// Parses all `<cim:PowerTransformer>` elements and their associated
+/// `<cim:PowerTransformerEnd>` payloads from a CGMES RDF/XML reader.
+///
+/// Tenet 1: maintains borrowed ID fields until ownership is required at API
+/// boundary.
+/// Tenet 2: keeps direct CIM entity mapping for downstream 2w/3w conversion.
+pub fn power_transformers_from_reader<R: Read>(
+    mut reader: R,
+) -> Result<Vec<PowerTransformer<'static>>> {
+    let mut xml = String::new();
+    reader.read_to_string(&mut xml)?;
+
+    if !contains_exact_element_tag(&xml, "cim:PowerTransformer") {
+        return Ok(Vec::new());
+    }
+
+    let transformer_fragments = extract_elements(&xml, "cim:PowerTransformer")?;
+    let mut transformers = Vec::with_capacity(transformer_fragments.len());
+    for fragment in transformer_fragments {
+        let raw: RawPowerTransformer = from_str(fragment)?;
+        let Some(m_rid) = raw.resolved_mrid() else {
+            continue;
+        };
+
+        transformers.push(PowerTransformer {
+            base: BaseAttributes {
+                m_rid: Cow::Owned(m_rid),
+                name: raw.name,
+                description: raw.description,
+            },
+            status: raw.status,
+            vector_group: raw.vector_group,
+            rate_a: raw.rate_a,
+            rate_b: raw.rate_b,
+            rate_c: raw.rate_c,
+            ends: Vec::new(),
+        });
+    }
+
+    if contains_exact_element_tag(&xml, "cim:PowerTransformerEnd") {
+        let end_fragments = extract_elements(&xml, "cim:PowerTransformerEnd")?;
+        let mut ends_by_transformer: HashMap<String, Vec<PowerTransformerEnd>> = HashMap::new();
+        for fragment in end_fragments {
+            let raw_end: RawPowerTransformerEnd = from_str(fragment)?;
+            let Some(transformer_mrid) = raw_end.transformer_mrid() else {
+                continue;
+            };
+
+            ends_by_transformer
+                .entry(transformer_mrid)
+                .or_default()
+                .push(PowerTransformerEnd {
+                    end_number: raw_end.end_number.unwrap_or(i32::MAX),
+                    r: raw_end.r,
+                    x: raw_end.x,
+                    g: raw_end.g,
+                    b: raw_end.b,
+                    tap_ratio: raw_end.tap_ratio,
+                    phase_shift: raw_end.phase_shift,
+                    rate: raw_end.rated_s,
+                });
+        }
+
+        for transformer in &mut transformers {
+            if let Some(mut ends) = ends_by_transformer.remove(transformer.base.m_rid.as_ref()) {
+                ends.sort_unstable_by_key(|end| end.end_number);
+                transformer.ends = ends;
+            }
+        }
+    }
+
+    Ok(transformers.into_iter().map(PowerTransformer::into_owned).collect())
+}
+
 /// Parses all `<cim:LinearShuntCompensator>` elements from EQ RDF/XML.
 ///
 /// Tenet 2: maps directly from CIM shunt fields with minimal derivation.
@@ -255,36 +366,26 @@ pub fn fixed_shunts_from_reader<R: Read>(mut reader: R) -> Result<Vec<FixedShunt
     Ok(rows)
 }
 
-/// Parses switched-shunt style elements (`NonlinearShuntCompensator` and
-/// concrete `ShuntCompensator`) from EQ RDF/XML.
-pub fn switched_shunts_from_reader<R: Read>(mut reader: R) -> Result<Vec<SwitchedShuntSpec>> {
+/// Parses all `<cim:SvShuntCompensator>` elements from CGMES RDF/XML.
+///
+/// Tenet 1: deserializes borrowed XML fragments and only materializes owned
+/// values at the API boundary.
+/// Tenet 2: maps directly from CIM `SvShuntCompensator` to switched-shunt
+/// writer rows.
+pub fn sv_shunt_compensators_from_reader<R: Read>(
+    mut reader: R,
+) -> Result<Vec<SvShuntCompensator<'static>>> {
     let mut xml = String::new();
     reader.read_to_string(&mut xml)?;
 
-    let mut fragments: Vec<&str> = Vec::new();
-    for tag in ["cim:NonlinearShuntCompensator", "cim:ShuntCompensator"] {
-        if contains_exact_element_tag(&xml, tag) {
-            let mut tag_fragments = extract_elements(&xml, tag)?;
-            fragments.append(&mut tag_fragments);
-        }
+    if !contains_exact_element_tag(&xml, "cim:SvShuntCompensator") {
+        return Ok(Vec::new());
     }
 
+    let fragments = extract_elements(&xml, "cim:SvShuntCompensator")?;
     let mut rows = Vec::with_capacity(fragments.len());
     for fragment in fragments {
-        let shunt: RawSwitchedShuntCompensator = from_str(fragment)?;
-        let Some(equipment_mrid) = shunt.resolved_mrid() else {
-            continue;
-        };
-
-        let normal_sections = shunt.normal_sections.or(shunt.sections).unwrap_or(1.0);
-        let b_per_section = shunt.b_per_section.unwrap_or(0.0);
-
-        rows.push(SwitchedShuntSpec {
-            equipment_mrid,
-            status: shunt.status,
-            b_steps: vec![b_per_section],
-            current_step: normal_sections.round() as i32,
-        });
+        rows.push(sv_shunt_compensator_from_str(fragment)?.into_owned());
     }
 
     Ok(rows)
@@ -608,7 +709,29 @@ struct RawLinearShuntCompensator {
     linear_b_per_section: Option<f64>,
 }
 
-impl RawLinearShuntCompensator {
+#[derive(Debug, Deserialize)]
+struct RawPowerTransformer<'a> {
+    #[serde(rename = "@ID", default, borrow)]
+    m_rid: Option<Cow<'a, str>>,
+    #[serde(rename = "@about", default, borrow)]
+    about: Option<Cow<'a, str>>,
+    #[serde(rename = "IdentifiedObject.name", default, borrow)]
+    name: Option<Cow<'a, str>>,
+    #[serde(rename = "IdentifiedObject.description", default, borrow)]
+    description: Option<Cow<'a, str>>,
+    #[serde(rename = "Equipment.normallyInService", default)]
+    status: Option<bool>,
+    #[serde(rename = "PowerTransformer.vectorGroup", default, borrow)]
+    vector_group: Option<Cow<'a, str>>,
+    #[serde(rename = "PowerTransformer.rateA", default)]
+    rate_a: Option<f64>,
+    #[serde(rename = "PowerTransformer.rateB", default)]
+    rate_b: Option<f64>,
+    #[serde(rename = "PowerTransformer.rateC", default)]
+    rate_c: Option<f64>,
+}
+
+impl RawPowerTransformer<'_> {
     fn resolved_mrid(&self) -> Option<String> {
         if let Some(mrid) = &self.m_rid {
             return Some(normalize_cgmes_ref(mrid));
@@ -621,22 +744,36 @@ impl RawLinearShuntCompensator {
 }
 
 #[derive(Debug, Deserialize)]
-struct RawSwitchedShuntCompensator {
-    #[serde(rename = "@ID", default)]
-    m_rid: Option<String>,
-    #[serde(rename = "@about", default)]
-    about: Option<String>,
-    #[serde(rename = "Equipment.normallyInService", default)]
-    status: Option<bool>,
-    #[serde(rename = "ShuntCompensator.sections", default)]
-    sections: Option<f64>,
-    #[serde(rename = "ShuntCompensator.normalSections", default)]
-    normal_sections: Option<f64>,
-    #[serde(rename = "ShuntCompensator.bPerSection", default)]
-    b_per_section: Option<f64>,
+struct RawPowerTransformerEnd {
+    #[serde(rename = "PowerTransformerEnd.PowerTransformer", default)]
+    transformer: Option<RdfResourceRef>,
+    #[serde(rename = "TransformerEnd.endNumber", default)]
+    end_number: Option<i32>,
+    #[serde(rename = "PowerTransformerEnd.r", default)]
+    r: Option<f64>,
+    #[serde(rename = "PowerTransformerEnd.x", default)]
+    x: Option<f64>,
+    #[serde(rename = "PowerTransformerEnd.g", default)]
+    g: Option<f64>,
+    #[serde(rename = "PowerTransformerEnd.b", default)]
+    b: Option<f64>,
+    #[serde(rename = "PowerTransformerEnd.ratedS", default)]
+    rated_s: Option<f64>,
+    #[serde(rename = "TapChanger.stepVoltageIncrement", default)]
+    tap_ratio: Option<f64>,
+    #[serde(rename = "PowerTransformerEnd.phaseAngleClock", default)]
+    phase_shift: Option<f64>,
 }
 
-impl RawSwitchedShuntCompensator {
+impl RawPowerTransformerEnd {
+    fn transformer_mrid(&self) -> Option<String> {
+        self.transformer
+            .as_ref()
+            .map(|reference| normalize_cgmes_ref(&reference.resource))
+    }
+}
+
+impl RawLinearShuntCompensator {
     fn resolved_mrid(&self) -> Option<String> {
         if let Some(mrid) = &self.m_rid {
             return Some(normalize_cgmes_ref(mrid));
