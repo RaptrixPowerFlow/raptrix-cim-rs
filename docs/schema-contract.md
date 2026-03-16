@@ -45,6 +45,10 @@ Required tables (empty tables allowed):
 - `interfaces`
 - `dynamics_models`
 
+Optional detail table (emitted only in connectivity-detail mode):
+
+- `connectivity_groups`
+
 ## Blocker Fixes Incorporated in v0.5
 
 ### 1) Expanded transformer detail
@@ -104,6 +108,53 @@ Semantics:
 - non-null values key each row to a contingency case.
 
 The reusable schema helper is `solved_results_contingency_id_field()`.
+
+### 5) TP merge policy (EQ + TP)
+
+Default solver-facing bus construction is at TP `TopologicalNode` level:
+
+- EQ `Terminal.ConnectivityNode` references are mapped to TP topological groups.
+- Dense `buses.bus_id` values are assigned by sorted TopologicalNode mRID.
+- `branches.from_bus_id` / `branches.to_bus_id` and `generators.bus_id` follow the collapsed topology.
+
+This policy improves interoperability and reduces matrix dimensions versus raw
+ConnectivityNode granularity while preserving CIM semantics.
+
+Identifier compatibility note:
+
+- TP parsing accepts either `rdf:ID` or `rdf:about` for `TopologicalNode` and
+	`ConnectivityNode` identity extraction.
+- When `rdf:about` is used, a leading `#` is stripped before mRID mapping.
+
+### 6) Split-bus preservation via `connectivity_groups`
+
+When connectivity-detail mode is requested, writers may emit
+`connectivity_groups` with:
+
+- `topological_bus_id` (Int32)
+- `topological_node_mrid` (dictionary string)
+- `connectivity_node_mrids` (List<Utf8>)
+- `connectivity_count` (Int32)
+
+This table preserves switchyard-level split-bus structure for ML and detailed
+contingency analysis without changing core v0.5 table schemas.
+
+### 7) `split_bus` contingency stub element
+
+`contingencies.elements.element_type` now also permits:
+
+- `split_bus`
+
+Current writer behavior is stub-only (no breaker-status parsing yet). Stub
+payload encodes:
+
+- `topological_node_id`
+- `connectivity_node_a`
+- `connectivity_node_b`
+- `breaker_mrid` (`stub` placeholder)
+
+These values are serialized in the existing `gen_id` slot as a compact string
+to preserve strict v0.5 field layout.
 
 ## Compatibility Rules
 

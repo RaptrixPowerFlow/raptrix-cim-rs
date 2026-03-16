@@ -21,4 +21,7 @@ pub mod parser;
 pub mod rpf_writer;
 pub mod test_utils;
 
-pub use rpf_writer::write_complete_rpf;
+pub use rpf_writer::{
+	write_complete_rpf, write_complete_rpf_with_options, BusResolutionMode, WriteOptions,
+	WriteSummary,
+};

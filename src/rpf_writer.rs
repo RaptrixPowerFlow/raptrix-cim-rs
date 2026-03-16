@@ -15,7 +15,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufReader, Cursor, Write};
+use std::io::{Cursor, Write};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -33,12 +33,47 @@ use memmap2::MmapOptions;
 
 use crate::arrow_schema::{
     all_table_schemas, buses_schema, branches_schema, contingencies_schema, dynamics_models_schema,
-    metadata_schema, BRANDING, SCHEMA_VERSION, TABLE_AREAS, TABLE_BRANCHES, TABLE_BUSES,
+    connectivity_groups_schema, generators_schema, metadata_schema, table_schema, BRANDING,
+    SCHEMA_VERSION, TABLE_AREAS, TABLE_BRANCHES, TABLE_BUSES, TABLE_CONNECTIVITY_GROUPS,
     TABLE_CONTINGENCIES, TABLE_DYNAMICS_MODELS, TABLE_FIXED_SHUNTS, TABLE_GENERATORS,
     TABLE_INTERFACES, TABLE_LOADS, TABLE_METADATA, TABLE_OWNERS, TABLE_SWITCHED_SHUNTS,
     TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, TABLE_ZONES,
 };
 use crate::parser;
+
+/// Bus resolution mode for EQ+TP merges.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BusResolutionMode {
+    /// Default interoperability mode: collapse to TP `TopologicalNode`.
+    Topological,
+    /// Detailed mode: keep EQ `ConnectivityNode` granularity.
+    ConnectivityDetail,
+}
+
+/// Writer options for profile merge behavior.
+#[derive(Debug, Clone)]
+pub struct WriteOptions {
+    pub bus_resolution_mode: BusResolutionMode,
+    pub emit_connectivity_groups: bool,
+}
+
+impl Default for WriteOptions {
+    fn default() -> Self {
+        Self {
+            bus_resolution_mode: BusResolutionMode::Topological,
+            emit_connectivity_groups: false,
+        }
+    }
+}
+
+/// Summary emitted by the writer for CLI/reporting.
+#[derive(Debug, Clone, Default)]
+pub struct WriteSummary {
+    pub connectivity_bus_count: usize,
+    pub final_bus_count: usize,
+    pub tp_merged: bool,
+    pub connectivity_groups_rows: usize,
+}
 
 #[derive(Debug, Clone)]
 struct MetadataRow<'a> {
@@ -88,6 +123,30 @@ struct BranchRow<'a> {
     rate_b: f64,
     rate_c: f64,
     status: bool,
+}
+
+#[derive(Debug, Clone)]
+struct GenRow<'a> {
+    bus_id: i32,
+    id: Cow<'a, str>,
+    p_sched_mw: f64,
+    p_min_mw: f64,
+    p_max_mw: f64,
+    q_min_mvar: f64,
+    q_max_mvar: f64,
+    status: bool,
+    mbase_mva: f64,
+    h: f64,
+    xd_prime: f64,
+    d: f64,
+}
+
+#[derive(Debug, Clone)]
+struct ConnectivityGroupRow<'a> {
+    topological_bus_id: i32,
+    topological_node_mrid: Cow<'a, str>,
+    connectivity_node_mrids: Vec<Cow<'a, str>>,
+    connectivity_count: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -236,6 +295,16 @@ pub fn read_rpf_tables(path: impl AsRef<Path>) -> Result<Vec<(String, RecordBatc
 ///   will be added in future revisions.
 /// - Output path must end in `.rpf`.
 pub fn write_complete_rpf(cgmes_paths: &[&str], output_path: &str) -> Result<()> {
+    write_complete_rpf_with_options(cgmes_paths, output_path, &WriteOptions::default())?;
+    Ok(())
+}
+
+/// Writes a complete Raptrix v0.5 `.rpf` IPC artifact with merge options.
+pub fn write_complete_rpf_with_options(
+    cgmes_paths: &[&str],
+    output_path: &str,
+    options: &WriteOptions,
+) -> Result<WriteSummary> {
     if cgmes_paths.is_empty() {
         bail!("cgmes_paths is empty; provide at least one CGMES XML file path");
     }
@@ -245,12 +314,14 @@ pub fn write_complete_rpf(cgmes_paths: &[&str], output_path: &str) -> Result<()>
         );
     }
 
-    let (bus_rows, branch_rows) = parse_eq_topology_rows(cgmes_paths).with_context(|| {
-        format!(
-            "failed while parsing EQ profile content from {} input path(s)",
-            cgmes_paths.len()
-        )
-    })?;
+    let topology = parse_eq_topology_rows(cgmes_paths, options.bus_resolution_mode)
+        .with_context(|| {
+            format!(
+                "failed while parsing EQ/TP profile content from {} input path(s)",
+                cgmes_paths.len()
+            )
+        })?;
+    let (bus_rows, branch_rows, gen_rows, connectivity_group_rows, split_bus_stub_elements) = topology;
 
     let metadata_row = MetadataRow {
         base_mva: 100.0,
@@ -265,15 +336,12 @@ pub fn write_complete_rpf(cgmes_paths: &[&str], output_path: &str) -> Result<()>
     let metadata_batch = build_metadata_batch(&metadata_row)?;
     let buses_batch = build_buses_batch(&bus_rows)?;
     let branches_batch = build_branches_batch(&branch_rows)?;
-    let contingencies_rows = stub_contingency_rows();
+    let generators_batch = build_generators_batch(&gen_rows)?;
+    let contingencies_rows = stub_contingency_rows(split_bus_stub_elements);
     let dynamics_models_rows = stub_dynamics_model_rows();
     let contingencies_batch = build_contingencies_batch(&contingencies_rows)?;
     let dynamics_models_batch = build_dynamics_models_batch(&dynamics_models_rows)?;
-
-    let expected_schemas: Vec<(String, Schema)> = all_table_schemas()
-        .into_iter()
-        .map(|(name, schema)| (name.to_string(), schema_with_table_name(name, &schema)))
-        .collect();
+    let connectivity_groups_batch = build_connectivity_groups_batch(&connectivity_group_rows)?;
 
     let mut ordered_batches: Vec<(String, Schema, RecordBatch)> = Vec::new();
     for (table_name, schema) in all_table_schemas() {
@@ -282,10 +350,10 @@ pub fn write_complete_rpf(cgmes_paths: &[&str], output_path: &str) -> Result<()>
             TABLE_METADATA => metadata_batch.clone(),
             TABLE_BUSES => buses_batch.clone(),
             TABLE_BRANCHES => branches_batch.clone(),
+            TABLE_GENERATORS => generators_batch.clone(),
             TABLE_CONTINGENCIES => contingencies_batch.clone(),
             TABLE_DYNAMICS_MODELS => dynamics_models_batch.clone(),
-            TABLE_GENERATORS
-            | TABLE_LOADS
+            TABLE_LOADS
             | TABLE_FIXED_SHUNTS
             | TABLE_SWITCHED_SHUNTS
             | TABLE_TRANSFORMERS_2W
@@ -300,13 +368,22 @@ pub fn write_complete_rpf(cgmes_paths: &[&str], output_path: &str) -> Result<()>
         ordered_batches.push((table_name.to_string(), schema, batch));
     }
 
+    if options.emit_connectivity_groups {
+        let schema = schema_with_table_name(TABLE_CONNECTIVITY_GROUPS, &connectivity_groups_schema());
+        ordered_batches.push((
+            TABLE_CONNECTIVITY_GROUPS.to_string(),
+            schema,
+            connectivity_groups_batch,
+        ));
+    }
+
     let mut output = File::create(output_path)
         .with_context(|| format!("failed to create output .rpf file at {output_path}"))?;
 
     // Arrow IPC FileWriter has a single-schema header per file segment.
     // We emit canonical table segments in deterministic order to preserve each
     // table's exact v0.5 schema while still using FileWriter for every segment.
-    for (table_index, (table_name, schema, batch)) in ordered_batches.iter().enumerate() {
+    for (table_name, schema, batch) in &ordered_batches {
         let mut writer = FileWriter::try_new(&mut output, schema).with_context(|| {
             format!("failed to initialize IPC FileWriter for table '{table_name}'")
         })?;
@@ -318,22 +395,43 @@ pub fn write_complete_rpf(cgmes_paths: &[&str], output_path: &str) -> Result<()>
         })?;
 
         #[cfg(any(debug_assertions, feature = "strict"))]
-        validate_rpf_segments(
-            &mut writer,
-            &expected_schemas[table_index..=table_index],
-        )
-        .with_context(|| format!("Schema drift in table {table_name}"))?;
+        {
+            let expected = table_schema(table_name)
+                .with_context(|| format!("missing expected schema for table {table_name}"))?;
+            let expected_with_table = schema_with_table_name(table_name, &expected);
+            validate_rpf_segments(
+                &mut writer,
+                &[(table_name.clone(), expected_with_table)],
+            )
+            .with_context(|| format!("Schema drift in table {table_name}"))?;
+        }
 
         writer.finish().with_context(|| {
             format!("failed finishing IPC segment for table '{table_name}'")
         })?;
     }
 
-    Ok(())
+    let tp_merged = options.bus_resolution_mode == BusResolutionMode::Topological
+        && !connectivity_group_rows.is_empty();
+    let connectivity_bus_count = if tp_merged {
+        connectivity_group_rows
+            .iter()
+            .flat_map(|row| row.connectivity_node_mrids.iter())
+            .count()
+    } else {
+        bus_rows.len()
+    };
+
+    Ok(WriteSummary {
+        connectivity_bus_count,
+        final_bus_count: bus_rows.len(),
+        tp_merged,
+        connectivity_groups_rows: connectivity_group_rows.len(),
+    })
 }
 
-fn stub_contingency_rows() -> Vec<ContingencyRow<'static>> {
-    vec![
+fn stub_contingency_rows(split_bus_stub_elements: Vec<ContingencyElement<'static>>) -> Vec<ContingencyRow<'static>> {
+    let mut rows = vec![
         ContingencyRow {
             contingency_id: Cow::Borrowed("N-1 Line1"),
             elements: vec![ContingencyElement {
@@ -363,7 +461,16 @@ fn stub_contingency_rows() -> Vec<ContingencyRow<'static>> {
                 },
             ],
         },
-    ]
+    ];
+
+    if !split_bus_stub_elements.is_empty() {
+        rows.push(ContingencyRow {
+            contingency_id: Cow::Borrowed("split-bus-stub"),
+            elements: split_bus_stub_elements,
+        });
+    }
+
+    rows
 }
 
 fn stub_dynamics_model_rows() -> Vec<DynamicsModelRow<'static>> {
@@ -380,15 +487,34 @@ fn stub_dynamics_model_rows() -> Vec<DynamicsModelRow<'static>> {
 
 fn parse_eq_components_for_path(
     path: &str,
-) -> Result<(Vec<crate::models::ACLineSegment<'static>>, Vec<parser::TerminalLink>)> {
-    let file = File::open(path)
+) -> Result<(
+    Vec<crate::models::ACLineSegment<'static>>,
+    Vec<crate::models::SynchronousMachine<'static>>,
+    Vec<parser::TerminalLink>,
+    Vec<crate::models::TopologicalNode<'static>>,
+    Vec<crate::models::ConnectivityNodeGroup<'static>>,
+)> {
+    let bytes = std::fs::read(path)
         .with_context(|| format!("failed to open CGMES input file at {path}"))?;
 
-    parser::eq_lines_and_terminals_from_reader(BufReader::new(file)).with_context(|| {
-        format!(
-            "failed to extract ACLineSegment/Terminal elements from CGMES input file at {path}"
-        )
-    })
+    let (lines, machines, terminals) = parser::eq_lines_machines_and_terminals_from_reader(Cursor::new(&bytes))
+        .with_context(|| {
+            format!(
+                "failed to extract ACLineSegment/SynchronousMachine/Terminal elements from CGMES input file at {path}"
+            )
+        })?;
+
+    let topological_nodes = parser::topological_nodes_from_reader(Cursor::new(&bytes))
+        .with_context(|| format!("failed to extract TopologicalNode elements from CGMES input file at {path}"))?;
+
+    let connectivity_groups = parser::connectivity_node_groups_from_reader(Cursor::new(&bytes))
+        .with_context(|| {
+            format!(
+                "failed to extract TopologicalNode/ConnectivityNode group links from CGMES input file at {path}"
+            )
+        })?;
+
+    Ok((lines, machines, terminals, topological_nodes, connectivity_groups))
 }
 
 /// Parses EQ data and deterministically maps terminal connectivity into
@@ -398,17 +524,45 @@ fn parse_eq_components_for_path(
 /// hot loops where possible.
 /// Tenet 2: prepares rows that map exactly to locked `buses` and `branches`
 /// schemas without mutation.
-fn parse_eq_topology_rows(cgmes_paths: &[&str]) -> Result<(Vec<BusRow<'static>>, Vec<BranchRow<'static>>)> {
+fn parse_eq_topology_rows(
+    cgmes_paths: &[&str],
+    bus_resolution_mode: BusResolutionMode,
+) -> Result<(
+    Vec<BusRow<'static>>,
+    Vec<BranchRow<'static>>,
+    Vec<GenRow<'static>>,
+    Vec<ConnectivityGroupRow<'static>>,
+    Vec<ContingencyElement<'static>>,
+)> {
     let mut lines = Vec::new();
+    let mut machines = Vec::new();
     let mut terminals = Vec::new();
+    let mut topological_nodes = Vec::new();
+    let mut connectivity_groups = Vec::new();
 
     for path in cgmes_paths {
-        let (mut parsed_lines, mut parsed_terminals) = parse_eq_components_for_path(path)?;
+        let (
+            mut parsed_lines,
+            mut parsed_machines,
+            mut parsed_terminals,
+            mut parsed_topological_nodes,
+            mut parsed_connectivity_groups,
+        ) =
+            parse_eq_components_for_path(path)?;
         if !parsed_lines.is_empty() {
             lines.append(&mut parsed_lines);
         }
+        if !parsed_machines.is_empty() {
+            machines.append(&mut parsed_machines);
+        }
         if !parsed_terminals.is_empty() {
             terminals.append(&mut parsed_terminals);
+        }
+        if !parsed_topological_nodes.is_empty() {
+            topological_nodes.append(&mut parsed_topological_nodes);
+        }
+        if !parsed_connectivity_groups.is_empty() {
+            connectivity_groups.append(&mut parsed_connectivity_groups);
         }
     }
 
@@ -419,24 +573,47 @@ fn parse_eq_topology_rows(cgmes_paths: &[&str]) -> Result<(Vec<BusRow<'static>>,
         bail!("no Terminal elements found across supplied CGMES paths")
     }
 
-    let mut sorted_node_mrids: Vec<&str> = terminals
-        .iter()
-        .map(|terminal| terminal.connectivity_node_mrid.as_str())
-        .collect();
-    sorted_node_mrids.sort_unstable();
-    sorted_node_mrids.dedup();
-
-    let mut node_to_bus_id: HashMap<&str, i32> = HashMap::with_capacity(sorted_node_mrids.len());
-    for (idx, node_mrid) in sorted_node_mrids.iter().enumerate() {
-        node_to_bus_id.insert(*node_mrid, (idx as i32) + 1);
+    let mut conn_to_topo: HashMap<&str, &str> = HashMap::new();
+    for group in &connectivity_groups {
+        let topological_mrid = group.topological_node_mrid.as_ref();
+        for connectivity_mrid in &group.connectivity_node_mrids {
+            conn_to_topo.insert(connectivity_mrid.as_ref(), topological_mrid);
+        }
     }
 
-    let bus_rows: Vec<BusRow<'static>> = sorted_node_mrids
+    let use_topological = !conn_to_topo.is_empty() && bus_resolution_mode == BusResolutionMode::Topological;
+
+    let mut sorted_bus_keys: Vec<&str> = terminals
         .iter()
-        .enumerate()
-        .map(|(idx, node_mrid)| BusRow {
-            bus_id: (idx as i32) + 1,
-            name: Cow::Owned((*node_mrid).to_owned()),
+        .map(|terminal| {
+            if use_topological {
+                conn_to_topo
+                    .get(terminal.connectivity_node_mrid.as_str())
+                    .copied()
+                    .with_context(|| {
+                        format!(
+                            "missing TP TopologicalNode mapping for ConnectivityNode '{}'",
+                            terminal.connectivity_node_mrid
+                        )
+                    })
+            } else {
+                Ok(terminal.connectivity_node_mrid.as_str())
+            }
+        })
+        .collect::<Result<Vec<_>>>()?;
+    sorted_bus_keys.sort_unstable();
+    sorted_bus_keys.dedup();
+
+    let mut bus_key_to_bus_id: HashMap<&str, i32> = HashMap::with_capacity(sorted_bus_keys.len());
+    for (idx, bus_key) in sorted_bus_keys.iter().enumerate() {
+        bus_key_to_bus_id.insert(*bus_key, (idx as i32) + 1);
+    }
+
+    let bus_rows: Vec<BusRow<'static>> = sorted_bus_keys
+        .iter()
+        .map(|bus_key| BusRow {
+            bus_id: bus_key_to_bus_id[bus_key],
+            name: Cow::Owned((*bus_key).to_owned()),
             bus_type: 1,
             p_sched: 0.0,
             q_sched: 0.0,
@@ -493,14 +670,31 @@ fn parse_eq_topology_rows(cgmes_paths: &[&str]) -> Result<(Vec<BusRow<'static>>,
         let from_node = terminals[from_idx].connectivity_node_mrid.as_str();
         let to_node = terminals[to_idx].connectivity_node_mrid.as_str();
 
-        let from_bus_id = node_to_bus_id.get(from_node).copied().with_context(|| {
+        let from_bus_key = if use_topological {
+            conn_to_topo.get(from_node).copied().with_context(|| {
+                format!(
+                    "failed to resolve ConnectivityNode '{from_node}' to TopologicalNode"
+                )
+            })?
+        } else {
+            from_node
+        };
+        let to_bus_key = if use_topological {
+            conn_to_topo.get(to_node).copied().with_context(|| {
+                format!("failed to resolve ConnectivityNode '{to_node}' to TopologicalNode")
+            })?
+        } else {
+            to_node
+        };
+
+        let from_bus_id = bus_key_to_bus_id.get(from_bus_key).copied().with_context(|| {
             format!(
-                "failed to resolve ConnectivityNode '{from_node}' to dense bus_id"
+                "failed to resolve bus key '{from_bus_key}' to dense bus_id"
             )
         })?;
-        let to_bus_id = node_to_bus_id.get(to_node).copied().with_context(|| {
+        let to_bus_id = bus_key_to_bus_id.get(to_bus_key).copied().with_context(|| {
             format!(
-                "failed to resolve ConnectivityNode '{to_node}' to dense bus_id"
+                "failed to resolve bus key '{to_bus_key}' to dense bus_id"
             )
         })?;
 
@@ -521,7 +715,149 @@ fn parse_eq_topology_rows(cgmes_paths: &[&str]) -> Result<(Vec<BusRow<'static>>,
         });
     }
 
-    Ok((bus_rows, branch_rows))
+    machines.sort_unstable_by(|left, right| left.base.m_rid.cmp(&right.base.m_rid));
+
+    let mut terminals_by_equipment: HashMap<&str, Vec<&parser::TerminalLink>> = HashMap::new();
+    for terminal in &terminals {
+        terminals_by_equipment
+            .entry(terminal.line_mrid.as_str())
+            .or_default()
+            .push(terminal);
+    }
+
+    let mut gen_rows = Vec::with_capacity(machines.len());
+    for machine in machines {
+        let machine_mrid = machine.base.m_rid.as_ref();
+        let machine_terminals = terminals_by_equipment.get(machine_mrid).with_context(|| {
+            format!("missing Terminal linkage for SynchronousMachine mRID '{machine_mrid}'")
+        })?;
+
+        let selected_terminal = machine_terminals
+            .iter()
+            .copied()
+            .min_by_key(|terminal| {
+                (
+                    terminal.sequence_number,
+                    terminal.connectivity_node_mrid.as_str(),
+                )
+            })
+            .with_context(|| {
+                format!(
+                    "missing Terminal linkage for SynchronousMachine mRID '{machine_mrid}'"
+                )
+            })?;
+
+        let bus_id = if use_topological {
+            let topological_bus_key = conn_to_topo
+                .get(selected_terminal.connectivity_node_mrid.as_str())
+                .copied()
+                .with_context(|| {
+                    format!(
+                        "failed to resolve ConnectivityNode '{}' to TopologicalNode for SynchronousMachine mRID '{machine_mrid}'",
+                        selected_terminal.connectivity_node_mrid
+                    )
+                })?;
+            bus_key_to_bus_id
+                .get(topological_bus_key)
+                .copied()
+                .with_context(|| {
+                    format!(
+                        "failed to resolve TopologicalNode '{}' to dense bus_id for SynchronousMachine mRID '{machine_mrid}'",
+                        topological_bus_key
+                    )
+                })?
+        } else {
+            bus_key_to_bus_id
+                .get(selected_terminal.connectivity_node_mrid.as_str())
+                .copied()
+                .with_context(|| {
+                    format!(
+                        "failed to resolve ConnectivityNode '{}' to dense bus_id for SynchronousMachine mRID '{machine_mrid}'",
+                        selected_terminal.connectivity_node_mrid
+                    )
+                })?
+        };
+
+        gen_rows.push(GenRow {
+            bus_id,
+            id: machine.base.m_rid,
+            p_sched_mw: machine.p_sched_mw.unwrap_or(0.0),
+            p_min_mw: machine.p_min_mw.unwrap_or(0.0),
+            p_max_mw: machine.p_max_mw.unwrap_or(0.0),
+            q_min_mvar: machine.q_min_mvar.unwrap_or(0.0),
+            q_max_mvar: machine.q_max_mvar.unwrap_or(0.0),
+            status: true,
+            mbase_mva: machine.mbase_mva.unwrap_or(100.0),
+            h: machine.h.unwrap_or(0.0),
+            xd_prime: machine.xd_prime.unwrap_or(0.0),
+            d: machine.d.unwrap_or(0.0),
+        });
+    }
+
+    let mut topology_name_by_mrid: HashMap<&str, &str> = HashMap::new();
+    for node in &topological_nodes {
+        if let Some(name) = node.base.name.as_deref() {
+            topology_name_by_mrid.insert(node.base.m_rid.as_ref(), name);
+        }
+    }
+
+    let mut connectivity_group_rows: Vec<ConnectivityGroupRow<'static>> = Vec::new();
+    let mut split_bus_stub_elements: Vec<ContingencyElement<'static>> = Vec::new();
+    for group in &connectivity_groups {
+        let topological_mrid = group.topological_node_mrid.as_ref().to_owned();
+        let bus_key = if use_topological {
+            topological_mrid.as_str()
+        } else {
+            continue;
+        };
+        let Some(topological_bus_id) = bus_key_to_bus_id.get(bus_key).copied() else {
+            continue;
+        };
+
+        let mut connectivity_node_mrids: Vec<Cow<'static, str>> = group
+            .connectivity_node_mrids
+            .iter()
+            .map(|value| Cow::Owned(value.as_ref().to_owned()))
+            .collect();
+        connectivity_node_mrids.sort_unstable();
+        connectivity_node_mrids.dedup();
+
+        let display_topological = topology_name_by_mrid
+            .get(topological_mrid.as_str())
+            .copied()
+            .unwrap_or(topological_mrid.as_str())
+            .to_owned();
+
+        if connectivity_node_mrids.len() > 1 {
+            let split_id = format!(
+                "topological_node_id={topological_bus_id};connectivity_node_a={};connectivity_node_b={};breaker_mrid=stub",
+                connectivity_node_mrids[0],
+                connectivity_node_mrids[1]
+            );
+            split_bus_stub_elements.push(ContingencyElement {
+                element_type: Cow::Borrowed("split_bus"),
+                branch_id: None,
+                bus_id: Some(topological_bus_id),
+                id: Some(Cow::Owned(split_id)),
+                status_change: true,
+            });
+        }
+
+        connectivity_group_rows.push(ConnectivityGroupRow {
+            topological_bus_id,
+            topological_node_mrid: Cow::Owned(display_topological),
+            connectivity_count: connectivity_node_mrids.len() as i32,
+            connectivity_node_mrids,
+        });
+    }
+
+    Ok((
+        bus_rows,
+        branch_rows,
+        gen_rows,
+        connectivity_group_rows,
+        split_bus_stub_elements,
+    ))
 }
 
 /// Builds the one-row `metadata` table batch using the locked v0.5 schema.
@@ -684,6 +1020,95 @@ fn build_branches_batch(rows: &[BranchRow<'_>]) -> Result<RecordBatch> {
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build branches record batch")
+}
+
+fn build_generators_batch(rows: &[GenRow<'_>]) -> Result<RecordBatch> {
+    let schema = Arc::new(generators_schema());
+
+    let mut bus_id_b = Int32Builder::new();
+    let mut id_b = StringDictionaryBuilder::<Int32Type>::new();
+    let mut p_sched_mw_b = Float64Builder::new();
+    let mut p_min_mw_b = Float64Builder::new();
+    let mut p_max_mw_b = Float64Builder::new();
+    let mut q_min_mvar_b = Float64Builder::new();
+    let mut q_max_mvar_b = Float64Builder::new();
+    let mut status_b = BooleanBuilder::new();
+    let mut mbase_mva_b = Float64Builder::new();
+    let mut h_b = Float64Builder::new();
+    let mut xd_prime_b = Float64Builder::new();
+    let mut d_b = Float64Builder::new();
+
+    for row in rows {
+        bus_id_b.append_value(row.bus_id);
+        id_b.append(row.id.as_ref())?;
+        p_sched_mw_b.append_value(row.p_sched_mw);
+        p_min_mw_b.append_value(row.p_min_mw);
+        p_max_mw_b.append_value(row.p_max_mw);
+        q_min_mvar_b.append_value(row.q_min_mvar);
+        q_max_mvar_b.append_value(row.q_max_mvar);
+        status_b.append_value(row.status);
+        mbase_mva_b.append_value(row.mbase_mva);
+        h_b.append_value(row.h);
+        xd_prime_b.append_value(row.xd_prime);
+        d_b.append_value(row.d);
+    }
+
+    let arrays: Vec<ArrayRef> = vec![
+        Arc::new(bus_id_b.finish()) as ArrayRef,
+        Arc::new(id_b.finish()) as ArrayRef,
+        Arc::new(p_sched_mw_b.finish()) as ArrayRef,
+        Arc::new(p_min_mw_b.finish()) as ArrayRef,
+        Arc::new(p_max_mw_b.finish()) as ArrayRef,
+        Arc::new(q_min_mvar_b.finish()) as ArrayRef,
+        Arc::new(q_max_mvar_b.finish()) as ArrayRef,
+        Arc::new(status_b.finish()) as ArrayRef,
+        Arc::new(mbase_mva_b.finish()) as ArrayRef,
+        Arc::new(h_b.finish()) as ArrayRef,
+        Arc::new(xd_prime_b.finish()) as ArrayRef,
+        Arc::new(d_b.finish()) as ArrayRef,
+    ];
+
+    RecordBatch::try_new(schema, arrays).context("failed to build generators record batch")
+}
+
+fn build_connectivity_groups_batch(rows: &[ConnectivityGroupRow<'_>]) -> Result<RecordBatch> {
+    let schema = Arc::new(connectivity_groups_schema());
+
+    let mut topological_bus_id_b = Int32Builder::new();
+    let mut topological_node_mrid_b = StringDictionaryBuilder::<Int32Type>::new();
+    let list_field = schema
+        .field(2)
+        .data_type()
+        .clone();
+    let mut connectivity_node_mrids_b =
+        ListBuilder::new(StringBuilder::new()).with_field(match list_field {
+            DataType::List(field) => field,
+            _ => Arc::new(Field::new("item", DataType::Utf8, false)),
+        });
+    let mut connectivity_count_b = Int32Builder::new();
+
+    for row in rows {
+        topological_bus_id_b.append_value(row.topological_bus_id);
+        topological_node_mrid_b.append(row.topological_node_mrid.as_ref())?;
+
+        for connectivity_node_mrid in &row.connectivity_node_mrids {
+            connectivity_node_mrids_b
+                .values()
+                .append_value(connectivity_node_mrid.as_ref());
+        }
+        connectivity_node_mrids_b.append(true);
+
+        connectivity_count_b.append_value(row.connectivity_count);
+    }
+
+    let arrays: Vec<ArrayRef> = vec![
+        Arc::new(topological_bus_id_b.finish()) as ArrayRef,
+        Arc::new(topological_node_mrid_b.finish()) as ArrayRef,
+        Arc::new(connectivity_node_mrids_b.finish()) as ArrayRef,
+        Arc::new(connectivity_count_b.finish()) as ArrayRef,
+    ];
+
+    RecordBatch::try_new(schema, arrays).context("failed to build connectivity_groups record batch")
 }
 
 /// Builds the `contingencies` table batch with list-of-struct payloads.

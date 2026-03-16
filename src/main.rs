@@ -19,7 +19,9 @@ use anyhow::{bail, Context, Result};
 use clap::{ArgGroup, Parser, Subcommand};
 
 use raptrix_cim_rs::arrow_schema::BRANDING;
-use raptrix_cim_rs::write_complete_rpf;
+use raptrix_cim_rs::rpf_writer::{
+    write_complete_rpf_with_options, BusResolutionMode, WriteOptions,
+};
 
 const COPYRIGHT: &str = "Copyright (c) 2026 Musto Technologies LLC";
 const CANONICAL_TABLE_COUNT: usize = 15;
@@ -79,6 +81,18 @@ struct ConvertArgs {
     /// Output `.rpf` path.
     #[arg(long)]
     output: PathBuf,
+
+    /// Print resolved input/output paths.
+    #[arg(long)]
+    verbose: bool,
+
+    /// Use TP TopologicalNode collapsing for bus IDs (default interoperability mode).
+    #[arg(long)]
+    topological: bool,
+
+    /// Keep ConnectivityNode granularity and emit optional connectivity_groups detail.
+    #[arg(long)]
+    connectivity_detail: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -103,24 +117,84 @@ fn run() -> Result<()> {
 }
 
 fn run_convert(args: ConvertArgs) -> Result<()> {
-    validate_output_path(&args.output)?;
-    let (mode, profile_paths) = collect_profile_paths(&args)?;
+    let cwd = std::env::current_dir().context("failed to resolve current working directory")?;
+    let output_path = normalize_output_path(&args.output, &cwd);
+    validate_output_path(&output_path)?;
 
-    let input_refs: Vec<&str> = profile_paths.iter().map(|(_, path)| path.as_str()).collect();
-    let output = args.output.to_string_lossy().into_owned();
-    write_complete_rpf(&input_refs, &output)
+    let (mode, profile_paths) = collect_profile_paths(&args, &cwd)?;
+
+    if args.verbose {
+        println!("{BRANDING}");
+        println!("Resolved output path: {}", output_path.display());
+        for (profile, path) in &profile_paths {
+            println!("Resolved {profile} path: {}", path.display());
+        }
+    }
+
+    let input_strings: Vec<String> = profile_paths
+        .iter()
+        .map(|(_, path)| path.to_string_lossy().into_owned())
+        .collect();
+    let input_refs: Vec<&str> = input_strings.iter().map(String::as_str).collect();
+    let output = output_path.to_string_lossy().into_owned();
+    if args.topological && args.connectivity_detail {
+        bail!("Use either --topological or --connectivity-detail, not both");
+    }
+
+    let write_options = if args.connectivity_detail {
+        WriteOptions {
+            bus_resolution_mode: BusResolutionMode::ConnectivityDetail,
+            emit_connectivity_groups: true,
+        }
+    } else {
+        WriteOptions {
+            // Topological is default for interoperability.
+            bus_resolution_mode: BusResolutionMode::Topological,
+            emit_connectivity_groups: false,
+        }
+    };
+
+    let summary = write_complete_rpf_with_options(&input_refs, &output, &write_options)
         .with_context(|| format!("failed to write Raptrix CIM-Arrow output to {output}"))?;
 
-    let file_size = fs::metadata(&args.output)
-        .with_context(|| format!("failed to read output metadata for {}", args.output.display()))?
+    let file_size = fs::metadata(&output_path)
+        .with_context(|| format!("failed to read output metadata for {}", output_path.display()))?
         .len();
 
     println!("{BRANDING}");
     println!("Mode: {}", mode_label(mode));
     println!("Profiles: {}", format_profile_summary(&profile_paths));
-    println!("Output: {}", args.output.display());
+    println!(
+        "Bus resolution: {}",
+        match write_options.bus_resolution_mode {
+            BusResolutionMode::Topological => "topological",
+            BusResolutionMode::ConnectivityDetail => "connectivity-detail",
+        }
+    );
+    println!("Output: {}", output_path.display());
     println!("File size: {} bytes", file_size);
-    println!("Tables emitted: {CANONICAL_TABLE_COUNT}");
+    let emitted_tables = if write_options.emit_connectivity_groups {
+        CANONICAL_TABLE_COUNT + 1
+    } else {
+        CANONICAL_TABLE_COUNT
+    };
+    println!("Tables emitted: {emitted_tables}");
+    if summary.tp_merged {
+        println!(
+            "TP merge bus reduction: {} -> {} ({:.1}% reduction)",
+            summary.connectivity_bus_count,
+            summary.final_bus_count,
+            100.0
+                * (summary.connectivity_bus_count.saturating_sub(summary.final_bus_count)) as f64
+                / summary.connectivity_bus_count as f64
+        );
+    }
+    if write_options.emit_connectivity_groups {
+        println!(
+            "Connectivity groups emitted: {}",
+            summary.connectivity_groups_rows
+        );
+    }
 
     Ok(())
 }
@@ -139,15 +213,18 @@ fn validate_output_path(output: &Path) -> Result<()> {
     Ok(())
 }
 
-fn collect_profile_paths(args: &ConvertArgs) -> Result<(DetectionMode, Vec<(String, String)>)> {
+fn collect_profile_paths(
+    args: &ConvertArgs,
+    cwd: &Path,
+) -> Result<(DetectionMode, Vec<(String, PathBuf)>)> {
     match (&args.input_dir, has_explicit_profiles(args)) {
         (Some(_), true) => bail!("Use either --input-dir or explicit profile flags, not both"),
         (Some(input_dir), false) => {
-            let profiles = detect_profiles(input_dir)?;
+            let profiles = detect_profiles(input_dir, cwd)?;
             Ok((DetectionMode::Auto, profiles))
         }
         (None, true) => {
-            let profiles = explicit_profiles(args)?;
+            let profiles = explicit_profiles(args, cwd)?;
             Ok((DetectionMode::Explicit, profiles))
         }
         (None, false) => bail!("Provide --input-dir or at least --eq <PATH>"),
@@ -158,10 +235,10 @@ fn has_explicit_profiles(args: &ConvertArgs) -> bool {
     args.eq.is_some() || args.tp.is_some() || args.sv.is_some() || args.ssh.is_some() || args.dy.is_some()
 }
 
-fn explicit_profiles(args: &ConvertArgs) -> Result<Vec<(String, String)>> {
+fn explicit_profiles(args: &ConvertArgs, cwd: &Path) -> Result<Vec<(String, PathBuf)>> {
     let eq = args.eq.as_ref().context("No EQ profile found")?;
     let mut profiles = Vec::with_capacity(5);
-    profiles.push(("EQ".to_string(), normalize_existing_path(eq)?));
+    profiles.push(("EQ".to_string(), normalize_existing_path(eq, cwd)?));
 
     for (profile_name, path) in [
         ("TP", args.tp.as_ref()),
@@ -170,21 +247,30 @@ fn explicit_profiles(args: &ConvertArgs) -> Result<Vec<(String, String)>> {
         ("DY", args.dy.as_ref()),
     ] {
         if let Some(path) = path {
-            profiles.push((profile_name.to_string(), normalize_existing_path(path)?));
+            profiles.push((
+                profile_name.to_string(),
+                normalize_existing_path(path, cwd)?,
+            ));
         }
     }
 
     Ok(profiles)
 }
 
-fn detect_profiles(input_dir: &Path) -> Result<Vec<(String, String)>> {
-    if !input_dir.is_dir() {
-        bail!("Input directory does not exist or is not a directory: {}", input_dir.display());
+fn detect_profiles(input_dir: &Path, cwd: &Path) -> Result<Vec<(String, PathBuf)>> {
+    let resolved_input_dir = resolve_from_cwd(input_dir, cwd);
+    let canonical_input_dir = canonicalize_or_original(&resolved_input_dir);
+
+    if !canonical_input_dir.is_dir() {
+        bail!(
+            "Input directory does not exist or is not a directory: {}",
+            canonical_input_dir.display()
+        );
     }
 
     let mut detected = Vec::with_capacity(5);
     for profile in ["EQ", "TP", "SV", "SSH", "DY"] {
-        if let Some(path) = find_profile_file(input_dir, profile)? {
+        if let Some(path) = find_profile_file(&canonical_input_dir, profile)? {
             detected.push((profile.to_string(), path));
         }
     }
@@ -196,7 +282,7 @@ fn detect_profiles(input_dir: &Path) -> Result<Vec<(String, String)>> {
     Ok(detected)
 }
 
-fn find_profile_file(input_dir: &Path, profile: &str) -> Result<Option<String>> {
+fn find_profile_file(input_dir: &Path, profile: &str) -> Result<Option<PathBuf>> {
     let mut entries = fs::read_dir(input_dir)
         .with_context(|| format!("failed to read input directory {}", input_dir.display()))?
         .collect::<std::result::Result<Vec<_>, _>>()
@@ -215,18 +301,44 @@ fn find_profile_file(input_dir: &Path, profile: &str) -> Result<Option<String>> 
         };
         let lower_name = name.to_ascii_lowercase();
         if lower_name.contains(&needle) && lower_name.ends_with(".xml") {
-            return Ok(Some(path.to_string_lossy().into_owned()));
+            return Ok(Some(canonicalize_or_original(&path)));
         }
     }
 
     Ok(None)
 }
 
-fn normalize_existing_path(path: &Path) -> Result<String> {
-    if !path.is_file() {
-        bail!("Input file does not exist: {}", path.display());
+fn normalize_existing_path(path: &Path, cwd: &Path) -> Result<PathBuf> {
+    let resolved = resolve_from_cwd(path, cwd);
+    let canonical = canonicalize_or_original(&resolved);
+    if !canonical.is_file() {
+        bail!("Input file does not exist: {}", canonical.display());
     }
-    Ok(path.to_string_lossy().into_owned())
+    Ok(canonical)
+}
+
+fn normalize_output_path(path: &Path, cwd: &Path) -> PathBuf {
+    let resolved = resolve_from_cwd(path, cwd);
+    if let Some(file_name) = resolved.file_name() {
+        if let Some(parent) = resolved.parent() {
+            if let Ok(canonical_parent) = parent.canonicalize() {
+                return canonical_parent.join(file_name);
+            }
+        }
+    }
+    resolved
+}
+
+fn resolve_from_cwd(path: &Path, cwd: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        cwd.join(path)
+    }
+}
+
+fn canonicalize_or_original(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn mode_label(mode: DetectionMode) -> &'static str {
@@ -236,10 +348,10 @@ fn mode_label(mode: DetectionMode) -> &'static str {
     }
 }
 
-fn format_profile_summary(profile_paths: &[(String, String)]) -> String {
+fn format_profile_summary(profile_paths: &[(String, PathBuf)]) -> String {
     profile_paths
         .iter()
-        .map(|(profile, path)| format!("{profile}={path}"))
+    .map(|(profile, path)| format!("{profile}={}", path.display()))
         .collect::<Vec<_>>()
         .join(", ")
 }

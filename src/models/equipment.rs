@@ -13,6 +13,7 @@
 //!        └─ Equipment
 //!             ├─ ConductingEquipment
 //!             │    └─ ACLineSegment
+//!             │    └─ SynchronousMachine
 //!             └─ EnergyConsumer
 //! ```
 //!
@@ -333,6 +334,191 @@ impl<'a> IdentifiedObject for EnergyConsumer<'a> {
 
 impl<'a> PowerSystemResource for EnergyConsumer<'a> {}
 impl<'a> Equipment for EnergyConsumer<'a> {}
+
+// ---------------------------------------------------------------------------
+// SynchronousMachine
+// ---------------------------------------------------------------------------
+
+/// CIM `SynchronousMachine` - a generator modelled as conducting equipment.
+///
+/// This profile only carries fields required by the locked v0.5 `generators`
+/// table. Missing optional values are populated later by writer defaults.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SynchronousMachine<'a> {
+    /// Inherited `IdentifiedObject` fields (mRID, name, description).
+    pub base: BaseAttributes<'a>,
+
+    /// Scheduled active power output (MW).
+    pub p_sched_mw: Option<f64>,
+
+    /// Minimum active power output (MW).
+    pub p_min_mw: Option<f64>,
+
+    /// Maximum active power output (MW).
+    pub p_max_mw: Option<f64>,
+
+    /// Minimum reactive power output (Mvar).
+    pub q_min_mvar: Option<f64>,
+
+    /// Maximum reactive power output (Mvar).
+    pub q_max_mvar: Option<f64>,
+
+    /// Machine base power (MVA).
+    pub mbase_mva: Option<f64>,
+
+    /// Inertia constant H.
+    pub h: Option<f64>,
+
+    /// Transient reactance Xd'.
+    pub xd_prime: Option<f64>,
+
+    /// Damping coefficient D.
+    pub d: Option<f64>,
+}
+
+#[derive(Deserialize)]
+struct RawSynchronousMachine<'a> {
+    #[serde(rename = "@ID", borrow)]
+    m_rid: Cow<'a, str>,
+    #[serde(rename = "IdentifiedObject.name", default, borrow)]
+    name: Option<Cow<'a, str>>,
+    #[serde(rename = "IdentifiedObject.description", default, borrow)]
+    description: Option<Cow<'a, str>>,
+    #[serde(rename = "RotatingMachine.p", default)]
+    p_sched_mw: Option<f64>,
+    #[serde(rename = "GeneratingUnit.minOperatingP", default)]
+    p_min_mw: Option<f64>,
+    #[serde(rename = "GeneratingUnit.maxOperatingP", default)]
+    p_max_mw: Option<f64>,
+    #[serde(rename = "SynchronousMachine.minQ", default)]
+    q_min_mvar: Option<f64>,
+    #[serde(rename = "SynchronousMachine.maxQ", default)]
+    q_max_mvar: Option<f64>,
+    #[serde(rename = "RotatingMachine.ratedS", default)]
+    mbase_mva: Option<f64>,
+    #[serde(rename = "SynchronousMachine.H", default)]
+    h: Option<f64>,
+    #[serde(rename = "SynchronousMachine.xdPrime", default)]
+    xd_prime: Option<f64>,
+    #[serde(rename = "SynchronousMachine.D", default)]
+    d: Option<f64>,
+}
+
+impl<'de: 'a, 'a> Deserialize<'de> for SynchronousMachine<'a> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = RawSynchronousMachine::deserialize(deserializer)?;
+        Ok(SynchronousMachine {
+            base: BaseAttributes {
+                m_rid: raw.m_rid,
+                name: raw.name,
+                description: raw.description,
+            },
+            p_sched_mw: raw.p_sched_mw,
+            p_min_mw: raw.p_min_mw,
+            p_max_mw: raw.p_max_mw,
+            q_min_mvar: raw.q_min_mvar,
+            q_max_mvar: raw.q_max_mvar,
+            mbase_mva: raw.mbase_mva,
+            h: raw.h,
+            xd_prime: raw.xd_prime,
+            d: raw.d,
+        })
+    }
+}
+
+impl<'a> Serialize for SynchronousMachine<'a> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut s = serializer.serialize_struct("cim:SynchronousMachine", 10)?;
+        s.serialize_field("@ID", &self.base.m_rid)?;
+        if let Some(ref n) = self.base.name {
+            s.serialize_field("IdentifiedObject.name", n)?;
+        }
+        if let Some(ref dsc) = self.base.description {
+            s.serialize_field("IdentifiedObject.description", dsc)?;
+        }
+        if let Some(v) = self.p_sched_mw {
+            s.serialize_field("RotatingMachine.p", &v)?;
+        }
+        if let Some(v) = self.p_min_mw {
+            s.serialize_field("GeneratingUnit.minOperatingP", &v)?;
+        }
+        if let Some(v) = self.p_max_mw {
+            s.serialize_field("GeneratingUnit.maxOperatingP", &v)?;
+        }
+        if let Some(v) = self.q_min_mvar {
+            s.serialize_field("SynchronousMachine.minQ", &v)?;
+        }
+        if let Some(v) = self.q_max_mvar {
+            s.serialize_field("SynchronousMachine.maxQ", &v)?;
+        }
+        if let Some(v) = self.mbase_mva {
+            s.serialize_field("RotatingMachine.ratedS", &v)?;
+        }
+        if let Some(v) = self.h {
+            s.serialize_field("SynchronousMachine.H", &v)?;
+        }
+        if let Some(v) = self.xd_prime {
+            s.serialize_field("SynchronousMachine.xdPrime", &v)?;
+        }
+        if let Some(v) = self.d {
+            s.serialize_field("SynchronousMachine.D", &v)?;
+        }
+        s.end()
+    }
+}
+
+impl<'a> SynchronousMachine<'a> {
+    /// Creates a new [`SynchronousMachine`] with only required identity fields.
+    pub fn new(base: BaseAttributes<'a>) -> Self {
+        Self {
+            base,
+            p_sched_mw: None,
+            p_min_mw: None,
+            p_max_mw: None,
+            q_min_mvar: None,
+            q_max_mvar: None,
+            mbase_mva: None,
+            h: None,
+            xd_prime: None,
+            d: None,
+        }
+    }
+
+    /// Converts to a fully-owned (`'static`) [`SynchronousMachine`].
+    pub fn into_owned(self) -> SynchronousMachine<'static> {
+        SynchronousMachine {
+            base: self.base.into_owned(),
+            p_sched_mw: self.p_sched_mw,
+            p_min_mw: self.p_min_mw,
+            p_max_mw: self.p_max_mw,
+            q_min_mvar: self.q_min_mvar,
+            q_max_mvar: self.q_max_mvar,
+            mbase_mva: self.mbase_mva,
+            h: self.h,
+            xd_prime: self.xd_prime,
+            d: self.d,
+        }
+    }
+}
+
+impl<'a> IdentifiedObject for SynchronousMachine<'a> {
+    fn mrid(&self) -> &str {
+        self.base.mrid()
+    }
+
+    fn name(&self) -> Option<&str> {
+        self.base.name()
+    }
+
+    fn description(&self) -> Option<&str> {
+        self.base.description()
+    }
+}
+
+impl<'a> PowerSystemResource for SynchronousMachine<'a> {}
+impl<'a> Equipment for SynchronousMachine<'a> {}
+impl<'a> ConductingEquipment for SynchronousMachine<'a> {}
 
 // ---------------------------------------------------------------------------
 // Tests
