@@ -1,4 +1,4 @@
-"""Automated SmallGrid RPF validation.
+"""Automated CGMES merged-profile RPF validation.
 
 Run with:
     python -m pytest tests/inspect_rpf.py -q
@@ -146,7 +146,11 @@ def _parse_eq_metrics(
             if p_text is None:
                 p_text = _text_of_first(element, "SynchronousMachine.p")
             generators_by_mrid[mrid] = float(p_text) if p_text is not None else 0.0
-        elif element.tag.endswith("EnergyConsumer"):
+        elif (
+            element.tag.endswith("EnergyConsumer")
+            or element.tag.endswith("ConformLoad")
+            or element.tag.endswith("NonConformLoad")
+        ):
             mrid = element.get(f"{rdf_ns}ID") or element.get(f"{rdf_ns}about", "").lstrip("#")
             if not mrid:
                 continue
@@ -211,8 +215,23 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-@pytest.mark.ignore
-def test_smallgrid_rpf_generation(request: pytest.FixtureRequest) -> None:
+def _emit_table_row_report(
+    profile_name: str,
+    tables: list[tuple[str, pa.RecordBatch]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Always print per-table row counts, even when pytest capture is enabled."""
+    with capsys.disabled():
+        print(f"Row-count report for {profile_name}:")
+        for table_name, batch in tables:
+            print(f"  Table {table_name}: {batch.num_rows} rows")
+
+
+def _run_profile_validation(
+    request: pytest.FixtureRequest,
+    capsys: pytest.CaptureFixture[str],
+    profile_name: str,
+) -> None:
     print(BRANDING)
 
     if pa is None or ipc is None:
@@ -224,13 +243,14 @@ def test_smallgrid_rpf_generation(request: pytest.FixtureRequest) -> None:
         request.node.add_marker(pytest.mark.ignore)
         pytest.skip("RAPTRIX_TEST_DATA_ROOT is not set")
 
-    eq_path = Path(data_root) / "SmallGrid" / "SmallGrid-Merged" / "SmallGrid_EQ.xml"
-    tp_path = Path(data_root) / "SmallGrid" / "SmallGrid-Merged" / "SmallGrid_TP.xml"
+    merged_dir = Path(data_root) / profile_name / f"{profile_name}-Merged"
+    eq_path = merged_dir / f"{profile_name}_EQ.xml"
+    tp_path = merged_dir / f"{profile_name}_TP.xml"
     has_tp = tp_path.is_file()
     connectivity_detail_mode = os.environ.get("RAPTRIX_CONNECTIVITY_DETAIL", "0") == "1"
     if not eq_path.is_file():
         request.node.add_marker(pytest.mark.ignore)
-        pytest.skip(f"SmallGrid EQ file not found: {eq_path}")
+        pytest.skip(f"{profile_name} EQ file not found: {eq_path}")
 
     (
         expected_buses,
@@ -248,7 +268,7 @@ def test_smallgrid_rpf_generation(request: pytest.FixtureRequest) -> None:
 
     repo_root = _repo_root()
     with tempfile.TemporaryDirectory(prefix="raptrix-rpf-") as temp_dir:
-        output_path = Path(temp_dir) / "smallgrid.rpf"
+        output_path = Path(temp_dir) / f"{profile_name.lower()}.rpf"
         cmd = [
             "cargo",
             "run",
@@ -289,6 +309,8 @@ def test_smallgrid_rpf_generation(request: pytest.FixtureRequest) -> None:
         assert output_path.is_file(), f"Expected output file not found: {output_path}"
 
         tables = _read_rpf_tables(output_path)
+        _emit_table_row_report(profile_name, tables, capsys)
+
         expected_table_count = 16 if connectivity_detail_mode else 15
         assert len(tables) == expected_table_count, (
             f"Expected {expected_table_count} tables/segments, got {len(tables)}"
@@ -309,7 +331,6 @@ def test_smallgrid_rpf_generation(request: pytest.FixtureRequest) -> None:
                 f"Table order mismatch at index {table_idx}: expected {expected_table_name}, got {table_name}"
             )
             assert batch.num_rows >= 0, f"Table {table_name} must have non-negative row count"
-            print(f"Table {table_name}: {batch.num_rows} rows (matches XML constraints where applicable)")
 
         first_schema_metadata = tables[0][1].schema.metadata or {}
         assert b"raptrix.branding" in first_schema_metadata
@@ -330,12 +351,21 @@ def test_smallgrid_rpf_generation(request: pytest.FixtureRequest) -> None:
         assert branches_batch.num_rows > 0, "Branches table must contain at least one row"
         assert generators_batch.num_rows > 0, "Generators table must contain at least one row"
         if has_tp and not connectivity_detail_mode:
-            assert buses_batch.num_rows < expected_buses, (
-                f"Expected topological bus collapse with TP (less than {expected_buses}), got {buses_batch.num_rows}"
+            assert buses_batch.num_rows <= expected_buses, (
+                f"Expected TP mapping to not increase bus count (<= {expected_buses}), got {buses_batch.num_rows}"
             )
-            assert buses_batch.num_rows < 500, (
-                f"Expected significant TP bus reduction (< 500 buses), got {buses_batch.num_rows}"
-            )
+            if profile_name == "SmallGrid":
+                assert buses_batch.num_rows < expected_buses, (
+                    f"Expected topological bus collapse with TP (less than {expected_buses}), got {buses_batch.num_rows}"
+                )
+                assert buses_batch.num_rows < 500, (
+                    f"Expected significant TP bus reduction (< 500 buses), got {buses_batch.num_rows}"
+                )
+            elif buses_batch.num_rows == expected_buses:
+                with capsys.disabled():
+                    print(
+                        f"Note: {profile_name} retained connectivity-level bus count ({buses_batch.num_rows}) despite TP input"
+                    )
         else:
             assert buses_batch.num_rows == expected_buses, (
                 f"Expected {expected_buses} buses from ConnectivityNode count, got {buses_batch.num_rows}"
@@ -363,7 +393,7 @@ def test_smallgrid_rpf_generation(request: pytest.FixtureRequest) -> None:
             f"Expected {expected_generators} generators from SynchronousMachine count, got {generators_batch.num_rows}"
         )
         assert loads_batch.num_rows == expected_loads, (
-            f"Expected {expected_loads} loads from EnergyConsumer count, got {loads_batch.num_rows}"
+            f"Expected {expected_loads} loads from EnergyConsumer/ConformLoad/NonConformLoad count, got {loads_batch.num_rows}"
         )
         assert transformers_2w_batch.num_rows == expected_transformers_2w, (
             f"Expected {expected_transformers_2w} transformers_2w from PowerTransformer 2-end count, got {transformers_2w_batch.num_rows}"
@@ -426,5 +456,21 @@ def test_smallgrid_rpf_generation(request: pytest.FixtureRequest) -> None:
         assert snapshot_first_branch_x == pytest.approx(first_branch_x)
         print("Memory snapshot created: memory_snapshot.rpf (memory API confirmed identical)")
 
-    print("PASS: SmallGrid RPF validation succeeded")
+    print(f"PASS: {profile_name} RPF validation succeeded")
     print(BRANDING)
+
+
+@pytest.mark.ignore
+def test_smallgrid_rpf_generation(
+    request: pytest.FixtureRequest,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _run_profile_validation(request, capsys, "SmallGrid")
+
+
+@pytest.mark.ignore
+def test_realgrid_rpf_generation(
+    request: pytest.FixtureRequest,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _run_profile_validation(request, capsys, "RealGrid")
