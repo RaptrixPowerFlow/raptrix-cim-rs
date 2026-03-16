@@ -52,8 +52,8 @@ use serde::Deserialize;
 
 use crate::models::base::BaseAttributes;
 use crate::models::{
-    ACLineSegment, ConnectivityNodeGroup, EnergyConsumer, SvShuntCompensator, SynchronousMachine,
-    TopologicalNode,
+    ACLineSegment, Area, ConnectivityNodeGroup, EnergyConsumer, Owner, SvShuntCompensator,
+    SynchronousMachine, TopologicalNode, Zone,
 };
 
 /// A parsing error returned by the helper functions in this module.
@@ -324,6 +324,67 @@ pub fn power_transformers_from_reader<R: Read>(
     }
 
     Ok(transformers.into_iter().map(PowerTransformer::into_owned).collect())
+}
+
+/// Parses all `<cim:ControlArea>` elements from CGMES RDF/XML.
+///
+/// Tenet 1: keeps borrowed XML fields until explicit ownership conversion.
+/// Tenet 2: direct mapping of area lookup payload from CIM source.
+pub fn areas_from_reader<R: Read>(mut reader: R) -> Result<Vec<Area<'static>>> {
+    let mut xml = String::new();
+    reader.read_to_string(&mut xml)?;
+
+    if !contains_exact_element_tag(&xml, "cim:ControlArea") {
+        return Ok(Vec::new());
+    }
+
+    let fragments = extract_elements(&xml, "cim:ControlArea")?;
+    let mut rows = Vec::with_capacity(fragments.len());
+    for fragment in fragments {
+        rows.push(from_str::<Area<'_>>(fragment)?.into_owned());
+    }
+
+    Ok(rows)
+}
+
+/// Parses all `<cim:SubGeographicalRegion>` elements from CGMES RDF/XML.
+///
+/// Tenet 2: direct mapping of zone lookup payload from CIM source.
+pub fn zones_from_reader<R: Read>(mut reader: R) -> Result<Vec<Zone<'static>>> {
+    let mut xml = String::new();
+    reader.read_to_string(&mut xml)?;
+
+    if !contains_exact_element_tag(&xml, "cim:SubGeographicalRegion") {
+        return Ok(Vec::new());
+    }
+
+    let fragments = extract_elements(&xml, "cim:SubGeographicalRegion")?;
+    let mut rows = Vec::with_capacity(fragments.len());
+    for fragment in fragments {
+        rows.push(from_str::<Zone<'_>>(fragment)?.into_owned());
+    }
+
+    Ok(rows)
+}
+
+/// Parses all `<cim:Organisation>` elements from CGMES RDF/XML.
+///
+/// Tenet 2: direct mapping of owner lookup payload from CIM source.
+pub fn owners_from_reader<R: Read>(mut reader: R) -> Result<Vec<Owner<'static>>> {
+    let mut xml = String::new();
+    reader.read_to_string(&mut xml)?;
+
+    if !contains_exact_element_tag(&xml, "cim:Organisation") {
+        return Ok(Vec::new());
+    }
+
+    let fragments = extract_elements(&xml, "cim:Organisation")?;
+    let mut rows = Vec::with_capacity(fragments.len());
+    for fragment in fragments {
+        rows.push(from_str::<Owner<'_>>(fragment)?.into_owned());
+    }
+
+    Ok(rows)
 }
 
 /// Parses all `<cim:LinearShuntCompensator>` elements from EQ RDF/XML.

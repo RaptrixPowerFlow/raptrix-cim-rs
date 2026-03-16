@@ -32,9 +32,10 @@ use arrow::record_batch::RecordBatch;
 use memmap2::MmapOptions;
 
 use crate::arrow_schema::{
-    all_table_schemas, buses_schema, branches_schema, contingencies_schema, dynamics_models_schema,
-    connectivity_groups_schema, fixed_shunts_schema, generators_schema, loads_schema, metadata_schema,
-    switched_shunts_schema, transformers_2w_schema, transformers_3w_schema, BRANDING,
+    all_table_schemas, areas_schema, buses_schema, branches_schema, contingencies_schema,
+    dynamics_models_schema, connectivity_groups_schema, fixed_shunts_schema, generators_schema,
+    loads_schema, metadata_schema, owners_schema, switched_shunts_schema, transformers_2w_schema,
+    transformers_3w_schema, zones_schema, BRANDING,
     SCHEMA_VERSION, TABLE_AREAS, TABLE_BRANCHES, TABLE_BUSES, TABLE_CONNECTIVITY_GROUPS,
     TABLE_CONTINGENCIES, TABLE_DYNAMICS_MODELS, TABLE_FIXED_SHUNTS, TABLE_GENERATORS,
     TABLE_INTERFACES, TABLE_LOADS, TABLE_METADATA, TABLE_OWNERS, TABLE_SWITCHED_SHUNTS,
@@ -216,6 +217,25 @@ struct Transformer3WRow<'a> {
     rate_b: f64,
     rate_c: f64,
     status: bool,
+}
+
+#[derive(Debug, Clone)]
+struct AreaRow<'a> {
+    area_id: i32,
+    name: Cow<'a, str>,
+    interchange_mw: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+struct ZoneRow<'a> {
+    zone_id: i32,
+    name: Cow<'a, str>,
+}
+
+#[derive(Debug, Clone)]
+struct OwnerRow<'a> {
+    owner_id: i32,
+    name: Cow<'a, str>,
 }
 
 #[derive(Debug, Clone)]
@@ -405,6 +425,9 @@ pub fn write_complete_rpf_with_options(
         load_rows,
         transformer_2w_rows,
         transformer_3w_rows,
+        area_rows,
+        zone_rows,
+        owner_rows,
         fixed_shunt_rows,
         switched_shunt_rows,
         connectivity_group_rows,
@@ -428,6 +451,9 @@ pub fn write_complete_rpf_with_options(
     let loads_batch = build_loads_batch(&load_rows)?;
     let transformers_2w_batch = build_transformers_2w_batch(&transformer_2w_rows)?;
     let transformers_3w_batch = build_transformers_3w_batch(&transformer_3w_rows)?;
+    let areas_batch = build_areas_batch(&area_rows)?;
+    let zones_batch = build_zones_batch(&zone_rows)?;
+    let owners_batch = build_owners_batch(&owner_rows)?;
     let fixed_shunts_batch = build_fixed_shunts_batch(&fixed_shunt_rows)?;
     let switched_shunts_batch = build_switched_shunts_batch(&switched_shunt_rows)?;
     let contingencies_rows = stub_contingency_rows(split_bus_stub_elements);
@@ -449,12 +475,12 @@ pub fn write_complete_rpf_with_options(
             TABLE_SWITCHED_SHUNTS => switched_shunts_batch.clone(),
             TABLE_TRANSFORMERS_2W => transformers_2w_batch.clone(),
             TABLE_TRANSFORMERS_3W => transformers_3w_batch.clone(),
+            TABLE_AREAS => areas_batch.clone(),
+            TABLE_ZONES => zones_batch.clone(),
+            TABLE_OWNERS => owners_batch.clone(),
             TABLE_CONTINGENCIES => contingencies_batch.clone(),
             TABLE_DYNAMICS_MODELS => dynamics_models_batch.clone(),
-            TABLE_AREAS
-            | TABLE_ZONES
-            | TABLE_OWNERS
-            | TABLE_INTERFACES
+            TABLE_INTERFACES
             => RecordBatch::new_empty(Arc::new(schema.clone())),
             _ => bail!("unrecognized table in canonical registry: {table_name}"),
         };
@@ -585,6 +611,9 @@ fn parse_eq_components_for_path(
     Vec<crate::models::SynchronousMachine<'static>>,
     Vec<crate::models::EnergyConsumer<'static>>,
     Vec<parser::PowerTransformer<'static>>,
+    Vec<crate::models::Area<'static>>,
+    Vec<crate::models::Zone<'static>>,
+    Vec<crate::models::Owner<'static>>,
     Vec<parser::FixedShuntSpec>,
     Vec<crate::models::SvShuntCompensator<'static>>,
     Vec<parser::TerminalLink>,
@@ -607,6 +636,18 @@ fn parse_eq_components_for_path(
 
     let transformers = parser::power_transformers_from_reader(Cursor::new(&bytes)).with_context(|| {
         format!("failed to extract PowerTransformer elements from CGMES input file at {path}")
+    })?;
+
+    let areas = parser::areas_from_reader(Cursor::new(&bytes)).with_context(|| {
+        format!("failed to extract ControlArea elements from CGMES input file at {path}")
+    })?;
+
+    let zones = parser::zones_from_reader(Cursor::new(&bytes)).with_context(|| {
+        format!("failed to extract SubGeographicalRegion elements from CGMES input file at {path}")
+    })?;
+
+    let owners = parser::owners_from_reader(Cursor::new(&bytes)).with_context(|| {
+        format!("failed to extract Organisation elements from CGMES input file at {path}")
     })?;
 
     let fixed_shunts = parser::fixed_shunts_from_reader(Cursor::new(&bytes)).with_context(|| {
@@ -632,6 +673,9 @@ fn parse_eq_components_for_path(
         machines,
         loads,
         transformers,
+        areas,
+        zones,
+        owners,
         fixed_shunts,
         switched_shunts,
         terminals,
@@ -659,6 +703,9 @@ fn parse_eq_topology_rows(
     Vec<LoadRow<'static>>,
     Vec<Transformer2WRow<'static>>,
     Vec<Transformer3WRow<'static>>,
+    Vec<AreaRow<'static>>,
+    Vec<ZoneRow<'static>>,
+    Vec<OwnerRow<'static>>,
     Vec<FixedShuntRow<'static>>,
     Vec<SwitchedShuntRow>,
     Vec<ConnectivityGroupRow<'static>>,
@@ -668,6 +715,9 @@ fn parse_eq_topology_rows(
     let mut machines = Vec::new();
     let mut loads = Vec::new();
     let mut transformers = Vec::new();
+    let mut areas = Vec::new();
+    let mut zones = Vec::new();
+    let mut owners = Vec::new();
     let mut fixed_shunts = Vec::new();
     let mut switched_shunts = Vec::new();
     let mut terminals = Vec::new();
@@ -680,6 +730,9 @@ fn parse_eq_topology_rows(
             mut parsed_machines,
             mut parsed_loads,
             mut parsed_transformers,
+            mut parsed_areas,
+            mut parsed_zones,
+            mut parsed_owners,
             mut parsed_fixed_shunts,
             mut parsed_switched_shunts,
             mut parsed_terminals,
@@ -698,6 +751,15 @@ fn parse_eq_topology_rows(
         }
         if !parsed_transformers.is_empty() {
             transformers.append(&mut parsed_transformers);
+        }
+        if !parsed_areas.is_empty() {
+            areas.append(&mut parsed_areas);
+        }
+        if !parsed_zones.is_empty() {
+            zones.append(&mut parsed_zones);
+        }
+        if !parsed_owners.is_empty() {
+            owners.append(&mut parsed_owners);
         }
         if !parsed_fixed_shunts.is_empty() {
             fixed_shunts.append(&mut parsed_fixed_shunts);
@@ -1167,6 +1229,46 @@ fn parse_eq_topology_rows(
         }
     }
 
+    areas.sort_unstable_by(|left, right| left.base.m_rid.cmp(&right.base.m_rid));
+    let area_rows: Vec<AreaRow<'static>> = areas
+        .into_iter()
+        .enumerate()
+        .map(|(idx, area)| AreaRow {
+            area_id: (idx as i32) + 1,
+            name: area
+                .base
+                .name
+                .unwrap_or_else(|| Cow::Owned(area.base.m_rid.as_ref().to_owned())),
+            interchange_mw: area.interchange_mw,
+        })
+        .collect();
+
+    zones.sort_unstable_by(|left, right| left.base.m_rid.cmp(&right.base.m_rid));
+    let zone_rows: Vec<ZoneRow<'static>> = zones
+        .into_iter()
+        .enumerate()
+        .map(|(idx, zone)| ZoneRow {
+            zone_id: (idx as i32) + 1,
+            name: zone
+                .base
+                .name
+                .unwrap_or_else(|| Cow::Owned(zone.base.m_rid.as_ref().to_owned())),
+        })
+        .collect();
+
+    owners.sort_unstable_by(|left, right| left.base.m_rid.cmp(&right.base.m_rid));
+    let owner_rows: Vec<OwnerRow<'static>> = owners
+        .into_iter()
+        .enumerate()
+        .map(|(idx, owner)| OwnerRow {
+            owner_id: (idx as i32) + 1,
+            name: owner
+                .base
+                .name
+                .unwrap_or_else(|| Cow::Owned(owner.base.m_rid.as_ref().to_owned())),
+        })
+        .collect();
+
     fixed_shunts.sort_unstable_by(|left, right| left.equipment_mrid.cmp(&right.equipment_mrid));
     let mut fixed_shunt_rows = Vec::with_capacity(fixed_shunts.len());
     for shunt in fixed_shunts {
@@ -1359,6 +1461,9 @@ fn parse_eq_topology_rows(
         load_rows,
         transformer_2w_rows,
         transformer_3w_rows,
+        area_rows,
+        zone_rows,
+        owner_rows,
         fixed_shunt_rows,
         switched_shunt_rows,
         connectivity_group_rows,
@@ -1756,6 +1861,70 @@ fn build_transformers_3w_batch(rows: &[Transformer3WRow<'_>]) -> Result<RecordBa
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build transformers_3w record batch")
+}
+
+fn build_areas_batch(rows: &[AreaRow<'_>]) -> Result<RecordBatch> {
+    let schema = Arc::new(areas_schema());
+
+    let mut area_id_b = Int32Builder::new();
+    let mut name_b = StringDictionaryBuilder::<Int32Type>::new();
+    let mut interchange_mw_b = Float64Builder::new();
+
+    for row in rows {
+        area_id_b.append_value(row.area_id);
+        name_b.append(row.name.as_ref())?;
+        if let Some(interchange_mw) = row.interchange_mw {
+            interchange_mw_b.append_value(interchange_mw);
+        } else {
+            interchange_mw_b.append_null();
+        }
+    }
+
+    let arrays: Vec<ArrayRef> = vec![
+        Arc::new(area_id_b.finish()) as ArrayRef,
+        Arc::new(name_b.finish()) as ArrayRef,
+        Arc::new(interchange_mw_b.finish()) as ArrayRef,
+    ];
+
+    RecordBatch::try_new(schema, arrays).context("failed to build areas record batch")
+}
+
+fn build_zones_batch(rows: &[ZoneRow<'_>]) -> Result<RecordBatch> {
+    let schema = Arc::new(zones_schema());
+
+    let mut zone_id_b = Int32Builder::new();
+    let mut name_b = StringDictionaryBuilder::<Int32Type>::new();
+
+    for row in rows {
+        zone_id_b.append_value(row.zone_id);
+        name_b.append(row.name.as_ref())?;
+    }
+
+    let arrays: Vec<ArrayRef> = vec![
+        Arc::new(zone_id_b.finish()) as ArrayRef,
+        Arc::new(name_b.finish()) as ArrayRef,
+    ];
+
+    RecordBatch::try_new(schema, arrays).context("failed to build zones record batch")
+}
+
+fn build_owners_batch(rows: &[OwnerRow<'_>]) -> Result<RecordBatch> {
+    let schema = Arc::new(owners_schema());
+
+    let mut owner_id_b = Int32Builder::new();
+    let mut name_b = StringDictionaryBuilder::<Int32Type>::new();
+
+    for row in rows {
+        owner_id_b.append_value(row.owner_id);
+        name_b.append(row.name.as_ref())?;
+    }
+
+    let arrays: Vec<ArrayRef> = vec![
+        Arc::new(owner_id_b.finish()) as ArrayRef,
+        Arc::new(name_b.finish()) as ArrayRef,
+    ];
+
+    RecordBatch::try_new(schema, arrays).context("failed to build owners record batch")
 }
 
 fn build_fixed_shunts_batch(rows: &[FixedShuntRow<'_>]) -> Result<RecordBatch> {

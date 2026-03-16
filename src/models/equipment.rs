@@ -667,6 +667,209 @@ impl<'a> PowerSystemResource for Transformer3W<'a> {}
 impl<'a> Equipment for Transformer3W<'a> {}
 
 // ---------------------------------------------------------------------------
+// Area / Zone / Owner
+// ---------------------------------------------------------------------------
+
+/// CIM area lookup row source.
+///
+/// Tenet 2: maps directly from CIM area profile payload to lookup table fields.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Area<'a> {
+    pub base: BaseAttributes<'a>,
+    pub interchange_mw: Option<f64>,
+}
+
+#[derive(Deserialize)]
+struct RawArea<'a> {
+    #[serde(rename = "@ID", default, borrow)]
+    m_rid: Option<Cow<'a, str>>,
+    #[serde(rename = "@about", default, borrow)]
+    about: Option<Cow<'a, str>>,
+    #[serde(rename = "IdentifiedObject.name", default, borrow)]
+    name: Option<Cow<'a, str>>,
+    #[serde(rename = "IdentifiedObject.description", default, borrow)]
+    description: Option<Cow<'a, str>>,
+    #[serde(rename = "ControlArea.netInterchange", default)]
+    interchange_mw: Option<f64>,
+}
+
+impl<'de: 'a, 'a> Deserialize<'de> for Area<'a> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = RawArea::deserialize(deserializer)?;
+        let m_rid = if let Some(m_rid) = raw.m_rid {
+            strip_hash_cow(m_rid)
+        } else if let Some(about) = raw.about {
+            strip_hash_cow(about)
+        } else {
+            return Err(serde::de::Error::missing_field("@ID or @about"));
+        };
+
+        Ok(Area {
+            base: BaseAttributes {
+                m_rid,
+                name: raw.name,
+                description: raw.description,
+            },
+            interchange_mw: raw.interchange_mw,
+        })
+    }
+}
+
+impl<'a> Area<'a> {
+    pub fn into_owned(self) -> Area<'static> {
+        Area {
+            base: self.base.into_owned(),
+            interchange_mw: self.interchange_mw,
+        }
+    }
+}
+
+impl<'a> IdentifiedObject for Area<'a> {
+    fn mrid(&self) -> &str {
+        self.base.mrid()
+    }
+
+    fn name(&self) -> Option<&str> {
+        self.base.name()
+    }
+
+    fn description(&self) -> Option<&str> {
+        self.base.description()
+    }
+}
+
+impl<'a> PowerSystemResource for Area<'a> {}
+impl<'a> Equipment for Area<'a> {}
+
+/// CIM zone lookup row source.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Zone<'a> {
+    pub base: BaseAttributes<'a>,
+}
+
+#[derive(Deserialize)]
+struct RawZone<'a> {
+    #[serde(rename = "@ID", default, borrow)]
+    m_rid: Option<Cow<'a, str>>,
+    #[serde(rename = "@about", default, borrow)]
+    about: Option<Cow<'a, str>>,
+    #[serde(rename = "IdentifiedObject.name", default, borrow)]
+    name: Option<Cow<'a, str>>,
+    #[serde(rename = "IdentifiedObject.description", default, borrow)]
+    description: Option<Cow<'a, str>>,
+}
+
+impl<'de: 'a, 'a> Deserialize<'de> for Zone<'a> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = RawZone::deserialize(deserializer)?;
+        let m_rid = if let Some(m_rid) = raw.m_rid {
+            strip_hash_cow(m_rid)
+        } else if let Some(about) = raw.about {
+            strip_hash_cow(about)
+        } else {
+            return Err(serde::de::Error::missing_field("@ID or @about"));
+        };
+
+        Ok(Zone {
+            base: BaseAttributes {
+                m_rid,
+                name: raw.name,
+                description: raw.description,
+            },
+        })
+    }
+}
+
+impl<'a> Zone<'a> {
+    pub fn into_owned(self) -> Zone<'static> {
+        Zone {
+            base: self.base.into_owned(),
+        }
+    }
+}
+
+impl<'a> IdentifiedObject for Zone<'a> {
+    fn mrid(&self) -> &str {
+        self.base.mrid()
+    }
+
+    fn name(&self) -> Option<&str> {
+        self.base.name()
+    }
+
+    fn description(&self) -> Option<&str> {
+        self.base.description()
+    }
+}
+
+impl<'a> PowerSystemResource for Zone<'a> {}
+impl<'a> Equipment for Zone<'a> {}
+
+/// CIM owner lookup row source.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Owner<'a> {
+    pub base: BaseAttributes<'a>,
+}
+
+#[derive(Deserialize)]
+struct RawOwner<'a> {
+    #[serde(rename = "@ID", default, borrow)]
+    m_rid: Option<Cow<'a, str>>,
+    #[serde(rename = "@about", default, borrow)]
+    about: Option<Cow<'a, str>>,
+    #[serde(rename = "IdentifiedObject.name", default, borrow)]
+    name: Option<Cow<'a, str>>,
+    #[serde(rename = "IdentifiedObject.description", default, borrow)]
+    description: Option<Cow<'a, str>>,
+}
+
+impl<'de: 'a, 'a> Deserialize<'de> for Owner<'a> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = RawOwner::deserialize(deserializer)?;
+        let m_rid = if let Some(m_rid) = raw.m_rid {
+            strip_hash_cow(m_rid)
+        } else if let Some(about) = raw.about {
+            strip_hash_cow(about)
+        } else {
+            return Err(serde::de::Error::missing_field("@ID or @about"));
+        };
+
+        Ok(Owner {
+            base: BaseAttributes {
+                m_rid,
+                name: raw.name,
+                description: raw.description,
+            },
+        })
+    }
+}
+
+impl<'a> Owner<'a> {
+    pub fn into_owned(self) -> Owner<'static> {
+        Owner {
+            base: self.base.into_owned(),
+        }
+    }
+}
+
+impl<'a> IdentifiedObject for Owner<'a> {
+    fn mrid(&self) -> &str {
+        self.base.mrid()
+    }
+
+    fn name(&self) -> Option<&str> {
+        self.base.name()
+    }
+
+    fn description(&self) -> Option<&str> {
+        self.base.description()
+    }
+}
+
+impl<'a> PowerSystemResource for Owner<'a> {}
+impl<'a> Equipment for Owner<'a> {}
+
+// ---------------------------------------------------------------------------
 // SynchronousMachine
 // ---------------------------------------------------------------------------
 
