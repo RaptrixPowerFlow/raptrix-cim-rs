@@ -244,14 +244,19 @@ pub struct EnergyConsumer<'a> {
 
     /// Reactive power demand (Mvar).
     pub q_mvar: Option<f64>,
+
+    /// In-service status if provided by profile payload.
+    pub status: Option<bool>,
 }
 
 /// Private flat struct used only for serde deserialization.
 #[derive(Deserialize)]
 struct RawEnergyConsumer<'a> {
     /// Mapped from the `rdf:ID` XML attribute (namespace prefix stripped).
-    #[serde(rename = "@ID", borrow)]
-    m_rid: Cow<'a, str>,
+    #[serde(rename = "@ID", default, borrow)]
+    m_rid: Option<Cow<'a, str>>,
+    #[serde(rename = "@about", default, borrow)]
+    about: Option<Cow<'a, str>>,
     #[serde(rename = "IdentifiedObject.name", default, borrow)]
     name: Option<Cow<'a, str>>,
     #[serde(rename = "IdentifiedObject.description", default, borrow)]
@@ -260,19 +265,34 @@ struct RawEnergyConsumer<'a> {
     p_mw: Option<f64>,
     #[serde(rename = "EnergyConsumer.q", default)]
     q_mvar: Option<f64>,
+    #[serde(rename = "Equipment.normallyInService", default)]
+    status: Option<bool>,
 }
 
 impl<'de: 'a, 'a> Deserialize<'de> for EnergyConsumer<'a> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let raw = RawEnergyConsumer::deserialize(deserializer)?;
+
+        let m_rid = if let Some(m_rid) = raw.m_rid {
+            strip_hash_cow(m_rid)
+        } else if let Some(about) = raw.about {
+            let resolved = strip_hash_cow(about);
+            #[cfg(debug_assertions)]
+            eprintln!("Fallback: using rdf:about for EnergyConsumer mRID: {resolved}");
+            resolved
+        } else {
+            return Err(serde::de::Error::missing_field("@ID or @about"));
+        };
+
         Ok(EnergyConsumer {
             base: BaseAttributes {
-                m_rid: raw.m_rid,
+                m_rid,
                 name: raw.name,
                 description: raw.description,
             },
             p_mw: raw.p_mw,
             q_mvar: raw.q_mvar,
+            status: raw.status,
         })
     }
 }
@@ -294,6 +314,9 @@ impl<'a> Serialize for EnergyConsumer<'a> {
         if let Some(q) = self.q_mvar {
             s.serialize_field("EnergyConsumer.q", &q)?;
         }
+        if let Some(status) = self.status {
+            s.serialize_field("Equipment.normallyInService", &status)?;
+        }
         s.end()
     }
 }
@@ -305,6 +328,7 @@ impl<'a> EnergyConsumer<'a> {
             base,
             p_mw: None,
             q_mvar: None,
+            status: None,
         }
     }
 
@@ -314,6 +338,7 @@ impl<'a> EnergyConsumer<'a> {
             base: self.base.into_owned(),
             p_mw: self.p_mw,
             q_mvar: self.q_mvar,
+            status: self.status,
         }
     }
 }
@@ -334,6 +359,14 @@ impl<'a> IdentifiedObject for EnergyConsumer<'a> {
 
 impl<'a> PowerSystemResource for EnergyConsumer<'a> {}
 impl<'a> Equipment for EnergyConsumer<'a> {}
+
+fn strip_hash_cow<'a>(value: Cow<'a, str>) -> Cow<'a, str> {
+    if value.starts_with('#') {
+        Cow::Owned(value.trim_start_matches('#').to_string())
+    } else {
+        value
+    }
+}
 
 // ---------------------------------------------------------------------------
 // SynchronousMachine
@@ -553,6 +586,7 @@ mod tests {
             base: make_base("load-001", "Substation A Load"),
             p_mw: Some(12.5),
             q_mvar: Some(3.2),
+            status: Some(true),
         };
         assert_eq!(load.mrid(), "load-001");
         assert_eq!(load.name(), Some("Substation A Load"));

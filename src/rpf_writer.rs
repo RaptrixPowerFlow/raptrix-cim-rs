@@ -33,12 +33,15 @@ use memmap2::MmapOptions;
 
 use crate::arrow_schema::{
     all_table_schemas, buses_schema, branches_schema, contingencies_schema, dynamics_models_schema,
-    connectivity_groups_schema, generators_schema, metadata_schema, table_schema, BRANDING,
+    connectivity_groups_schema, fixed_shunts_schema, generators_schema, loads_schema, metadata_schema,
+    switched_shunts_schema, BRANDING,
     SCHEMA_VERSION, TABLE_AREAS, TABLE_BRANCHES, TABLE_BUSES, TABLE_CONNECTIVITY_GROUPS,
     TABLE_CONTINGENCIES, TABLE_DYNAMICS_MODELS, TABLE_FIXED_SHUNTS, TABLE_GENERATORS,
     TABLE_INTERFACES, TABLE_LOADS, TABLE_METADATA, TABLE_OWNERS, TABLE_SWITCHED_SHUNTS,
     TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, TABLE_ZONES,
 };
+#[cfg(any(debug_assertions, feature = "strict"))]
+use crate::arrow_schema::table_schema;
 use crate::parser;
 
 /// Bus resolution mode for EQ+TP merges.
@@ -139,6 +142,34 @@ struct GenRow<'a> {
     h: f64,
     xd_prime: f64,
     d: f64,
+}
+
+#[derive(Debug, Clone)]
+struct LoadRow<'a> {
+    bus_id: i32,
+    id: Cow<'a, str>,
+    status: bool,
+    p_mw: f64,
+    q_mvar: f64,
+}
+
+#[derive(Debug, Clone)]
+struct FixedShuntRow<'a> {
+    bus_id: i32,
+    id: Cow<'a, str>,
+    status: bool,
+    g_mw: f64,
+    b_mvar: f64,
+}
+
+#[derive(Debug, Clone)]
+struct SwitchedShuntRow {
+    bus_id: i32,
+    status: bool,
+    v_low: f64,
+    v_high: f64,
+    b_steps: Vec<f64>,
+    current_step: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -321,7 +352,16 @@ pub fn write_complete_rpf_with_options(
                 cgmes_paths.len()
             )
         })?;
-    let (bus_rows, branch_rows, gen_rows, connectivity_group_rows, split_bus_stub_elements) = topology;
+    let (
+        bus_rows,
+        branch_rows,
+        gen_rows,
+        load_rows,
+        fixed_shunt_rows,
+        switched_shunt_rows,
+        connectivity_group_rows,
+        split_bus_stub_elements,
+    ) = topology;
 
     let metadata_row = MetadataRow {
         base_mva: 100.0,
@@ -337,6 +377,9 @@ pub fn write_complete_rpf_with_options(
     let buses_batch = build_buses_batch(&bus_rows)?;
     let branches_batch = build_branches_batch(&branch_rows)?;
     let generators_batch = build_generators_batch(&gen_rows)?;
+    let loads_batch = build_loads_batch(&load_rows)?;
+    let fixed_shunts_batch = build_fixed_shunts_batch(&fixed_shunt_rows)?;
+    let switched_shunts_batch = build_switched_shunts_batch(&switched_shunt_rows)?;
     let contingencies_rows = stub_contingency_rows(split_bus_stub_elements);
     let dynamics_models_rows = stub_dynamics_model_rows();
     let contingencies_batch = build_contingencies_batch(&contingencies_rows)?;
@@ -351,12 +394,12 @@ pub fn write_complete_rpf_with_options(
             TABLE_BUSES => buses_batch.clone(),
             TABLE_BRANCHES => branches_batch.clone(),
             TABLE_GENERATORS => generators_batch.clone(),
+            TABLE_LOADS => loads_batch.clone(),
+            TABLE_FIXED_SHUNTS => fixed_shunts_batch.clone(),
+            TABLE_SWITCHED_SHUNTS => switched_shunts_batch.clone(),
             TABLE_CONTINGENCIES => contingencies_batch.clone(),
             TABLE_DYNAMICS_MODELS => dynamics_models_batch.clone(),
-            TABLE_LOADS
-            | TABLE_FIXED_SHUNTS
-            | TABLE_SWITCHED_SHUNTS
-            | TABLE_TRANSFORMERS_2W
+            TABLE_TRANSFORMERS_2W
             | TABLE_TRANSFORMERS_3W
             | TABLE_AREAS
             | TABLE_ZONES
@@ -490,6 +533,9 @@ fn parse_eq_components_for_path(
 ) -> Result<(
     Vec<crate::models::ACLineSegment<'static>>,
     Vec<crate::models::SynchronousMachine<'static>>,
+    Vec<crate::models::EnergyConsumer<'static>>,
+    Vec<parser::FixedShuntSpec>,
+    Vec<parser::SwitchedShuntSpec>,
     Vec<parser::TerminalLink>,
     Vec<crate::models::TopologicalNode<'static>>,
     Vec<crate::models::ConnectivityNodeGroup<'static>>,
@@ -504,6 +550,18 @@ fn parse_eq_components_for_path(
             )
         })?;
 
+    let loads = parser::energy_consumers_from_reader(Cursor::new(&bytes)).with_context(|| {
+        format!("failed to extract EnergyConsumer elements from CGMES input file at {path}")
+    })?;
+
+    let fixed_shunts = parser::fixed_shunts_from_reader(Cursor::new(&bytes)).with_context(|| {
+        format!("failed to extract LinearShuntCompensator elements from CGMES input file at {path}")
+    })?;
+
+    let switched_shunts = parser::switched_shunts_from_reader(Cursor::new(&bytes)).with_context(|| {
+        format!("failed to extract switched-shunt elements from CGMES input file at {path}")
+    })?;
+
     let topological_nodes = parser::topological_nodes_from_reader(Cursor::new(&bytes))
         .with_context(|| format!("failed to extract TopologicalNode elements from CGMES input file at {path}"))?;
 
@@ -514,7 +572,16 @@ fn parse_eq_components_for_path(
             )
         })?;
 
-    Ok((lines, machines, terminals, topological_nodes, connectivity_groups))
+    Ok((
+        lines,
+        machines,
+        loads,
+        fixed_shunts,
+        switched_shunts,
+        terminals,
+        topological_nodes,
+        connectivity_groups,
+    ))
 }
 
 /// Parses EQ data and deterministically maps terminal connectivity into
@@ -524,6 +591,8 @@ fn parse_eq_components_for_path(
 /// hot loops where possible.
 /// Tenet 2: prepares rows that map exactly to locked `buses` and `branches`
 /// schemas without mutation.
+/// Tenet 3: EQ ingestion ownership remains in Rust by joining `EnergyConsumer`
+/// through `Terminal` references in this function.
 fn parse_eq_topology_rows(
     cgmes_paths: &[&str],
     bus_resolution_mode: BusResolutionMode,
@@ -531,11 +600,17 @@ fn parse_eq_topology_rows(
     Vec<BusRow<'static>>,
     Vec<BranchRow<'static>>,
     Vec<GenRow<'static>>,
+    Vec<LoadRow<'static>>,
+    Vec<FixedShuntRow<'static>>,
+    Vec<SwitchedShuntRow>,
     Vec<ConnectivityGroupRow<'static>>,
     Vec<ContingencyElement<'static>>,
 )> {
     let mut lines = Vec::new();
     let mut machines = Vec::new();
+    let mut loads = Vec::new();
+    let mut fixed_shunts = Vec::new();
+    let mut switched_shunts = Vec::new();
     let mut terminals = Vec::new();
     let mut topological_nodes = Vec::new();
     let mut connectivity_groups = Vec::new();
@@ -544,6 +619,9 @@ fn parse_eq_topology_rows(
         let (
             mut parsed_lines,
             mut parsed_machines,
+            mut parsed_loads,
+            mut parsed_fixed_shunts,
+            mut parsed_switched_shunts,
             mut parsed_terminals,
             mut parsed_topological_nodes,
             mut parsed_connectivity_groups,
@@ -554,6 +632,15 @@ fn parse_eq_topology_rows(
         }
         if !parsed_machines.is_empty() {
             machines.append(&mut parsed_machines);
+        }
+        if !parsed_loads.is_empty() {
+            loads.append(&mut parsed_loads);
+        }
+        if !parsed_fixed_shunts.is_empty() {
+            fixed_shunts.append(&mut parsed_fixed_shunts);
+        }
+        if !parsed_switched_shunts.is_empty() {
+            switched_shunts.append(&mut parsed_switched_shunts);
         }
         if !parsed_terminals.is_empty() {
             terminals.append(&mut parsed_terminals);
@@ -794,6 +881,196 @@ fn parse_eq_topology_rows(
         });
     }
 
+    loads.sort_unstable_by(|left, right| left.base.m_rid.cmp(&right.base.m_rid));
+
+    let mut load_rows = Vec::with_capacity(loads.len());
+    for load in loads {
+        let load_mrid = load.base.m_rid.as_ref();
+        let load_terminals = terminals_by_equipment.get(load_mrid).with_context(|| {
+            format!("missing Terminal linkage for EnergyConsumer mRID '{load_mrid}'")
+        })?;
+
+        let selected_terminal = load_terminals
+            .iter()
+            .copied()
+            .min_by_key(|terminal| {
+                (
+                    terminal.sequence_number,
+                    terminal.connectivity_node_mrid.as_str(),
+                )
+            })
+            .with_context(|| {
+                format!("missing Terminal linkage for EnergyConsumer mRID '{load_mrid}'")
+            })?;
+
+        let bus_id = if use_topological {
+            let topological_bus_key = conn_to_topo
+                .get(selected_terminal.connectivity_node_mrid.as_str())
+                .copied()
+                .with_context(|| {
+                    format!(
+                        "failed to resolve ConnectivityNode '{}' to TopologicalNode for EnergyConsumer mRID '{load_mrid}'",
+                        selected_terminal.connectivity_node_mrid
+                    )
+                })?;
+            bus_key_to_bus_id
+                .get(topological_bus_key)
+                .copied()
+                .with_context(|| {
+                    format!(
+                        "failed to resolve TopologicalNode '{}' to dense bus_id for EnergyConsumer mRID '{load_mrid}'",
+                        topological_bus_key
+                    )
+                })?
+        } else {
+            bus_key_to_bus_id
+                .get(selected_terminal.connectivity_node_mrid.as_str())
+                .copied()
+                .with_context(|| {
+                    format!(
+                        "failed to resolve ConnectivityNode '{}' to dense bus_id for EnergyConsumer mRID '{load_mrid}'",
+                        selected_terminal.connectivity_node_mrid
+                    )
+                })?
+        };
+
+        load_rows.push(LoadRow {
+            bus_id,
+            id: load.base.m_rid,
+            status: load.status.unwrap_or(true),
+            p_mw: load.p_mw.unwrap_or(0.0),
+            q_mvar: load.q_mvar.unwrap_or(0.0),
+        });
+    }
+
+    fixed_shunts.sort_unstable_by(|left, right| left.equipment_mrid.cmp(&right.equipment_mrid));
+    let mut fixed_shunt_rows = Vec::with_capacity(fixed_shunts.len());
+    for shunt in fixed_shunts {
+        let shunt_mrid = shunt.equipment_mrid.as_str();
+        let shunt_terminals = terminals_by_equipment.get(shunt_mrid).with_context(|| {
+            format!("missing Terminal linkage for LinearShuntCompensator mRID '{shunt_mrid}'")
+        })?;
+
+        let selected_terminal = shunt_terminals
+            .iter()
+            .copied()
+            .min_by_key(|terminal| {
+                (
+                    terminal.sequence_number,
+                    terminal.connectivity_node_mrid.as_str(),
+                )
+            })
+            .with_context(|| {
+                format!("missing Terminal linkage for LinearShuntCompensator mRID '{shunt_mrid}'")
+            })?;
+
+        let bus_id = if use_topological {
+            let topological_bus_key = conn_to_topo
+                .get(selected_terminal.connectivity_node_mrid.as_str())
+                .copied()
+                .with_context(|| {
+                    format!(
+                        "failed to resolve ConnectivityNode '{}' to TopologicalNode for LinearShuntCompensator mRID '{shunt_mrid}'",
+                        selected_terminal.connectivity_node_mrid
+                    )
+                })?;
+            bus_key_to_bus_id
+                .get(topological_bus_key)
+                .copied()
+                .with_context(|| {
+                    format!(
+                        "failed to resolve TopologicalNode '{}' to dense bus_id for LinearShuntCompensator mRID '{shunt_mrid}'",
+                        topological_bus_key
+                    )
+                })?
+        } else {
+            bus_key_to_bus_id
+                .get(selected_terminal.connectivity_node_mrid.as_str())
+                .copied()
+                .with_context(|| {
+                    format!(
+                        "failed to resolve ConnectivityNode '{}' to dense bus_id for LinearShuntCompensator mRID '{shunt_mrid}'",
+                        selected_terminal.connectivity_node_mrid
+                    )
+                })?
+        };
+
+        fixed_shunt_rows.push(FixedShuntRow {
+            bus_id,
+            id: Cow::Owned(shunt.equipment_mrid),
+            status: shunt.status.unwrap_or(true),
+            g_mw: shunt.g_mw.unwrap_or(0.0),
+            b_mvar: shunt.b_mvar.unwrap_or(0.0),
+        });
+    }
+
+    switched_shunts.sort_unstable_by(|left, right| left.equipment_mrid.cmp(&right.equipment_mrid));
+    let mut switched_shunt_rows = Vec::with_capacity(switched_shunts.len());
+    for shunt in switched_shunts {
+        let shunt_mrid = shunt.equipment_mrid.as_str();
+        let shunt_terminals = terminals_by_equipment.get(shunt_mrid).with_context(|| {
+            format!("missing Terminal linkage for switched shunt mRID '{shunt_mrid}'")
+        })?;
+
+        let selected_terminal = shunt_terminals
+            .iter()
+            .copied()
+            .min_by_key(|terminal| {
+                (
+                    terminal.sequence_number,
+                    terminal.connectivity_node_mrid.as_str(),
+                )
+            })
+            .with_context(|| {
+                format!("missing Terminal linkage for switched shunt mRID '{shunt_mrid}'")
+            })?;
+
+        let bus_id = if use_topological {
+            let topological_bus_key = conn_to_topo
+                .get(selected_terminal.connectivity_node_mrid.as_str())
+                .copied()
+                .with_context(|| {
+                    format!(
+                        "failed to resolve ConnectivityNode '{}' to TopologicalNode for switched shunt mRID '{shunt_mrid}'",
+                        selected_terminal.connectivity_node_mrid
+                    )
+                })?;
+            bus_key_to_bus_id
+                .get(topological_bus_key)
+                .copied()
+                .with_context(|| {
+                    format!(
+                        "failed to resolve TopologicalNode '{}' to dense bus_id for switched shunt mRID '{shunt_mrid}'",
+                        topological_bus_key
+                    )
+                })?
+        } else {
+            bus_key_to_bus_id
+                .get(selected_terminal.connectivity_node_mrid.as_str())
+                .copied()
+                .with_context(|| {
+                    format!(
+                        "failed to resolve ConnectivityNode '{}' to dense bus_id for switched shunt mRID '{shunt_mrid}'",
+                        selected_terminal.connectivity_node_mrid
+                    )
+                })?
+        };
+
+        let mut b_steps = shunt.b_steps;
+        if b_steps.is_empty() {
+            b_steps.push(0.0);
+        }
+
+        switched_shunt_rows.push(SwitchedShuntRow {
+            bus_id,
+            status: shunt.status.unwrap_or(true),
+            v_low: 0.95,
+            v_high: 1.05,
+            b_steps,
+            current_step: shunt.current_step,
+        });
+    }
+
     let mut topology_name_by_mrid: HashMap<&str, &str> = HashMap::new();
     for node in &topological_nodes {
         if let Some(name) = node.base.name.as_deref() {
@@ -855,6 +1132,9 @@ fn parse_eq_topology_rows(
         bus_rows,
         branch_rows,
         gen_rows,
+        load_rows,
+        fixed_shunt_rows,
+        switched_shunt_rows,
         connectivity_group_rows,
         split_bus_stub_elements,
     ))
@@ -1069,6 +1349,109 @@ fn build_generators_batch(rows: &[GenRow<'_>]) -> Result<RecordBatch> {
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build generators record batch")
+}
+
+/// Builds the `loads` table batch from EQ `EnergyConsumer` joins.
+///
+/// Tenet 1: preserves borrowed IDs until Arrow append points.
+/// Tenet 2: writes exact locked v0.5 `loads` schema ordering.
+fn build_loads_batch(rows: &[LoadRow<'_>]) -> Result<RecordBatch> {
+    let schema = Arc::new(loads_schema());
+
+    let mut bus_id_b = Int32Builder::new();
+    let mut id_b = StringDictionaryBuilder::<Int32Type>::new();
+    let mut status_b = BooleanBuilder::new();
+    let mut p_mw_b = Float64Builder::new();
+    let mut q_mvar_b = Float64Builder::new();
+
+    for row in rows {
+        bus_id_b.append_value(row.bus_id);
+        id_b.append(row.id.as_ref())?;
+        status_b.append_value(row.status);
+        p_mw_b.append_value(row.p_mw);
+        q_mvar_b.append_value(row.q_mvar);
+    }
+
+    let arrays: Vec<ArrayRef> = vec![
+        Arc::new(bus_id_b.finish()) as ArrayRef,
+        Arc::new(id_b.finish()) as ArrayRef,
+        Arc::new(status_b.finish()) as ArrayRef,
+        Arc::new(p_mw_b.finish()) as ArrayRef,
+        Arc::new(q_mvar_b.finish()) as ArrayRef,
+    ];
+
+    RecordBatch::try_new(schema, arrays).context("failed to build loads record batch")
+}
+
+fn build_fixed_shunts_batch(rows: &[FixedShuntRow<'_>]) -> Result<RecordBatch> {
+    let schema = Arc::new(fixed_shunts_schema());
+
+    let mut bus_id_b = Int32Builder::new();
+    let mut id_b = StringDictionaryBuilder::<Int32Type>::new();
+    let mut status_b = BooleanBuilder::new();
+    let mut g_mw_b = Float64Builder::new();
+    let mut b_mvar_b = Float64Builder::new();
+
+    for row in rows {
+        bus_id_b.append_value(row.bus_id);
+        id_b.append(row.id.as_ref())?;
+        status_b.append_value(row.status);
+        g_mw_b.append_value(row.g_mw);
+        b_mvar_b.append_value(row.b_mvar);
+    }
+
+    let arrays: Vec<ArrayRef> = vec![
+        Arc::new(bus_id_b.finish()) as ArrayRef,
+        Arc::new(id_b.finish()) as ArrayRef,
+        Arc::new(status_b.finish()) as ArrayRef,
+        Arc::new(g_mw_b.finish()) as ArrayRef,
+        Arc::new(b_mvar_b.finish()) as ArrayRef,
+    ];
+
+    RecordBatch::try_new(schema, arrays).context("failed to build fixed_shunts record batch")
+}
+
+fn build_switched_shunts_batch(rows: &[SwitchedShuntRow]) -> Result<RecordBatch> {
+    let schema = Arc::new(switched_shunts_schema());
+
+    let mut bus_id_b = Int32Builder::new();
+    let mut status_b = BooleanBuilder::new();
+    let mut v_low_b = Float64Builder::new();
+    let mut v_high_b = Float64Builder::new();
+    let list_field = schema
+        .field(4)
+        .data_type()
+        .clone();
+    let mut b_steps_b = ListBuilder::new(Float64Builder::new()).with_field(match list_field {
+        DataType::List(field) => field,
+        _ => Arc::new(Field::new("item", DataType::Float64, false)),
+    });
+    let mut current_step_b = Int32Builder::new();
+
+    for row in rows {
+        bus_id_b.append_value(row.bus_id);
+        status_b.append_value(row.status);
+        v_low_b.append_value(row.v_low);
+        v_high_b.append_value(row.v_high);
+
+        for value in &row.b_steps {
+            b_steps_b.values().append_value(*value);
+        }
+        b_steps_b.append(true);
+
+        current_step_b.append_value(row.current_step.max(0));
+    }
+
+    let arrays: Vec<ArrayRef> = vec![
+        Arc::new(bus_id_b.finish()) as ArrayRef,
+        Arc::new(status_b.finish()) as ArrayRef,
+        Arc::new(v_low_b.finish()) as ArrayRef,
+        Arc::new(v_high_b.finish()) as ArrayRef,
+        Arc::new(b_steps_b.finish()) as ArrayRef,
+        Arc::new(current_step_b.finish()) as ArrayRef,
+    ];
+
+    RecordBatch::try_new(schema, arrays).context("failed to build switched_shunts record batch")
 }
 
 fn build_connectivity_groups_batch(rows: &[ConnectivityGroupRow<'_>]) -> Result<RecordBatch> {

@@ -152,12 +152,43 @@ pub struct BranchRow {
     pub b_shunt: f64,
 }
 
+/// Parsed linear shunt payload derived from EQ profile XML.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FixedShuntSpec {
+    pub equipment_mrid: String,
+    pub status: Option<bool>,
+    pub g_mw: Option<f64>,
+    pub b_mvar: Option<f64>,
+}
+
+/// Parsed switched shunt payload derived from EQ profile XML.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SwitchedShuntSpec {
+    pub equipment_mrid: String,
+    pub status: Option<bool>,
+    pub b_steps: Vec<f64>,
+    pub current_step: i32,
+}
+
 /// Parses all `<cim:EnergyConsumer>` elements from a CGMES RDF/XML reader.
+///
+/// Tenet 1: extraction reuses fragment parsing helpers that preserve borrowed
+/// string data until explicit ownership conversion.
+/// Tenet 2: this helper maps directly to CIM `EnergyConsumer` without
+/// reshaping semantics.
 pub fn energy_consumers_from_reader<R: Read>(mut reader: R) -> Result<Vec<EnergyConsumer<'static>>> {
     let mut xml = String::new();
     reader.read_to_string(&mut xml)?;
 
-    let fragments = extract_elements(&xml, "cim:EnergyConsumer")?;
+    // Tenet 2: include CIM subtype payloads that carry EnergyConsumer fields.
+    let mut fragments: Vec<&str> = Vec::new();
+    for tag in ["cim:EnergyConsumer", "cim:ConformLoad", "cim:NonConformLoad"] {
+        if contains_exact_element_tag(&xml, tag) {
+            let mut tag_fragments = extract_elements(&xml, tag)?;
+            fragments.append(&mut tag_fragments);
+        }
+    }
+
     let mut loads = Vec::with_capacity(fragments.len());
 
     for fragment in fragments {
@@ -182,6 +213,81 @@ pub fn synchronous_machines_from_reader<R: Read>(
     }
 
     Ok(machines)
+}
+
+/// Parses all `<cim:LinearShuntCompensator>` elements from EQ RDF/XML.
+///
+/// Tenet 2: maps directly from CIM shunt fields with minimal derivation.
+pub fn fixed_shunts_from_reader<R: Read>(mut reader: R) -> Result<Vec<FixedShuntSpec>> {
+    let mut xml = String::new();
+    reader.read_to_string(&mut xml)?;
+
+    if !contains_exact_element_tag(&xml, "cim:LinearShuntCompensator") {
+        return Ok(Vec::new());
+    }
+
+    let fragments = extract_elements(&xml, "cim:LinearShuntCompensator")?;
+    let mut rows = Vec::with_capacity(fragments.len());
+    for fragment in fragments {
+        let shunt: RawLinearShuntCompensator = from_str(fragment)?;
+        let Some(equipment_mrid) = shunt.resolved_mrid() else {
+            continue;
+        };
+
+        let sections = shunt.sections.unwrap_or(1.0);
+        let g_per_section = shunt
+            .linear_g_per_section
+            .or(shunt.shunt_g_per_section)
+            .unwrap_or(0.0);
+        let b_per_section = shunt
+            .linear_b_per_section
+            .or(shunt.shunt_b_per_section)
+            .unwrap_or(0.0);
+
+        rows.push(FixedShuntSpec {
+            equipment_mrid,
+            status: shunt.status,
+            g_mw: Some(g_per_section * sections),
+            b_mvar: Some(b_per_section * sections),
+        });
+    }
+
+    Ok(rows)
+}
+
+/// Parses switched-shunt style elements (`NonlinearShuntCompensator` and
+/// concrete `ShuntCompensator`) from EQ RDF/XML.
+pub fn switched_shunts_from_reader<R: Read>(mut reader: R) -> Result<Vec<SwitchedShuntSpec>> {
+    let mut xml = String::new();
+    reader.read_to_string(&mut xml)?;
+
+    let mut fragments: Vec<&str> = Vec::new();
+    for tag in ["cim:NonlinearShuntCompensator", "cim:ShuntCompensator"] {
+        if contains_exact_element_tag(&xml, tag) {
+            let mut tag_fragments = extract_elements(&xml, tag)?;
+            fragments.append(&mut tag_fragments);
+        }
+    }
+
+    let mut rows = Vec::with_capacity(fragments.len());
+    for fragment in fragments {
+        let shunt: RawSwitchedShuntCompensator = from_str(fragment)?;
+        let Some(equipment_mrid) = shunt.resolved_mrid() else {
+            continue;
+        };
+
+        let normal_sections = shunt.normal_sections.or(shunt.sections).unwrap_or(1.0);
+        let b_per_section = shunt.b_per_section.unwrap_or(0.0);
+
+        rows.push(SwitchedShuntSpec {
+            equipment_mrid,
+            status: shunt.status,
+            b_steps: vec![b_per_section],
+            current_step: normal_sections.round() as i32,
+        });
+    }
+
+    Ok(rows)
 }
 
 /// Parses all `<cim:TopologicalNode>` elements from a CGMES TP RDF/XML reader.
@@ -482,6 +588,66 @@ struct RawConnectivityNode {
     topological_node: Option<RdfResourceRef>,
 }
 
+#[derive(Debug, Deserialize)]
+struct RawLinearShuntCompensator {
+    #[serde(rename = "@ID", default)]
+    m_rid: Option<String>,
+    #[serde(rename = "@about", default)]
+    about: Option<String>,
+    #[serde(rename = "Equipment.normallyInService", default)]
+    status: Option<bool>,
+    #[serde(rename = "ShuntCompensator.sections", default)]
+    sections: Option<f64>,
+    #[serde(rename = "ShuntCompensator.gPerSection", default)]
+    shunt_g_per_section: Option<f64>,
+    #[serde(rename = "ShuntCompensator.bPerSection", default)]
+    shunt_b_per_section: Option<f64>,
+    #[serde(rename = "LinearShuntCompensator.gPerSection", default)]
+    linear_g_per_section: Option<f64>,
+    #[serde(rename = "LinearShuntCompensator.bPerSection", default)]
+    linear_b_per_section: Option<f64>,
+}
+
+impl RawLinearShuntCompensator {
+    fn resolved_mrid(&self) -> Option<String> {
+        if let Some(mrid) = &self.m_rid {
+            return Some(normalize_cgmes_ref(mrid));
+        }
+        if let Some(about) = &self.about {
+            return Some(normalize_cgmes_ref(about));
+        }
+        None
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RawSwitchedShuntCompensator {
+    #[serde(rename = "@ID", default)]
+    m_rid: Option<String>,
+    #[serde(rename = "@about", default)]
+    about: Option<String>,
+    #[serde(rename = "Equipment.normallyInService", default)]
+    status: Option<bool>,
+    #[serde(rename = "ShuntCompensator.sections", default)]
+    sections: Option<f64>,
+    #[serde(rename = "ShuntCompensator.normalSections", default)]
+    normal_sections: Option<f64>,
+    #[serde(rename = "ShuntCompensator.bPerSection", default)]
+    b_per_section: Option<f64>,
+}
+
+impl RawSwitchedShuntCompensator {
+    fn resolved_mrid(&self) -> Option<String> {
+        if let Some(mrid) = &self.m_rid {
+            return Some(normalize_cgmes_ref(mrid));
+        }
+        if let Some(about) = &self.about {
+            return Some(normalize_cgmes_ref(about));
+        }
+        None
+    }
+}
+
 impl RawConnectivityNode {
     fn resolved_mrid(&self) -> Option<String> {
         if let Some(mrid) = &self.m_rid {
@@ -527,6 +693,27 @@ fn normalize_cgmes_ref(value: &str) -> String {
     trimmed.trim_start_matches('#').to_string()
 }
 
+fn contains_exact_element_tag(xml: &str, tag_name: &str) -> bool {
+    let opening = format!("<{tag_name}");
+    let mut cursor = 0;
+
+    while let Some(relative_start) = xml[cursor..].find(&opening) {
+        let start = cursor + relative_start;
+        let boundary_idx = start + opening.len();
+        let boundary_ok = xml[boundary_idx..]
+            .chars()
+            .next()
+            .map(|ch| ch == '>' || ch == '/' || ch.is_whitespace())
+            .unwrap_or(false);
+        if boundary_ok {
+            return true;
+        }
+        cursor = boundary_idx;
+    }
+
+    false
+}
+
 fn extract_elements<'a>(xml: &'a str, tag_name: &str) -> Result<Vec<&'a str>> {
     let opening = format!("<{tag_name}");
     let closing = format!("</{tag_name}>");
@@ -535,6 +722,20 @@ fn extract_elements<'a>(xml: &'a str, tag_name: &str) -> Result<Vec<&'a str>> {
 
     while let Some(relative_start) = xml[cursor..].find(&opening) {
         let start = cursor + relative_start;
+
+        // Require an exact tag boundary so `<cim:EnergyConsumer` does not
+        // match `<cim:EnergyConsumer.LoadResponse .../>`.
+        let boundary_idx = start + opening.len();
+        let boundary_ok = xml[boundary_idx..]
+            .chars()
+            .next()
+            .map(|ch| ch == '>' || ch == '/' || ch.is_whitespace())
+            .unwrap_or(false);
+        if !boundary_ok {
+            cursor = boundary_idx;
+            continue;
+        }
+
         let start_tag_end = xml[start..]
             .find('>')
             .map(|offset| start + offset)
