@@ -108,7 +108,8 @@ def _text_of_first(parent: ET.Element, tag_suffix: str) -> str | None:
 
 def _parse_eq_metrics(
     eq_path: Path,
-) -> tuple[int, int, float, float, int, int, int, int, int, float | None, float | None]:
+    sv_path: Path | None = None,
+) -> tuple[int, int, float, float, int, int, int, int, int, int, float | None, float | None]:
     rdf_ns = "{http://www.w3.org/1999/02/22-rdf-syntax-ns#}"
     root = ET.parse(eq_path).getroot()
 
@@ -116,7 +117,7 @@ def _parse_eq_metrics(
     generators_by_mrid: dict[str, float] = {}
     loads_by_mrid: dict[str, float] = {}
     connectivity_nodes: set[str] = set()
-    transformer_2w_count = 0
+    transformer_end_counts: dict[str, int] = {}
     fixed_shunt_count = 0
     switched_shunt_count = 0
 
@@ -156,14 +157,27 @@ def _parse_eq_metrics(
                 continue
             p_text = _text_of_first(element, "EnergyConsumer.p")
             loads_by_mrid[mrid] = float(p_text) if p_text is not None else 0.0
-        elif element.tag.endswith("PowerTransformer"):
-            end_count = sum(1 for child in element.iter() if child.tag.endswith("PowerTransformerEnd"))
-            if end_count == 2:
-                transformer_2w_count += 1
+        elif element.tag.endswith("PowerTransformerEnd"):
+            pt_ref = _find_first(element, "PowerTransformerEnd.PowerTransformer")
+            if pt_ref is None:
+                continue
+            resource = pt_ref.get(f"{rdf_ns}resource")
+            if resource:
+                pt_mrid = resource.lstrip("#")
+                transformer_end_counts[pt_mrid] = transformer_end_counts.get(pt_mrid, 0) + 1
         elif element.tag.endswith("LinearShuntCompensator"):
             fixed_shunt_count += 1
-        elif element.tag.endswith("NonlinearShuntCompensator") or element.tag.endswith("ShuntCompensator"):
+        elif element.tag.endswith("SvShuntCompensator"):
             switched_shunt_count += 1
+
+    transformer_2w_count = sum(1 for count in transformer_end_counts.values() if count == 2)
+    transformer_3w_count = sum(1 for count in transformer_end_counts.values() if count >= 3)
+
+    if sv_path is not None and sv_path.is_file():
+        sv_root = ET.parse(sv_path).getroot()
+        for element in sv_root.iter():
+            if element.tag.endswith("SvShuntCompensator"):
+                switched_shunt_count += 1
 
     if not lines_by_mrid:
         raise AssertionError("No ACLineSegment records found in EQ XML")
@@ -188,6 +202,7 @@ def _parse_eq_metrics(
         len(generators_by_mrid),
         len(loads_by_mrid),
         transformer_2w_count,
+        transformer_3w_count,
         fixed_shunt_count,
         switched_shunt_count,
         first_generator_p,
@@ -246,7 +261,9 @@ def _run_profile_validation(
     merged_dir = Path(data_root) / profile_name / f"{profile_name}-Merged"
     eq_path = merged_dir / f"{profile_name}_EQ.xml"
     tp_path = merged_dir / f"{profile_name}_TP.xml"
+    sv_path = merged_dir / f"{profile_name}_SV.xml"
     has_tp = tp_path.is_file()
+    has_sv = sv_path.is_file()
     connectivity_detail_mode = os.environ.get("RAPTRIX_CONNECTIVITY_DETAIL", "0") == "1"
     if not eq_path.is_file():
         request.node.add_marker(pytest.mark.ignore)
@@ -260,11 +277,12 @@ def _run_profile_validation(
         expected_generators,
         expected_loads,
         expected_transformers_2w,
+        expected_transformers_3w,
         expected_fixed_shunts,
         expected_switched_shunts,
         expected_first_generator_p,
         expected_first_load_p,
-    ) = _parse_eq_metrics(eq_path)
+    ) = _parse_eq_metrics(eq_path, sv_path if has_sv else None)
 
     repo_root = _repo_root()
     with tempfile.TemporaryDirectory(prefix="raptrix-rpf-") as temp_dir:
@@ -283,6 +301,8 @@ def _run_profile_validation(
         ]
         if has_tp:
             cmd.extend(["--tp", str(tp_path)])
+        if has_sv:
+            cmd.extend(["--sv", str(sv_path)])
         if connectivity_detail_mode:
             cmd.append("--connectivity-detail")
         completed = subprocess.run(
@@ -346,6 +366,7 @@ def _run_profile_validation(
         fixed_shunts_batch = table_map["fixed_shunts"]
         switched_shunts_batch = table_map["switched_shunts"]
         transformers_2w_batch = table_map["transformers_2w"]
+        transformers_3w_batch = table_map["transformers_3w"]
 
         assert buses_batch.num_rows > 0, "Buses table must contain at least one row"
         assert branches_batch.num_rows > 0, "Branches table must contain at least one row"
@@ -398,11 +419,14 @@ def _run_profile_validation(
         assert transformers_2w_batch.num_rows == expected_transformers_2w, (
             f"Expected {expected_transformers_2w} transformers_2w from PowerTransformer 2-end count, got {transformers_2w_batch.num_rows}"
         )
+        assert transformers_3w_batch.num_rows == expected_transformers_3w, (
+            f"Expected {expected_transformers_3w} transformers_3w from PowerTransformer 3-end count, got {transformers_3w_batch.num_rows}"
+        )
         assert fixed_shunts_batch.num_rows == expected_fixed_shunts, (
             f"Expected {expected_fixed_shunts} fixed_shunts from LinearShuntCompensator count, got {fixed_shunts_batch.num_rows}"
         )
         assert switched_shunts_batch.num_rows == expected_switched_shunts, (
-            f"Expected {expected_switched_shunts} switched_shunts from ShuntCompensator count, got {switched_shunts_batch.num_rows}"
+            f"Expected {expected_switched_shunts} switched_shunts from SvShuntCompensator count, got {switched_shunts_batch.num_rows}"
         )
 
         branch_table = pa.Table.from_batches([branches_batch])

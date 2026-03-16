@@ -369,6 +369,304 @@ fn strip_hash_cow<'a>(value: Cow<'a, str>) -> Cow<'a, str> {
 }
 
 // ---------------------------------------------------------------------------
+// SvShuntCompensator
+// ---------------------------------------------------------------------------
+
+/// CIM `SvShuntCompensator` state values for switched-shunt export.
+///
+/// Tenet 2: maps directly to CIM state payload with no schema mutation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SvShuntCompensator<'a> {
+    /// Inherited `IdentifiedObject` fields (mRID, name, description).
+    pub base: BaseAttributes<'a>,
+
+    /// Lower voltage deadband bound (pu).
+    pub v_low: Option<f64>,
+
+    /// Upper voltage deadband bound (pu).
+    pub v_high: Option<f64>,
+
+    /// Cumulative susceptance steps (pu).
+    pub b_steps: Option<Vec<f64>>,
+
+    /// Active step index.
+    pub current_step: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawSvResourceRef<'a> {
+    #[serde(rename = "@resource", borrow)]
+    resource: Cow<'a, str>,
+}
+
+#[derive(Deserialize)]
+struct RawSvShuntCompensator<'a> {
+    #[serde(rename = "@ID", default, borrow)]
+    m_rid: Option<Cow<'a, str>>,
+    #[serde(rename = "@about", default, borrow)]
+    about: Option<Cow<'a, str>>,
+    #[serde(rename = "IdentifiedObject.name", default, borrow)]
+    name: Option<Cow<'a, str>>,
+    #[serde(rename = "IdentifiedObject.description", default, borrow)]
+    description: Option<Cow<'a, str>>,
+    #[serde(rename = "SvShuntCompensator.ShuntCompensator", default)]
+    shunt_compensator: Option<RawSvResourceRef<'a>>,
+    #[serde(rename = "SvShuntCompensator.vLow", default)]
+    v_low: Option<f64>,
+    #[serde(rename = "SvShuntCompensator.vHigh", default)]
+    v_high: Option<f64>,
+    #[serde(rename = "SvShuntCompensator.bSteps", default)]
+    b_steps: Vec<f64>,
+    #[serde(rename = "SvShuntCompensator.bPerSection", default)]
+    b_per_section: Option<f64>,
+    #[serde(rename = "SvShuntCompensator.currentSection", default)]
+    current_step: Option<i32>,
+    #[serde(rename = "SvShuntCompensator.sections", default)]
+    sections: Option<f64>,
+}
+
+impl<'de: 'a, 'a> Deserialize<'de> for SvShuntCompensator<'a> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = RawSvShuntCompensator::deserialize(deserializer)?;
+
+        let m_rid = if let Some(shunt_ref) = raw.shunt_compensator {
+            strip_hash_cow(shunt_ref.resource)
+        } else if let Some(m_rid) = raw.m_rid {
+            strip_hash_cow(m_rid)
+        } else if let Some(about) = raw.about {
+            strip_hash_cow(about)
+        } else {
+            return Err(serde::de::Error::missing_field(
+                "SvShuntCompensator.ShuntCompensator or @ID or @about",
+            ));
+        };
+
+        let current_step = raw.current_step.or_else(|| raw.sections.map(|value| value.round() as i32));
+        let b_steps = if !raw.b_steps.is_empty() {
+            Some(raw.b_steps)
+        } else if let (Some(step), Some(per_section)) = (current_step, raw.b_per_section) {
+            if step > 0 {
+                Some((1..=step).map(|idx| per_section * (idx as f64)).collect())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        Ok(SvShuntCompensator {
+            base: BaseAttributes {
+                m_rid,
+                name: raw.name,
+                description: raw.description,
+            },
+            v_low: raw.v_low,
+            v_high: raw.v_high,
+            b_steps,
+            current_step,
+        })
+    }
+}
+
+impl<'a> Serialize for SvShuntCompensator<'a> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut s = serializer.serialize_struct("cim:SvShuntCompensator", 5)?;
+        s.serialize_field("@ID", &self.base.m_rid)?;
+        if let Some(ref n) = self.base.name {
+            s.serialize_field("IdentifiedObject.name", n)?;
+        }
+        if let Some(ref d) = self.base.description {
+            s.serialize_field("IdentifiedObject.description", d)?;
+        }
+        if let Some(v_low) = self.v_low {
+            s.serialize_field("SvShuntCompensator.vLow", &v_low)?;
+        }
+        if let Some(v_high) = self.v_high {
+            s.serialize_field("SvShuntCompensator.vHigh", &v_high)?;
+        }
+        if let Some(ref b_steps) = self.b_steps {
+            s.serialize_field("SvShuntCompensator.bSteps", b_steps)?;
+        }
+        if let Some(current_step) = self.current_step {
+            s.serialize_field("SvShuntCompensator.currentSection", &current_step)?;
+        }
+        s.end()
+    }
+}
+
+impl<'a> SvShuntCompensator<'a> {
+    /// Creates a new [`SvShuntCompensator`] with identity only.
+    pub fn new(base: BaseAttributes<'a>) -> Self {
+        Self {
+            base,
+            v_low: None,
+            v_high: None,
+            b_steps: None,
+            current_step: None,
+        }
+    }
+
+    /// Converts to a fully-owned (`'static`) [`SvShuntCompensator`].
+    pub fn into_owned(self) -> SvShuntCompensator<'static> {
+        SvShuntCompensator {
+            base: self.base.into_owned(),
+            v_low: self.v_low,
+            v_high: self.v_high,
+            b_steps: self.b_steps,
+            current_step: self.current_step,
+        }
+    }
+}
+
+impl<'a> IdentifiedObject for SvShuntCompensator<'a> {
+    fn mrid(&self) -> &str {
+        self.base.mrid()
+    }
+
+    fn name(&self) -> Option<&str> {
+        self.base.name()
+    }
+
+    fn description(&self) -> Option<&str> {
+        self.base.description()
+    }
+}
+
+impl<'a> PowerSystemResource for SvShuntCompensator<'a> {}
+impl<'a> Equipment for SvShuntCompensator<'a> {}
+
+// ---------------------------------------------------------------------------
+// Transformer2W / Transformer3W
+// ---------------------------------------------------------------------------
+
+/// Canonical 2-winding transformer row model resolved from CIM ingestion.
+///
+/// Tenet 2: field names mirror `transformers_2w` semantics directly.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Transformer2W<'a> {
+    pub base: BaseAttributes<'a>,
+    pub from_bus_id: i32,
+    pub to_bus_id: i32,
+    pub r: Option<f64>,
+    pub x: Option<f64>,
+    pub g: Option<f64>,
+    pub b: Option<f64>,
+    pub tap_ratio: Option<f64>,
+    pub phase_shift: Option<f64>,
+    pub rate_a: Option<f64>,
+    pub rate_b: Option<f64>,
+    pub rate_c: Option<f64>,
+    pub status: Option<bool>,
+}
+
+impl<'a> Transformer2W<'a> {
+    /// Converts to a fully-owned (`'static`) [`Transformer2W`].
+    pub fn into_owned(self) -> Transformer2W<'static> {
+        Transformer2W {
+            base: self.base.into_owned(),
+            from_bus_id: self.from_bus_id,
+            to_bus_id: self.to_bus_id,
+            r: self.r,
+            x: self.x,
+            g: self.g,
+            b: self.b,
+            tap_ratio: self.tap_ratio,
+            phase_shift: self.phase_shift,
+            rate_a: self.rate_a,
+            rate_b: self.rate_b,
+            rate_c: self.rate_c,
+            status: self.status,
+        }
+    }
+}
+
+impl<'a> IdentifiedObject for Transformer2W<'a> {
+    fn mrid(&self) -> &str {
+        self.base.mrid()
+    }
+
+    fn name(&self) -> Option<&str> {
+        self.base.name()
+    }
+
+    fn description(&self) -> Option<&str> {
+        self.base.description()
+    }
+}
+
+impl<'a> PowerSystemResource for Transformer2W<'a> {}
+impl<'a> Equipment for Transformer2W<'a> {}
+
+/// Canonical 3-winding transformer row model resolved from CIM ingestion.
+///
+/// Tenet 2: field names mirror `transformers_3w` semantics directly.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Transformer3W<'a> {
+    pub base: BaseAttributes<'a>,
+    pub bus_h_id: i32,
+    pub bus_m_id: i32,
+    pub bus_l_id: i32,
+    pub r_hm: Option<f64>,
+    pub x_hm: Option<f64>,
+    pub r_hl: Option<f64>,
+    pub x_hl: Option<f64>,
+    pub r_ml: Option<f64>,
+    pub x_ml: Option<f64>,
+    pub tap_h: Option<f64>,
+    pub tap_m: Option<f64>,
+    pub tap_l: Option<f64>,
+    pub phase_shift: Option<f64>,
+    pub rate_a: Option<f64>,
+    pub rate_b: Option<f64>,
+    pub rate_c: Option<f64>,
+    pub status: Option<bool>,
+}
+
+impl<'a> Transformer3W<'a> {
+    /// Converts to a fully-owned (`'static`) [`Transformer3W`].
+    pub fn into_owned(self) -> Transformer3W<'static> {
+        Transformer3W {
+            base: self.base.into_owned(),
+            bus_h_id: self.bus_h_id,
+            bus_m_id: self.bus_m_id,
+            bus_l_id: self.bus_l_id,
+            r_hm: self.r_hm,
+            x_hm: self.x_hm,
+            r_hl: self.r_hl,
+            x_hl: self.x_hl,
+            r_ml: self.r_ml,
+            x_ml: self.x_ml,
+            tap_h: self.tap_h,
+            tap_m: self.tap_m,
+            tap_l: self.tap_l,
+            phase_shift: self.phase_shift,
+            rate_a: self.rate_a,
+            rate_b: self.rate_b,
+            rate_c: self.rate_c,
+            status: self.status,
+        }
+    }
+}
+
+impl<'a> IdentifiedObject for Transformer3W<'a> {
+    fn mrid(&self) -> &str {
+        self.base.mrid()
+    }
+
+    fn name(&self) -> Option<&str> {
+        self.base.name()
+    }
+
+    fn description(&self) -> Option<&str> {
+        self.base.description()
+    }
+}
+
+impl<'a> PowerSystemResource for Transformer3W<'a> {}
+impl<'a> Equipment for Transformer3W<'a> {}
+
+// ---------------------------------------------------------------------------
 // SynchronousMachine
 // ---------------------------------------------------------------------------
 
