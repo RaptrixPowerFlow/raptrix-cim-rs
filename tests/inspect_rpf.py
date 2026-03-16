@@ -106,10 +106,32 @@ def _text_of_first(parent: ET.Element, tag_suffix: str) -> str | None:
     return node.text.strip()
 
 
+def _local_name(tag: str) -> str:
+    """Return XML local name for namespace-qualified or plain tags."""
+    if "}" in tag:
+        return tag.rsplit("}", 1)[1]
+    return tag
+
+
 def _parse_eq_metrics(
     eq_path: Path,
     sv_path: Path | None = None,
-) -> tuple[int, int, float, float, int, int, int, int, int, int, float | None, float | None]:
+) -> tuple[
+    int,
+    int,
+    float,
+    float,
+    int,
+    int,
+    int,
+    int,
+    int,
+    int,
+    int,
+    int,
+    float | None,
+    float | None,
+]:
     rdf_ns = "{http://www.w3.org/1999/02/22-rdf-syntax-ns#}"
     root = ET.parse(eq_path).getroot()
 
@@ -120,9 +142,14 @@ def _parse_eq_metrics(
     transformer_end_counts: dict[str, int] = {}
     fixed_shunt_count = 0
     switched_shunt_count = 0
+    areas_count = 0
+    zones_count = 0
+    owners_count = 0
 
     for element in root.iter():
-        if element.tag.endswith("ACLineSegment"):
+        local_name = _local_name(element.tag)
+
+        if local_name == "ACLineSegment":
             mrid = element.get(f"{rdf_ns}ID") or element.get(f"{rdf_ns}about", "").lstrip("#")
             if not mrid:
                 continue
@@ -132,14 +159,14 @@ def _parse_eq_metrics(
                 float(r_text) if r_text is not None else 0.0,
                 float(x_text) if x_text is not None else 0.0,
             )
-        elif element.tag.endswith("Terminal"):
+        elif local_name == "Terminal":
             cn = _find_first(element, "Terminal.ConnectivityNode")
             if cn is None:
                 continue
             resource = cn.get(f"{rdf_ns}resource")
             if resource:
                 connectivity_nodes.add(resource.lstrip("#"))
-        elif element.tag.endswith("SynchronousMachine"):
+        elif local_name == "SynchronousMachine":
             mrid = element.get(f"{rdf_ns}ID") or element.get(f"{rdf_ns}about", "").lstrip("#")
             if not mrid:
                 continue
@@ -147,17 +174,13 @@ def _parse_eq_metrics(
             if p_text is None:
                 p_text = _text_of_first(element, "SynchronousMachine.p")
             generators_by_mrid[mrid] = float(p_text) if p_text is not None else 0.0
-        elif (
-            element.tag.endswith("EnergyConsumer")
-            or element.tag.endswith("ConformLoad")
-            or element.tag.endswith("NonConformLoad")
-        ):
+        elif local_name in {"EnergyConsumer", "ConformLoad", "NonConformLoad"}:
             mrid = element.get(f"{rdf_ns}ID") or element.get(f"{rdf_ns}about", "").lstrip("#")
             if not mrid:
                 continue
             p_text = _text_of_first(element, "EnergyConsumer.p")
             loads_by_mrid[mrid] = float(p_text) if p_text is not None else 0.0
-        elif element.tag.endswith("PowerTransformerEnd"):
+        elif local_name == "PowerTransformerEnd":
             pt_ref = _find_first(element, "PowerTransformerEnd.PowerTransformer")
             if pt_ref is None:
                 continue
@@ -165,10 +188,16 @@ def _parse_eq_metrics(
             if resource:
                 pt_mrid = resource.lstrip("#")
                 transformer_end_counts[pt_mrid] = transformer_end_counts.get(pt_mrid, 0) + 1
-        elif element.tag.endswith("LinearShuntCompensator"):
+        elif local_name == "LinearShuntCompensator":
             fixed_shunt_count += 1
-        elif element.tag.endswith("SvShuntCompensator"):
+        elif local_name == "SvShuntCompensator":
             switched_shunt_count += 1
+        elif local_name == "ControlArea":
+            areas_count += 1
+        elif local_name == "SubGeographicalRegion":
+            zones_count += 1
+        elif local_name == "Organisation":
+            owners_count += 1
 
     transformer_2w_count = sum(1 for count in transformer_end_counts.values() if count == 2)
     transformer_3w_count = sum(1 for count in transformer_end_counts.values() if count >= 3)
@@ -176,7 +205,7 @@ def _parse_eq_metrics(
     if sv_path is not None and sv_path.is_file():
         sv_root = ET.parse(sv_path).getroot()
         for element in sv_root.iter():
-            if element.tag.endswith("SvShuntCompensator"):
+            if _local_name(element.tag) == "SvShuntCompensator":
                 switched_shunt_count += 1
 
     if not lines_by_mrid:
@@ -205,6 +234,9 @@ def _parse_eq_metrics(
         transformer_3w_count,
         fixed_shunt_count,
         switched_shunt_count,
+        areas_count,
+        zones_count,
+        owners_count,
         first_generator_p,
         first_load_p,
     )
@@ -280,6 +312,9 @@ def _run_profile_validation(
         expected_transformers_3w,
         expected_fixed_shunts,
         expected_switched_shunts,
+        expected_areas,
+        expected_zones,
+        expected_owners,
         expected_first_generator_p,
         expected_first_load_p,
     ) = _parse_eq_metrics(eq_path, sv_path if has_sv else None)
@@ -367,6 +402,9 @@ def _run_profile_validation(
         switched_shunts_batch = table_map["switched_shunts"]
         transformers_2w_batch = table_map["transformers_2w"]
         transformers_3w_batch = table_map["transformers_3w"]
+        areas_batch = table_map["areas"]
+        zones_batch = table_map["zones"]
+        owners_batch = table_map["owners"]
 
         assert buses_batch.num_rows > 0, "Buses table must contain at least one row"
         assert branches_batch.num_rows > 0, "Branches table must contain at least one row"
@@ -427,6 +465,15 @@ def _run_profile_validation(
         )
         assert switched_shunts_batch.num_rows == expected_switched_shunts, (
             f"Expected {expected_switched_shunts} switched_shunts from SvShuntCompensator count, got {switched_shunts_batch.num_rows}"
+        )
+        assert areas_batch.num_rows == expected_areas, (
+            f"Expected {expected_areas} areas from ControlArea count, got {areas_batch.num_rows}"
+        )
+        assert zones_batch.num_rows == expected_zones, (
+            f"Expected {expected_zones} zones from SubGeographicalRegion count, got {zones_batch.num_rows}"
+        )
+        assert owners_batch.num_rows == expected_owners, (
+            f"Expected {expected_owners} owners from Organisation count, got {owners_batch.num_rows}"
         )
 
         branch_table = pa.Table.from_batches([branches_batch])
