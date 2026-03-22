@@ -35,13 +35,15 @@ use memmap2::MmapOptions;
 
 use crate::arrow_schema::{
     all_table_schemas, areas_schema, buses_schema, branches_schema, contingencies_schema,
-    connectivity_groups_schema, dynamics_models_schema, fixed_shunts_schema, generators_schema,
-    interfaces_schema, loads_schema, metadata_schema, owners_schema, schema_metadata,
-    switched_shunts_schema, transformers_2w_schema, transformers_3w_schema,
-    zones_schema, BRANDING,
+    connectivity_groups_schema, connectivity_nodes_schema, dynamics_models_schema,
+    fixed_shunts_schema, generators_schema, interfaces_schema, loads_schema, metadata_schema,
+    node_breaker_detail_schema, node_breaker_table_schemas, owners_schema, schema_metadata,
+    switch_detail_schema, switched_shunts_schema, transformers_2w_schema,
+    transformers_3w_schema, zones_schema, BRANDING,
     SCHEMA_VERSION, TABLE_AREAS, TABLE_BRANCHES, TABLE_BUSES,
-    TABLE_CONTINGENCIES, TABLE_DYNAMICS_MODELS, TABLE_FIXED_SHUNTS, TABLE_GENERATORS,
-    TABLE_INTERFACES, TABLE_LOADS, TABLE_METADATA, TABLE_OWNERS, TABLE_SWITCHED_SHUNTS,
+    TABLE_CONNECTIVITY_NODES, TABLE_CONTINGENCIES, TABLE_DYNAMICS_MODELS,
+    TABLE_FIXED_SHUNTS, TABLE_GENERATORS, TABLE_INTERFACES, TABLE_LOADS, TABLE_METADATA,
+    TABLE_NODE_BREAKER_DETAIL, TABLE_OWNERS, TABLE_SWITCH_DETAIL, TABLE_SWITCHED_SHUNTS,
     TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, TABLE_ZONES,
 };
 use crate::parser;
@@ -60,6 +62,7 @@ pub enum BusResolutionMode {
 pub struct WriteOptions {
     pub bus_resolution_mode: BusResolutionMode,
     pub emit_connectivity_groups: bool,
+    pub emit_node_breaker_detail: bool,
 }
 
 impl Default for WriteOptions {
@@ -67,6 +70,7 @@ impl Default for WriteOptions {
         Self {
             bus_resolution_mode: BusResolutionMode::Topological,
             emit_connectivity_groups: false,
+            emit_node_breaker_detail: false,
         }
     }
 }
@@ -78,6 +82,9 @@ pub struct WriteSummary {
     pub final_bus_count: usize,
     pub tp_merged: bool,
     pub connectivity_groups_rows: usize,
+    pub node_breaker_rows: usize,
+    pub switch_detail_rows: usize,
+    pub connectivity_node_rows: usize,
 }
 
 /// Per-table summary stats for an `.rpf` file.
@@ -280,6 +287,36 @@ struct ConnectivityGroupRow<'a> {
 }
 
 #[derive(Debug, Clone)]
+struct NodeBreakerDetailRow<'a> {
+    switch_id: Cow<'a, str>,
+    switch_type: Cow<'a, str>,
+    from_bus_id: Option<i32>,
+    to_bus_id: Option<i32>,
+    connectivity_node_a: Option<Cow<'a, str>>,
+    connectivity_node_b: Option<Cow<'a, str>>,
+    is_open: Option<bool>,
+    normal_open: Option<bool>,
+    status: Option<bool>,
+}
+
+#[derive(Debug, Clone)]
+struct SwitchDetailRow<'a> {
+    switch_id: Cow<'a, str>,
+    name: Option<Cow<'a, str>>,
+    switch_type: Cow<'a, str>,
+    is_open: Option<bool>,
+    normal_open: Option<bool>,
+    retained: Option<bool>,
+}
+
+#[derive(Debug, Clone)]
+struct ConnectivityNodeDetailRow<'a> {
+    connectivity_node_mrid: Cow<'a, str>,
+    topological_node_mrid: Option<Cow<'a, str>>,
+    bus_id: Option<i32>,
+}
+
+#[derive(Debug, Clone)]
 struct ContingencyRow<'a> {
     contingency_id: Cow<'a, str>,
     elements: Vec<ContingencyElement<'a>>,
@@ -362,8 +399,13 @@ fn voltage_label_from_name(name: Option<&str>) -> &'static str {
     }
 }
 
-fn root_rpf_schema() -> Schema {
-    let fields = all_table_schemas()
+fn root_rpf_schema(include_node_breaker_detail: bool) -> Schema {
+    let mut table_schemas = all_table_schemas();
+    if include_node_breaker_detail {
+        table_schemas.extend(node_breaker_table_schemas());
+    }
+
+    let fields = table_schemas
         .into_iter()
         .map(|(table_name, schema)| {
             Field::new(
@@ -445,7 +487,7 @@ fn require_non_null_count_equals_len(
     Ok(())
 }
 
-fn validate_post_write_contract(path: impl AsRef<Path>) -> Result<()> {
+fn validate_post_write_contract(path: impl AsRef<Path>, include_node_breaker_detail: bool) -> Result<()> {
     let path = path.as_ref();
 
     // Confirms the artifact is Arrow IPC File format by opening via FileReader.
@@ -456,7 +498,10 @@ fn validate_post_write_contract(path: impl AsRef<Path>) -> Result<()> {
     let mut reader = FileReader::try_new(Cursor::new(&mmap[..]), None)
         .with_context(|| format!("failed to open Arrow IPC FileReader for {}", path.display()))?;
 
-    let canonical = all_table_schemas();
+    let mut canonical = all_table_schemas();
+    if include_node_breaker_detail {
+        canonical.extend(node_breaker_table_schemas());
+    }
     let reader_schema = reader.schema();
     if reader_schema.fields().len() != canonical.len() {
         bail!(
@@ -542,12 +587,11 @@ fn validate_post_write_contract(path: impl AsRef<Path>) -> Result<()> {
     Ok(())
 }
 
-/// Reads all canonical tables from an RPF v0.5.2 root Arrow IPC file.
+/// Reads all known tables from an RPF v0.6.0 root Arrow IPC file.
 ///
 /// Public API compatibility note:
-/// this still returns one `(table_name, RecordBatch)` entry per canonical table,
-/// even though the physical file now stores one root record batch containing
-/// 15 struct columns.
+/// this returns one `(table_name, RecordBatch)` entry per known root struct
+/// column, including optional detail tables when present.
 pub fn read_rpf_tables(path: impl AsRef<Path>) -> Result<Vec<(String, RecordBatch)>> {
     let path = path.as_ref();
     let file = File::open(path)
@@ -558,20 +602,16 @@ pub fn read_rpf_tables(path: impl AsRef<Path>) -> Result<Vec<(String, RecordBatc
     let mut reader = FileReader::try_new(Cursor::new(&mmap[..]), None)
         .with_context(|| format!("failed to open Arrow IPC file reader for {}", path.display()))?;
 
-    let canonical = all_table_schemas();
-    let expected_root_fields = canonical
-        .iter()
-        .map(|(name, _)| *name)
-        .collect::<Vec<_>>();
     let reader_schema = reader.schema();
-    if reader_schema.fields().len() != expected_root_fields.len() {
+    let canonical_count = all_table_schemas().len();
+    if reader_schema.fields().len() < canonical_count {
         bail!(
-            "invalid RPF root schema: expected {} columns, found {}",
-            expected_root_fields.len(),
+            "invalid RPF root schema: expected at least {} columns, found {}",
+            canonical_count,
             reader_schema.fields().len()
         );
     }
-    for (idx, expected_name) in expected_root_fields.iter().enumerate() {
+    for (idx, (expected_name, _)) in all_table_schemas().iter().enumerate() {
         let actual_name = reader_schema.field(idx).name();
         if actual_name != *expected_name {
             bail!(
@@ -585,14 +625,18 @@ pub fn read_rpf_tables(path: impl AsRef<Path>) -> Result<Vec<(String, RecordBatc
         let root_batch = root_batch_result
             .with_context(|| format!("failed reading root record batch from {}", path.display()))?;
 
-        for (column_idx, (table_name, expected_schema)) in canonical.iter().enumerate() {
+        for column_idx in 0..reader_schema.fields().len() {
+            let table_name = reader_schema.field(column_idx).name().as_str();
+            let Some(expected_schema) = crate::arrow_schema::table_schema(table_name) else {
+                continue;
+            };
             let struct_array = root_batch
                 .column(column_idx)
                 .as_any()
                 .downcast_ref::<StructArray>()
                 .with_context(|| {
                     format!(
-                        "invalid root column '{table_name}': expected StructArray at index {column_idx}"
+                            "invalid root column '{table_name}': expected StructArray at index {column_idx}"
                     )
                 })?;
 
@@ -632,7 +676,7 @@ pub fn read_rpf_tables(path: impl AsRef<Path>) -> Result<Vec<(String, RecordBatc
                     "failed reconstructing table '{table_name}' from root record batch"
                 )
             })?;
-            out.push(((*table_name).to_string(), table_batch));
+            out.push((table_name.to_string(), table_batch));
         }
     }
 
@@ -679,6 +723,20 @@ pub fn summarize_rpf(path: impl AsRef<Path>) -> Result<RpfSummary> {
         total_rows,
         canonical_table_count,
     })
+}
+
+/// Reads file-level root metadata from an `.rpf` Arrow IPC file.
+pub fn rpf_file_metadata(path: impl AsRef<Path>) -> Result<HashMap<String, String>> {
+    let path = path.as_ref();
+    let file = File::open(path)
+        .with_context(|| format!("failed to open .rpf file at {}", path.display()))?;
+    let mmap = unsafe { MmapOptions::new().map(&file) }
+        .with_context(|| format!("failed to memory-map .rpf file at {}", path.display()))?;
+
+    let reader = FileReader::try_new(Cursor::new(&mmap[..]), None)
+        .with_context(|| format!("failed to open Arrow IPC file reader for {}", path.display()))?;
+
+    Ok(reader.schema().metadata().clone())
 }
 
 /// Writes a complete Raptrix v0.5.2 `.rpf` Arrow IPC file.
@@ -731,6 +789,9 @@ pub fn write_complete_rpf_with_options(
         fixed_shunt_rows,
         switched_shunt_rows,
         connectivity_group_rows,
+        node_breaker_rows,
+        switch_detail_rows,
+        connectivity_node_rows,
         split_bus_stub_elements,
     ) = topology;
 
@@ -770,6 +831,9 @@ pub fn write_complete_rpf_with_options(
     let contingencies_batch = build_contingencies_batch(&contingencies_rows)?;
     let dynamics_models_batch = build_dynamics_models_batch(&dynamics_models_rows)?;
     let _connectivity_groups_batch = build_connectivity_groups_batch(&connectivity_group_rows)?;
+    let node_breaker_detail_batch = build_node_breaker_detail_batch(&node_breaker_rows)?;
+    let switch_detail_batch = build_switch_detail_batch(&switch_detail_rows)?;
+    let connectivity_nodes_batch = build_connectivity_nodes_batch(&connectivity_node_rows)?;
 
     let mut output = File::create(output_path)
         .with_context(|| format!("failed to create output .rpf file at {output_path}"))?;
@@ -791,27 +855,42 @@ pub fn write_complete_rpf_with_options(
     table_batches.insert(TABLE_INTERFACES, RecordBatch::new_empty(Arc::new(interfaces_schema())));
     table_batches.insert(TABLE_DYNAMICS_MODELS, dynamics_models_batch.clone());
 
-    let max_rows = all_table_schemas()
+    if options.emit_node_breaker_detail {
+        table_batches.insert(TABLE_NODE_BREAKER_DETAIL, node_breaker_detail_batch.clone());
+        table_batches.insert(TABLE_SWITCH_DETAIL, switch_detail_batch.clone());
+        table_batches.insert(TABLE_CONNECTIVITY_NODES, connectivity_nodes_batch.clone());
+    }
+
+    let mut table_specs = all_table_schemas();
+    if options.emit_node_breaker_detail {
+        table_specs.extend(node_breaker_table_schemas());
+    }
+
+    let max_rows = table_specs
+        .iter()
         .into_iter()
         .map(|(name, _)| table_batches.get(name).map(RecordBatch::num_rows).unwrap_or(0))
         .max()
         .unwrap_or(0);
 
-    let mut root_schema = root_rpf_schema();
+    let mut root_schema = root_rpf_schema(options.emit_node_breaker_detail);
     let mut root_metadata = root_schema.metadata().clone();
-    for (table_name, _) in all_table_schemas() {
+    for (table_name, _) in &table_specs {
         let row_count = table_batches
-            .get(table_name)
+            .get(*table_name)
             .map(RecordBatch::num_rows)
             .unwrap_or(0);
         root_metadata.insert(row_count_metadata_key(table_name), row_count.to_string());
     }
+    if options.emit_node_breaker_detail {
+        root_metadata.insert("raptrix.features.node_breaker".to_string(), "true".to_string());
+    }
     root_schema = root_schema.with_metadata(root_metadata);
     let root_schema = Arc::new(root_schema);
 
-    let mut root_columns: Vec<ArrayRef> = Vec::with_capacity(all_table_schemas().len());
+    let mut root_columns: Vec<ArrayRef> = Vec::with_capacity(table_specs.len());
 
-    for (table_name, expected_schema) in all_table_schemas() {
+    for (table_name, expected_schema) in table_specs {
         let table_batch = table_batches
             .get(table_name)
             .with_context(|| format!("missing required table batch '{table_name}'"))?;
@@ -868,7 +947,7 @@ pub fn write_complete_rpf_with_options(
         .finish()
         .context("failed finishing root Arrow IPC file")?;
 
-    validate_post_write_contract(output_path)?;
+    validate_post_write_contract(output_path, options.emit_node_breaker_detail)?;
 
     let tp_merged = options.bus_resolution_mode == BusResolutionMode::Topological
         && !connectivity_group_rows.is_empty();
@@ -886,6 +965,9 @@ pub fn write_complete_rpf_with_options(
         final_bus_count: bus_rows.len(),
         tp_merged,
         connectivity_groups_rows: connectivity_group_rows.len(),
+        node_breaker_rows: node_breaker_rows.len(),
+        switch_detail_rows: switch_detail_rows.len(),
+        connectivity_node_rows: connectivity_node_rows.len(),
     })
 }
 
@@ -959,6 +1041,8 @@ fn parse_eq_components_for_path(
     Vec<parser::TerminalLink>,
     Vec<crate::models::TopologicalNode<'static>>,
     Vec<crate::models::ConnectivityNodeGroup<'static>>,
+    Vec<parser::SwitchSpec>,
+    Vec<parser::ConnectivityNodeSpec>,
 )> {
     let bytes = std::fs::read(path)
         .with_context(|| format!("failed to open CGMES input file at {path}"))?;
@@ -1008,6 +1092,14 @@ fn parse_eq_components_for_path(
             )
         })?;
 
+    let switches = parser::switch_specs_from_reader(Cursor::new(&bytes)).with_context(|| {
+        format!("failed to extract switch elements from CGMES input file at {path}")
+    })?;
+
+    let connectivity_nodes = parser::connectivity_nodes_from_reader(Cursor::new(&bytes)).with_context(|| {
+        format!("failed to extract ConnectivityNode elements from CGMES input file at {path}")
+    })?;
+
     Ok((
         lines,
         machines,
@@ -1021,6 +1113,8 @@ fn parse_eq_components_for_path(
         terminals,
         topological_nodes,
         connectivity_groups,
+        switches,
+        connectivity_nodes,
     ))
 }
 
@@ -1049,6 +1143,9 @@ fn parse_eq_topology_rows(
     Vec<FixedShuntRow<'static>>,
     Vec<SwitchedShuntRow>,
     Vec<ConnectivityGroupRow<'static>>,
+    Vec<NodeBreakerDetailRow<'static>>,
+    Vec<SwitchDetailRow<'static>>,
+    Vec<ConnectivityNodeDetailRow<'static>>,
     Vec<ContingencyElement<'static>>,
 )> {
     let mut lines = Vec::new();
@@ -1063,6 +1160,8 @@ fn parse_eq_topology_rows(
     let mut terminals = Vec::new();
     let mut topological_nodes = Vec::new();
     let mut connectivity_groups = Vec::new();
+    let mut switches = Vec::new();
+    let mut connectivity_nodes = Vec::new();
 
     for path in cgmes_paths {
         let (
@@ -1078,6 +1177,8 @@ fn parse_eq_topology_rows(
             mut parsed_terminals,
             mut parsed_topological_nodes,
             mut parsed_connectivity_groups,
+            mut parsed_switches,
+            mut parsed_connectivity_nodes,
         ) =
             parse_eq_components_for_path(path)?;
         if !parsed_lines.is_empty() {
@@ -1115,6 +1216,12 @@ fn parse_eq_topology_rows(
         }
         if !parsed_connectivity_groups.is_empty() {
             connectivity_groups.append(&mut parsed_connectivity_groups);
+        }
+        if !parsed_switches.is_empty() {
+            switches.append(&mut parsed_switches);
+        }
+        if !parsed_connectivity_nodes.is_empty() {
+            connectivity_nodes.append(&mut parsed_connectivity_nodes);
         }
     }
 
@@ -1822,6 +1929,9 @@ fn parse_eq_topology_rows(
     }
 
     let mut connectivity_group_rows: Vec<ConnectivityGroupRow<'static>> = Vec::new();
+    let mut node_breaker_rows: Vec<NodeBreakerDetailRow<'static>> = Vec::new();
+    let mut switch_detail_rows: Vec<SwitchDetailRow<'static>> = Vec::new();
+    let mut connectivity_node_rows: Vec<ConnectivityNodeDetailRow<'static>> = Vec::new();
     let mut split_bus_stub_elements: Vec<ContingencyElement<'static>> = Vec::new();
     for group in &connectivity_groups {
         let topological_mrid = group.topological_node_mrid.as_ref().to_owned();
@@ -1871,6 +1981,84 @@ fn parse_eq_topology_rows(
         });
     }
 
+    if !switches.is_empty() {
+        for switch in switches {
+            let switch_terminals = terminals_by_equipment
+                .get(switch.switch_mrid.as_str())
+                .cloned()
+                .unwrap_or_default();
+
+            let mut unique_nodes: Vec<&str> = Vec::new();
+            for terminal in &switch_terminals {
+                let node = terminal.connectivity_node_mrid.as_str();
+                if !unique_nodes.iter().any(|existing| *existing == node) {
+                    unique_nodes.push(node);
+                }
+            }
+            unique_nodes.sort_unstable();
+
+            let connectivity_node_a = unique_nodes.first().map(|value| Cow::Owned((*value).to_string()));
+            let connectivity_node_b = unique_nodes.get(1).map(|value| Cow::Owned((*value).to_string()));
+
+            let resolve_bus_id = |node: &str| -> Option<i32> {
+                if use_topological {
+                    conn_to_topo
+                        .get(node)
+                        .and_then(|topological| bus_key_to_bus_id.get(*topological))
+                        .copied()
+                } else {
+                    bus_key_to_bus_id.get(node).copied()
+                }
+            };
+
+            let from_bus_id = unique_nodes.first().and_then(|node| resolve_bus_id(node));
+            let to_bus_id = unique_nodes.get(1).and_then(|node| resolve_bus_id(node));
+            let status = switch.is_open.map(|value| !value);
+
+            switch_detail_rows.push(SwitchDetailRow {
+                switch_id: Cow::Owned(switch.switch_mrid.clone()),
+                name: switch.name.map(Cow::Owned),
+                switch_type: Cow::Owned(switch.switch_type.clone()),
+                is_open: switch.is_open,
+                normal_open: switch.normal_open,
+                retained: switch.retained,
+            });
+
+            node_breaker_rows.push(NodeBreakerDetailRow {
+                switch_id: Cow::Owned(switch.switch_mrid),
+                switch_type: Cow::Owned(switch.switch_type),
+                from_bus_id,
+                to_bus_id,
+                connectivity_node_a,
+                connectivity_node_b,
+                is_open: switch.is_open,
+                normal_open: switch.normal_open,
+                status,
+            });
+        }
+    }
+
+    if !connectivity_nodes.is_empty() {
+        for node in connectivity_nodes {
+            let bus_id = if use_topological {
+                node.topological_node_mrid
+                    .as_deref()
+                    .and_then(|topological| bus_key_to_bus_id.get(topological))
+                    .copied()
+            } else {
+                bus_key_to_bus_id
+                    .get(node.connectivity_node_mrid.as_str())
+                    .copied()
+            };
+
+            connectivity_node_rows.push(ConnectivityNodeDetailRow {
+                connectivity_node_mrid: Cow::Owned(node.connectivity_node_mrid),
+                topological_node_mrid: node.topological_node_mrid.map(Cow::Owned),
+                bus_id,
+            });
+        }
+    }
+
     Ok((
         bus_rows,
         branch_rows,
@@ -1884,6 +2072,9 @@ fn parse_eq_topology_rows(
         fixed_shunt_rows,
         switched_shunt_rows,
         connectivity_group_rows,
+        node_breaker_rows,
+        switch_detail_rows,
+        connectivity_node_rows,
         split_bus_stub_elements,
     ))
 }
@@ -2474,6 +2665,156 @@ fn build_connectivity_groups_batch(rows: &[ConnectivityGroupRow<'_>]) -> Result<
     RecordBatch::try_new(schema, arrays).context("failed to build connectivity_groups record batch")
 }
 
+fn build_node_breaker_detail_batch(rows: &[NodeBreakerDetailRow<'_>]) -> Result<RecordBatch> {
+    let schema = Arc::new(node_breaker_detail_schema());
+
+    let mut switch_id_b = StringDictionaryBuilder::<Int32Type>::new();
+    let mut switch_type_b = StringDictionaryBuilder::<Int32Type>::new();
+    let mut from_bus_id_b = Int32Builder::new();
+    let mut to_bus_id_b = Int32Builder::new();
+    let mut connectivity_node_a_b = StringDictionaryBuilder::<Int32Type>::new();
+    let mut connectivity_node_b_b = StringDictionaryBuilder::<Int32Type>::new();
+    let mut is_open_b = BooleanBuilder::new();
+    let mut normal_open_b = BooleanBuilder::new();
+    let mut status_b = BooleanBuilder::new();
+
+    for row in rows {
+        switch_id_b.append(row.switch_id.as_ref())?;
+        switch_type_b.append(row.switch_type.as_ref())?;
+
+        if let Some(value) = row.from_bus_id {
+            from_bus_id_b.append_value(value);
+        } else {
+            from_bus_id_b.append_null();
+        }
+        if let Some(value) = row.to_bus_id {
+            to_bus_id_b.append_value(value);
+        } else {
+            to_bus_id_b.append_null();
+        }
+
+        if let Some(value) = &row.connectivity_node_a {
+            connectivity_node_a_b.append(value.as_ref())?;
+        } else {
+            connectivity_node_a_b.append_null();
+        }
+        if let Some(value) = &row.connectivity_node_b {
+            connectivity_node_b_b.append(value.as_ref())?;
+        } else {
+            connectivity_node_b_b.append_null();
+        }
+
+        if let Some(value) = row.is_open {
+            is_open_b.append_value(value);
+        } else {
+            is_open_b.append_null();
+        }
+        if let Some(value) = row.normal_open {
+            normal_open_b.append_value(value);
+        } else {
+            normal_open_b.append_null();
+        }
+        if let Some(value) = row.status {
+            status_b.append_value(value);
+        } else {
+            status_b.append_null();
+        }
+    }
+
+    let arrays: Vec<ArrayRef> = vec![
+        Arc::new(switch_id_b.finish()) as ArrayRef,
+        Arc::new(switch_type_b.finish()) as ArrayRef,
+        Arc::new(from_bus_id_b.finish()) as ArrayRef,
+        Arc::new(to_bus_id_b.finish()) as ArrayRef,
+        Arc::new(connectivity_node_a_b.finish()) as ArrayRef,
+        Arc::new(connectivity_node_b_b.finish()) as ArrayRef,
+        Arc::new(is_open_b.finish()) as ArrayRef,
+        Arc::new(normal_open_b.finish()) as ArrayRef,
+        Arc::new(status_b.finish()) as ArrayRef,
+    ];
+
+    RecordBatch::try_new(schema, arrays).context("failed to build node_breaker_detail record batch")
+}
+
+fn build_switch_detail_batch(rows: &[SwitchDetailRow<'_>]) -> Result<RecordBatch> {
+    let schema = Arc::new(switch_detail_schema());
+
+    let mut switch_id_b = StringDictionaryBuilder::<Int32Type>::new();
+    let mut name_b = StringDictionaryBuilder::<UInt32Type>::new();
+    let mut switch_type_b = StringDictionaryBuilder::<Int32Type>::new();
+    let mut is_open_b = BooleanBuilder::new();
+    let mut normal_open_b = BooleanBuilder::new();
+    let mut retained_b = BooleanBuilder::new();
+
+    for row in rows {
+        switch_id_b.append(row.switch_id.as_ref())?;
+        if let Some(name) = &row.name {
+            name_b.append(name.as_ref())?;
+        } else {
+            name_b.append_null();
+        }
+        switch_type_b.append(row.switch_type.as_ref())?;
+
+        if let Some(value) = row.is_open {
+            is_open_b.append_value(value);
+        } else {
+            is_open_b.append_null();
+        }
+        if let Some(value) = row.normal_open {
+            normal_open_b.append_value(value);
+        } else {
+            normal_open_b.append_null();
+        }
+        if let Some(value) = row.retained {
+            retained_b.append_value(value);
+        } else {
+            retained_b.append_null();
+        }
+    }
+
+    let arrays: Vec<ArrayRef> = vec![
+        Arc::new(switch_id_b.finish()) as ArrayRef,
+        Arc::new(name_b.finish()) as ArrayRef,
+        Arc::new(switch_type_b.finish()) as ArrayRef,
+        Arc::new(is_open_b.finish()) as ArrayRef,
+        Arc::new(normal_open_b.finish()) as ArrayRef,
+        Arc::new(retained_b.finish()) as ArrayRef,
+    ];
+
+    RecordBatch::try_new(schema, arrays).context("failed to build switch_detail record batch")
+}
+
+fn build_connectivity_nodes_batch(rows: &[ConnectivityNodeDetailRow<'_>]) -> Result<RecordBatch> {
+    let schema = Arc::new(connectivity_nodes_schema());
+
+    let mut connectivity_node_mrid_b = StringDictionaryBuilder::<Int32Type>::new();
+    let mut topological_node_mrid_b = StringDictionaryBuilder::<Int32Type>::new();
+    let mut bus_id_b = Int32Builder::new();
+
+    for row in rows {
+        connectivity_node_mrid_b.append(row.connectivity_node_mrid.as_ref())?;
+        if let Some(topological) = &row.topological_node_mrid {
+            topological_node_mrid_b.append(topological.as_ref())?;
+        } else {
+            topological_node_mrid_b.append_null();
+        }
+
+        if let Some(bus_id) = row.bus_id {
+            bus_id_b.append_value(bus_id);
+        } else {
+            bus_id_b.append_null();
+        }
+    }
+
+    let arrays: Vec<ArrayRef> = vec![
+        Arc::new(connectivity_node_mrid_b.finish()) as ArrayRef,
+        Arc::new(topological_node_mrid_b.finish()) as ArrayRef,
+        Arc::new(bus_id_b.finish()) as ArrayRef,
+    ];
+
+    RecordBatch::try_new(schema, arrays).context("failed to build connectivity_nodes record batch")
+}
+
 /// Builds the `contingencies` table batch with list-of-struct payloads.
 ///
 /// Tenet 2: this uses the exact locked `contingencies_schema()` ordering and
@@ -2653,11 +2994,15 @@ mod tests {
     use arrow::datatypes::Schema;
 
     use crate::arrow_schema::{
-        all_table_schemas, branches_schema, buses_schema, contingencies_schema,
-        dynamics_models_schema, metadata_schema, BRANDING, SCHEMA_VERSION,
+        all_table_schemas, branches_schema, buses_schema, connectivity_nodes_schema,
+        contingencies_schema, dynamics_models_schema, metadata_schema,
+        node_breaker_detail_schema, switch_detail_schema, BRANDING, SCHEMA_VERSION,
     };
 
-    use super::{read_rpf_tables, summarize_rpf, write_complete_rpf};
+    use super::{
+        read_rpf_tables, rpf_file_metadata, summarize_rpf, write_complete_rpf,
+        write_complete_rpf_with_options, BusResolutionMode, WriteOptions,
+    };
 
     fn assert_schema_shape_matches(actual: &Schema, expected: &Schema) {
         assert_eq!(actual.fields().len(), expected.fields().len());
@@ -2686,6 +3031,21 @@ mod tests {
 
         xml.push_str("</rdf:RDF>");
         xml
+    }
+
+    fn generate_eq_fixture_with_breaker() -> String {
+        String::from(
+            r##"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#">
+<cim:ConnectivityNode rdf:ID="N1" />
+<cim:ConnectivityNode rdf:ID="N2" />
+<cim:ACLineSegment rdf:ID="L1"><IdentifiedObject.name>Line 1</IdentifiedObject.name><ACLineSegment.r>0.01</ACLineSegment.r><ACLineSegment.x>0.05</ACLineSegment.x><ACLineSegment.bch>0.001</ACLineSegment.bch></cim:ACLineSegment>
+<cim:Terminal rdf:ID="LT1"><Terminal.ConductingEquipment rdf:resource="#L1"/><Terminal.ConnectivityNode rdf:resource="#N1"/><ACDCTerminal.sequenceNumber>1</ACDCTerminal.sequenceNumber></cim:Terminal>
+<cim:Terminal rdf:ID="LT2"><Terminal.ConductingEquipment rdf:resource="#L1"/><Terminal.ConnectivityNode rdf:resource="#N2"/><ACDCTerminal.sequenceNumber>2</ACDCTerminal.sequenceNumber></cim:Terminal>
+<cim:Breaker rdf:ID="BR1"><IdentifiedObject.name>Breaker 1</IdentifiedObject.name><Switch.open>false</Switch.open><Switch.normalOpen>false</Switch.normalOpen><Switch.retained>true</Switch.retained></cim:Breaker>
+<cim:Terminal rdf:ID="BT1"><Terminal.ConductingEquipment rdf:resource="#BR1"/><Terminal.ConnectivityNode rdf:resource="#N1"/><ACDCTerminal.sequenceNumber>1</ACDCTerminal.sequenceNumber></cim:Terminal>
+<cim:Terminal rdf:ID="BT2"><Terminal.ConductingEquipment rdf:resource="#BR1"/><Terminal.ConnectivityNode rdf:resource="#N2"/><ACDCTerminal.sequenceNumber>2</ACDCTerminal.sequenceNumber></cim:Terminal>
+</rdf:RDF>"##,
+        )
     }
 
     #[test]
@@ -2972,6 +3332,67 @@ mod tests {
             "Read throughput: {:.0} tables/s",
             tables.len() as f64 / read_elapsed.as_secs_f64()
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn write_complete_rpf_with_node_breaker_tables_matches_optional_schemas() -> Result<()> {
+        let tmp_dir = std::env::temp_dir().join("raptrix_rpf_node_breaker_tests");
+        fs::create_dir_all(&tmp_dir)?;
+
+        let eq_path = tmp_dir.join("node_breaker_eq.xml");
+        fs::write(&eq_path, generate_eq_fixture_with_breaker())?;
+
+        let output_path = tmp_dir.join("node_breaker_case.rpf");
+        let eq_path_str = eq_path.to_string_lossy().into_owned();
+        let output_path_str = output_path.to_string_lossy().into_owned();
+
+        write_complete_rpf_with_options(
+            &[&eq_path_str],
+            &output_path_str,
+            &WriteOptions {
+                bus_resolution_mode: BusResolutionMode::Topological,
+                emit_connectivity_groups: false,
+                emit_node_breaker_detail: true,
+            },
+        )?;
+
+        let tables = read_rpf_tables(&output_path)?;
+
+        let node_breaker_detail = tables
+            .iter()
+            .find(|(name, _)| name == "node_breaker_detail")
+            .map(|(_, batch)| batch)
+            .context("expected node_breaker_detail table")?;
+        assert_schema_shape_matches(
+            node_breaker_detail.schema().as_ref(),
+            &node_breaker_detail_schema(),
+        );
+        assert_eq!(node_breaker_detail.num_rows(), 1);
+
+        let switch_detail = tables
+            .iter()
+            .find(|(name, _)| name == "switch_detail")
+            .map(|(_, batch)| batch)
+            .context("expected switch_detail table")?;
+        assert_schema_shape_matches(switch_detail.schema().as_ref(), &switch_detail_schema());
+        assert_eq!(switch_detail.num_rows(), 1);
+
+        let connectivity_nodes = tables
+            .iter()
+            .find(|(name, _)| name == "connectivity_nodes")
+            .map(|(_, batch)| batch)
+            .context("expected connectivity_nodes table")?;
+        assert_schema_shape_matches(
+            connectivity_nodes.schema().as_ref(),
+            &connectivity_nodes_schema(),
+        );
+        assert_eq!(connectivity_nodes.num_rows(), 2);
+
+        let metadata = rpf_file_metadata(&output_path)?;
+        assert_eq!(metadata.get("raptrix.features.node_breaker"), Some(&"true".to_string()));
+        assert_eq!(metadata.get("raptrix.version"), Some(&SCHEMA_VERSION.to_string()));
 
         Ok(())
     }

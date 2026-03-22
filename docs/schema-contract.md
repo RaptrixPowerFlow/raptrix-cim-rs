@@ -1,4 +1,4 @@
-# Schema Contract (Locked v0.5)
+# Schema Contract (Locked contract: v0.6.0)
 
 ## Contract Policy
 
@@ -15,8 +15,66 @@ Every `.rpf` file must include:
 
 Current locked values:
 
-- `raptrix.version = v0.5`
-- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.5 - High-performance open profile by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.`
+- `raptrix.version = v0.6.0`
+- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.6.0 - High-performance open profile by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.`
+
+Optional file-level metadata keys:
+
+- `raptrix.features.node_breaker = true` when optional node-breaker detail tables are emitted
+- `rpf.rows.<table_name> = <row_count>` for each emitted table
+
+## File Container Layout
+
+`.rpf` is a standard Arrow IPC File container, not a custom binary framing. A compliant reader must:
+
+1. Open the file as Arrow IPC File format.
+2. Read the root schema metadata.
+3. Read one root record batch.
+4. Interpret each root column as one table encoded as a nullable `StructArray`.
+
+Current writer behavior emits exactly one root record batch. A future writer may emit more than one root batch, so readers should iterate record batches and reconstruct tables by root column name rather than assuming a single batch forever.
+
+## Root Column Ordering
+
+Required root columns are in this exact order:
+
+1. `metadata`
+2. `buses`
+3. `branches`
+4. `generators`
+5. `loads`
+6. `fixed_shunts`
+7. `switched_shunts`
+8. `transformers_2w`
+9. `transformers_3w`
+10. `areas`
+11. `zones`
+12. `owners`
+13. `contingencies`
+14. `interfaces`
+15. `dynamics_models`
+
+Optional root columns, when present, are appended after the required columns in this order:
+
+16. `node_breaker_detail`
+17. `switch_detail`
+18. `connectivity_nodes`
+
+`connectivity_groups` is an optional detail table emitted only in connectivity-detail mode and is appended after the required root columns when that mode is active.
+
+## Table Reconstruction Rules
+
+Each root struct column may be null-padded to the maximum row count of any emitted table in the root batch. A compliant parser must use `rpf.rows.<table_name>` metadata, when present, as the authoritative logical row count for each table and trim any padded null tail beyond that count.
+
+Recommended read algorithm:
+
+1. Open Arrow IPC file and collect root schema metadata.
+2. For each root column name, look up the expected schema by table name.
+3. Downcast the root column to `StructArray`.
+4. Trim each child array to `rpf.rows.<table_name>` rows.
+5. Reconstruct the logical table record batch from the trimmed child arrays.
+
+Readers should ignore unknown trailing root columns for forward compatibility, but they must reject reordered or renamed required root columns.
 
 ## Canonical Schema Source
 
@@ -49,7 +107,234 @@ Optional detail table (emitted only in connectivity-detail mode):
 
 - `connectivity_groups`
 
-## Blocker Fixes Incorporated in v0.5
+Optional detail tables (emitted only when `raptrix.features.node_breaker = true`):
+
+- `node_breaker_detail`
+- `switch_detail`
+- `connectivity_nodes`
+
+## Column Reference
+
+This section is normative for external parser authors.
+
+### metadata
+
+- `base_mva`: Float64, required
+- `frequency_hz`: Float64, required
+- `psse_version`: Int32, required
+- `study_name`: Dictionary<Int32, Utf8>, required
+- `timestamp_utc`: Utf8, required
+- `raptrix_version`: Utf8, required
+- `is_planning_case`: Boolean, required
+- `custom_metadata`: Map<String, String>, nullable
+
+### buses
+
+- `bus_id`: Int32, required
+- `name`: Dictionary<Int32, Utf8>, required
+- `type`: Int8, required
+- `p_sched`: Float64, required
+- `q_sched`: Float64, required
+- `v_mag_set`: Float64, required
+- `v_ang_set`: Float64, required
+- `q_min`: Float64, required
+- `q_max`: Float64, required
+- `g_shunt`: Float64, required
+- `b_shunt`: Float64, required
+- `area`: Int32, required
+- `zone`: Int32, required
+- `owner`: Int32, required
+- `v_min`: Float64, required
+- `v_max`: Float64, required
+- `p_min_agg`: Float64, required
+- `p_max_agg`: Float64, required
+
+### branches
+
+- `branch_id`: Int32, required
+- `from_bus_id`: Int32, required
+- `to_bus_id`: Int32, required
+- `ckt`: Dictionary<Int32, Utf8>, required
+- `r`: Float64, required
+- `x`: Float64, required
+- `b_shunt`: Float64, required
+- `tap`: Float64, required
+- `phase`: Float64, required
+- `rate_a`: Float64, required
+- `rate_b`: Float64, required
+- `rate_c`: Float64, required
+- `status`: Boolean, required
+- `name`: Dictionary<UInt32, Utf8>, nullable
+
+### generators
+
+- `bus_id`: Int32, required
+- `id`: Dictionary<Int32, Utf8>, required
+- `p_sched_mw`: Float64, required
+- `p_min_mw`: Float64, required
+- `p_max_mw`: Float64, required
+- `q_min_mvar`: Float64, required
+- `q_max_mvar`: Float64, required
+- `status`: Boolean, required
+- `mbase_mva`: Float64, required
+- `H`: Float64, required
+- `xd_prime`: Float64, required
+- `D`: Float64, required
+- `name`: Dictionary<UInt32, Utf8>, nullable
+
+### loads
+
+- `bus_id`: Int32, required
+- `id`: Dictionary<Int32, Utf8>, required
+- `status`: Boolean, required
+- `p_mw`: Float64, required
+- `q_mvar`: Float64, required
+- `name`: Dictionary<UInt32, Utf8>, nullable
+
+### fixed_shunts
+
+- `bus_id`: Int32, required
+- `id`: Dictionary<Int32, Utf8>, required
+- `status`: Boolean, required
+- `g_mw`: Float64, required
+- `b_mvar`: Float64, required
+
+### switched_shunts
+
+- `bus_id`: Int32, required
+- `status`: Boolean, required
+- `v_low`: Float64, required
+- `v_high`: Float64, required
+- `b_steps`: List<Float64>, required
+- `current_step`: Int32, required
+
+### transformers_2w
+
+- `from_bus_id`: Int32, required
+- `to_bus_id`: Int32, required
+- `ckt`: Dictionary<Int32, Utf8>, required
+- `r`: Float64, required
+- `x`: Float64, required
+- `winding1_r`: Float64, required
+- `winding1_x`: Float64, required
+- `winding2_r`: Float64, required
+- `winding2_x`: Float64, required
+- `g`: Float64, required
+- `b`: Float64, required
+- `tap_ratio`: Float64, required
+- `nominal_tap_ratio`: Float64, required
+- `phase_shift`: Float64, required
+- `vector_group`: Dictionary<Int32, Utf8>, required
+- `rate_a`: Float64, required
+- `rate_b`: Float64, required
+- `rate_c`: Float64, required
+- `status`: Boolean, required
+- `name`: Dictionary<UInt32, Utf8>, nullable
+
+### transformers_3w
+
+- `bus_h_id`: Int32, required
+- `bus_m_id`: Int32, required
+- `bus_l_id`: Int32, required
+- `star_bus_id`: Int32, nullable
+- `ckt`: Dictionary<Int32, Utf8>, required
+- `r_hm`: Float64, required
+- `x_hm`: Float64, required
+- `r_hl`: Float64, required
+- `x_hl`: Float64, required
+- `r_ml`: Float64, required
+- `x_ml`: Float64, required
+- `tap_h`: Float64, required
+- `tap_m`: Float64, required
+- `tap_l`: Float64, required
+- `phase_shift`: Float64, required
+- `vector_group`: Dictionary<Int32, Utf8>, required
+- `rate_a`: Float64, required
+- `rate_b`: Float64, required
+- `rate_c`: Float64, required
+- `status`: Boolean, required
+- `name`: Dictionary<UInt32, Utf8>, nullable
+
+### areas
+
+- `area_id`: Int32, required
+- `name`: Dictionary<Int32, Utf8>, required
+- `interchange_mw`: Float64, nullable
+
+### zones
+
+- `zone_id`: Int32, required
+- `name`: Dictionary<Int32, Utf8>, required
+
+### owners
+
+- `owner_id`: Int32, required
+- `name`: Dictionary<Int32, Utf8>, required
+
+### contingencies
+
+- `contingency_id`: Dictionary<Int32, Utf8>, required
+- `elements`: List<Struct>, required
+
+`elements` fields:
+
+- `element_type`: Dictionary<Int32, Utf8>, required
+- `branch_id`: Int32, nullable
+- `bus_id`: Int32, nullable
+- `gen_id`: Dictionary<Int32, Utf8>, nullable
+- `load_id`: Dictionary<Int32, Utf8>, nullable
+- `amount_mw`: Float64, nullable
+- `status_change`: Boolean, required
+
+### interfaces
+
+- `interface_id`: Int32, required
+- `name`: Dictionary<Int32, Utf8>, required
+- `monitored_branches`: List<Int32>, required
+- `transfer_limit_mw`: Float64, required
+
+### dynamics_models
+
+- `bus_id`: Int32, required
+- `gen_id`: Dictionary<Int32, Utf8>, required
+- `model_type`: Dictionary<Int32, Utf8>, required
+- `params`: Map<String, Float64>, required
+
+### connectivity_groups
+
+- `topological_bus_id`: Int32, required
+- `topological_node_mrid`: Dictionary<Int32, Utf8>, required
+- `connectivity_node_mrids`: List<Utf8>, required
+- `connectivity_count`: Int32, required
+
+### node_breaker_detail
+
+- `switch_id`: Dictionary<Int32, Utf8>, required
+- `switch_type`: Dictionary<Int32, Utf8>, required
+- `from_bus_id`: Int32, nullable
+- `to_bus_id`: Int32, nullable
+- `connectivity_node_a`: Dictionary<Int32, Utf8>, nullable
+- `connectivity_node_b`: Dictionary<Int32, Utf8>, nullable
+- `is_open`: Boolean, nullable
+- `normal_open`: Boolean, nullable
+- `status`: Boolean, nullable
+
+### switch_detail
+
+- `switch_id`: Dictionary<Int32, Utf8>, required
+- `name`: Dictionary<UInt32, Utf8>, nullable
+- `switch_type`: Dictionary<Int32, Utf8>, required
+- `is_open`: Boolean, nullable
+- `normal_open`: Boolean, nullable
+- `retained`: Boolean, nullable
+
+### connectivity_nodes
+
+- `connectivity_node_mrid`: Dictionary<Int32, Utf8>, required
+- `topological_node_mrid`: Dictionary<Int32, Utf8>, nullable
+- `bus_id`: Int32, nullable
+
+## Blocker Fixes Incorporated in Locked contract: v0.6.0
 
 ### 1) Expanded transformer detail
 
@@ -137,7 +422,7 @@ When connectivity-detail mode is requested, writers may emit
 - `connectivity_count` (Int32)
 
 This table preserves switchyard-level split-bus structure for ML and detailed
-contingency analysis without changing core v0.5 table schemas.
+contingency analysis without changing core Locked contract: v0.6.0 table schemas.
 
 ### 7) `split_bus` contingency stub element
 
@@ -154,7 +439,23 @@ payload encodes:
 - `breaker_mrid` (`stub` placeholder)
 
 These values are serialized in the existing `gen_id` slot as a compact string
-to preserve strict v0.5 field layout.
+to preserve strict Locked contract: v0.6.0 field layout.
+
+### 8) Optional node-breaker detail tables (opt-in only)
+
+Locked contract: v0.6.0 adds optional node-breaker detail tables (`node_breaker_detail`, `switch_detail`, and `connectivity_nodes`) for operational CGMES fidelity and viewer workflows while preserving the strict core solver path. These tables are emitted only when explicitly requested with `--node-breaker` and are advertised in `.rpf` file-level Arrow IPC metadata with `raptrix.features.node_breaker=true`, so default power-flow ingest remains core tables only and preserves zero-copy performance semantics end-to-end (memory-mapped Arrow IPC to Arrow arrays with no additional allocations or copies on the default path).
+
+## Parser Author Checklist
+
+An independent parser is considered compliant if it:
+
+1. Opens `.rpf` as Arrow IPC File format.
+2. Verifies `raptrix.version = v0.6.0`.
+3. Verifies required root columns appear in canonical order.
+4. Uses `rpf.rows.<table_name>` metadata to trim padded null tails.
+5. Treats the 15 required root columns as mandatory even when their logical row counts are zero.
+6. Detects optional tables by root column presence and feature metadata, not by guesswork.
+7. Ignores unknown future trailing root columns for forward compatibility.
 
 ## Compatibility Rules
 
@@ -169,3 +470,6 @@ to preserve strict v0.5 field layout.
 2. Update this file with version and column docs.
 3. Add or update test coverage for schema construction and writer outputs.
 4. Update README capability and known-limits sections.
+
+Raptrix CIM-Arrow — High-performance open CIM profile by Musto Technologies LLC
+Copyright (c) 2026 Musto Technologies LLC
