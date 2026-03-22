@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.5.2 profile.
+//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.6.0 profile.
 //!
 //! This module exposes one exact Arrow schema per required table in the locked
 //! `.rpf` contract, plus a deterministic table registry helper.
@@ -16,7 +16,7 @@ use arrow::datatypes::{DataType, Field, Schema};
 pub const BRANDING: &str = "Raptrix CIM-Arrow — High-performance open CIM profile by Musto Technologies LLC\nCopyright (c) 2026 Musto Technologies LLC";
 
 /// Schema version tag embedded as file-level metadata.
-pub const SCHEMA_VERSION: &str = "0.5.2";
+pub const SCHEMA_VERSION: &str = "0.6.0";
 
 pub const TABLE_METADATA: &str = "metadata";
 pub const TABLE_BUSES: &str = "buses";
@@ -35,6 +35,12 @@ pub const TABLE_INTERFACES: &str = "interfaces";
 pub const TABLE_DYNAMICS_MODELS: &str = "dynamics_models";
 /// Optional detail table emitted only when connectivity-detail mode is enabled.
 pub const TABLE_CONNECTIVITY_GROUPS: &str = "connectivity_groups";
+/// Optional detail table emitted only when node-breaker detail mode is enabled.
+pub const TABLE_NODE_BREAKER_DETAIL: &str = "node_breaker_detail";
+/// Optional detail table emitted only when node-breaker detail mode is enabled.
+pub const TABLE_SWITCH_DETAIL: &str = "switch_detail";
+/// Optional detail table emitted only when node-breaker detail mode is enabled.
+pub const TABLE_CONNECTIVITY_NODES: &str = "connectivity_nodes";
 /// Backward-compatible alias for older callers.
 pub const TABLE_DYNAMICS: &str = "dynamics";
 
@@ -408,6 +414,63 @@ pub fn connectivity_groups_schema() -> Schema {
     )
 }
 
+/// Optional `node_breaker_detail` table schema.
+///
+/// This table carries switch-level connectivity for viewer and operational
+/// workflows and is emitted only when node-breaker detail mode is enabled.
+pub fn node_breaker_detail_schema() -> Schema {
+    Schema::new_with_metadata(
+        vec![
+            Field::new("switch_id", dict_utf8(), false),
+            Field::new("switch_type", dict_utf8(), false),
+            Field::new("from_bus_id", DataType::Int32, true),
+            Field::new("to_bus_id", DataType::Int32, true),
+            Field::new("connectivity_node_a", dict_utf8(), true),
+            Field::new("connectivity_node_b", dict_utf8(), true),
+            Field::new("is_open", DataType::Boolean, true),
+            Field::new("normal_open", DataType::Boolean, true),
+            Field::new("status", DataType::Boolean, true),
+        ],
+        schema_metadata(),
+    )
+}
+
+/// Optional `switch_detail` table schema.
+pub fn switch_detail_schema() -> Schema {
+    Schema::new_with_metadata(
+        vec![
+            Field::new("switch_id", dict_utf8(), false),
+            Field::new("name", dict_utf8_u32(), true),
+            Field::new("switch_type", dict_utf8(), false),
+            Field::new("is_open", DataType::Boolean, true),
+            Field::new("normal_open", DataType::Boolean, true),
+            Field::new("retained", DataType::Boolean, true),
+        ],
+        schema_metadata(),
+    )
+}
+
+/// Optional `connectivity_nodes` table schema.
+pub fn connectivity_nodes_schema() -> Schema {
+    Schema::new_with_metadata(
+        vec![
+            Field::new("connectivity_node_mrid", dict_utf8(), false),
+            Field::new("topological_node_mrid", dict_utf8(), true),
+            Field::new("bus_id", DataType::Int32, true),
+        ],
+        schema_metadata(),
+    )
+}
+
+/// Returns optional node-breaker detail table schemas in deterministic order.
+pub fn node_breaker_table_schemas() -> Vec<(&'static str, Schema)> {
+    vec![
+        (TABLE_NODE_BREAKER_DETAIL, node_breaker_detail_schema()),
+        (TABLE_SWITCH_DETAIL, switch_detail_schema()),
+        (TABLE_CONNECTIVITY_NODES, connectivity_nodes_schema()),
+    ]
+}
+
 /// Returns all required table schemas in canonical v0.5 order.
 pub fn all_table_schemas() -> Vec<(&'static str, Schema)> {
     vec![
@@ -448,6 +511,9 @@ pub fn table_schema(table_name: &str) -> Option<Schema> {
         TABLE_INTERFACES => Some(interfaces_schema()),
         TABLE_DYNAMICS_MODELS => Some(dynamics_models_schema()),
         TABLE_CONNECTIVITY_GROUPS => Some(connectivity_groups_schema()),
+        TABLE_NODE_BREAKER_DETAIL => Some(node_breaker_detail_schema()),
+        TABLE_SWITCH_DETAIL => Some(switch_detail_schema()),
+        TABLE_CONNECTIVITY_NODES => Some(connectivity_nodes_schema()),
         TABLE_DYNAMICS => Some(dynamics_models_schema()),
         _ => None,
     }

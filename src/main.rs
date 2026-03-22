@@ -20,7 +20,8 @@ use clap::{ArgGroup, Parser, Subcommand};
 
 use raptrix_cim_rs::arrow_schema::BRANDING;
 use raptrix_cim_rs::rpf_writer::{
-    summarize_rpf, write_complete_rpf_with_options, BusResolutionMode, WriteOptions,
+    rpf_file_metadata, summarize_rpf, write_complete_rpf_with_options, BusResolutionMode,
+    WriteOptions,
 };
 
 const COPYRIGHT: &str = "Copyright (c) 2026 Musto Technologies LLC";
@@ -95,6 +96,10 @@ struct ConvertArgs {
     /// Keep ConnectivityNode granularity and emit optional connectivity_groups detail.
     #[arg(long)]
     connectivity_detail: bool,
+
+    /// Emit optional node-breaker detail tables for viewer/operations workflows.
+    #[arg(long)]
+    node_breaker: bool,
 }
 
 #[derive(Debug, clap::Args)]
@@ -102,6 +107,10 @@ struct ViewArgs {
     /// Input `.rpf` file to inspect.
     #[arg(long)]
     input: PathBuf,
+
+    /// Print file-level RPF metadata entries.
+    #[arg(long)]
+    verbose: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -160,6 +169,18 @@ fn run_view(args: ViewArgs) -> Result<()> {
         );
     }
 
+    if args.verbose {
+        let mut metadata_entries: Vec<(String, String)> = rpf_file_metadata(&input_path)?
+            .into_iter()
+            .collect();
+        metadata_entries.sort_by(|left, right| left.0.cmp(&right.0));
+
+        println!("Metadata:");
+        for (key, value) in metadata_entries {
+            println!("  {key} = {value}");
+        }
+    }
+
     Ok(())
 }
 
@@ -192,12 +213,14 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
         WriteOptions {
             bus_resolution_mode: BusResolutionMode::ConnectivityDetail,
             emit_connectivity_groups: true,
+            emit_node_breaker_detail: args.node_breaker,
         }
     } else {
         WriteOptions {
             // Topological is default for interoperability.
             bus_resolution_mode: BusResolutionMode::Topological,
             emit_connectivity_groups: false,
+            emit_node_breaker_detail: args.node_breaker,
         }
     };
 
@@ -224,7 +247,7 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
         CANONICAL_TABLE_COUNT + 1
     } else {
         CANONICAL_TABLE_COUNT
-    };
+    } + if write_options.emit_node_breaker_detail { 3 } else { 0 };
     println!("Tables emitted: {emitted_tables}");
     if summary.tp_merged {
         println!(
@@ -241,6 +264,11 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
             "Connectivity groups emitted: {}",
             summary.connectivity_groups_rows
         );
+    }
+    if write_options.emit_node_breaker_detail {
+        println!("Node-breaker detail rows: {}", summary.node_breaker_rows);
+        println!("Switch detail rows: {}", summary.switch_detail_rows);
+        println!("Connectivity nodes emitted: {}", summary.connectivity_node_rows);
     }
 
     Ok(())

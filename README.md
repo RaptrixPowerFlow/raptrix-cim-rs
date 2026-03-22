@@ -28,7 +28,7 @@ Copyright (c) 2026 Musto Technologies LLC
 
 ### Output capabilities
 
-- Build Arrow schema objects for the locked Raptrix PowerFlow Interchange v0.5.2 contract:
+- Build Arrow schema objects for the locked Raptrix PowerFlow Interchange v0.6.0 contract:
 	- metadata
 	- buses
 	- branches
@@ -54,9 +54,17 @@ Copyright (c) 2026 Musto Technologies LLC
 
 ## Data Contract (Locked)
 
-- Current schema contract: v0.5.2
+- Current schema contract: v0.6.0
 - Canonical source: src/arrow_schema.rs
 - Contract policy and semantics: docs/schema-contract.md
+
+### Versioning Policy
+
+Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is now locked at schema `v0.6.0` for interoperability and deterministic ingest behavior, while the converter crate release tracks implementation maturity and is currently `0.1.3`.
+
+This split preserves compatibility guarantees for downstream tools: existing `v0.5.2` Parquet artifacts remain valid to read on the core path, and new `v0.6.0` optional features are additive only.
+
+For third-party implementers, [docs/schema-contract.md](docs/schema-contract.md) is the authoritative reader/writer contract. It now documents the `.rpf` Arrow IPC container layout, canonical root column ordering, row-count metadata trimming rules, optional table detection, and full column/type references needed to build a compatible parser.
 
 Key lock points now documented and enforced:
 
@@ -84,6 +92,7 @@ High-level pipeline:
 
 - Topological by default: solver-facing bus IDs are collapsed to TP TopologicalNode for interoperability with common power-flow toolchains.
 - Connectivity preserved optionally: `--connectivity-detail` keeps granular bus mapping and emits `connectivity_groups` so ML and detailed contingency workflows can reconstruct split-bus structure.
+- Optional node-breaker support: `--node-breaker` emits additive node-breaker detail tables for operational/viewer fidelity while default ingest stays strict core tables only for maximum zero-copy speed.
 - Split-bus contingency stub: a placeholder `split_bus` contingency element is emitted when TP groups indicate multiple connectivity nodes under one topological bus (full breaker-state parsing is intentionally deferred).
 - Benchmark note: on SmallGrid-scale datasets this merge substantially reduces bus count versus raw ConnectivityNode granularity and improves solve-stage matrix dimensions.
 
@@ -109,9 +118,9 @@ Use these as baseline indicators, not final production benchmarks.
 
 - src/models: CIM data structures and traits
 - src/parser.rs: parse helpers and EQ-to-branch mapping
-- src/arrow_schema.rs: v0.5.2 table schemas, metadata constants, and schema registry helpers
+- src/arrow_schema.rs: v0.6.0 table schemas, metadata constants, and schema registry helpers
 
-### v0.5.2 naming additions
+### Locked contract: v0.6.0 naming additions
 
 - Added optional dictionary-encoded `name` columns to:
 	- branches
@@ -142,6 +151,10 @@ Inspect an existing `.rpf` file:
 
 - `cargo run --release -- view --input case.rpf`
 
+Inspect an existing `.rpf` file with root metadata and feature flags:
+
+- `cargo run --release -- view --input case.rpf --verbose`
+
 The CLI requires `--output` to end with `.rpf`. In auto-detect mode it scans the provided directory for filenames containing `EQ`, `TP`, `SV`, `SSH`, and `DY` case-insensitively, and `EQ` must be present.
 
 ## First Working `.rpf` (Generate + View)
@@ -155,6 +168,8 @@ Then inspect table counts and coverage:
 - `cargo run --release -- view --input tests/data/external/smallgrid_eq.rpf`
 
 The `view` command prints table-by-table row counts for quick import checks in `raptrix-core` and `raptrix-cim-viewer`.
+
+Use `--verbose` when validating interoperability because it also prints the root Arrow IPC metadata entries, including `raptrix.version`, `raptrix.features.node_breaker`, and `rpf.rows.*` logical row counts used by compliant external parsers.
 
 ## Library Usage
 
@@ -188,6 +203,11 @@ Run live SmallGrid integration test (PowerShell):
 Run CLI in auto-detect mode:
 
 - cargo run --release -- convert --input-dir cgmes_case/ --output case.rpf
+
+Enable `rdf:about` fallback diagnostics only when debugging parser edge cases:
+
+1. `$env:RAPTRIX_LOG_RDF_ABOUT_FALLBACK = "1"`
+2. `cargo test --test integration_parse -- --ignored --nocapture`
 
 ## Running Automated Validation
 
@@ -236,7 +256,7 @@ Large model archives should stay outside the repository.
 
 - Parsing focus is currently EQ profile extraction for key equipment, not full multi-profile CGMES graph reconstruction.
 - Branch endpoint mapping currently relies on Terminal and ConnectivityNode references present in EQ.
-- Demo writer currently exercises buses/branches only; other locked v0.5 tables are schema-defined and ready for row-mapping implementation.
+- Demo writer currently exercises buses/branches only; other locked contract: v0.6.0 tables are schema-defined and ready for row-mapping implementation.
 - Some solver fields are default-filled in integration mapping until richer profile joins (TP/SV/SSH) are added.
 
 ## How To Request New Solver Features
@@ -259,7 +279,7 @@ README should remain the quick start and capability overview.
 For world-class maintainability, add these next:
 
 - docs/architecture.md for pipeline and design decisions
-- docs/schema-contract.md for Arrow/Parquet contracts and versioning
+- docs/schema-contract.md for `.rpf` Arrow IPC contracts and versioning
 - docs/roadmap.md for planned CGMES profile coverage
 - GitHub issue templates for feature requests and bug reports
 - GitHub Discussions for design trade-offs before implementation

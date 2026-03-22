@@ -43,6 +43,7 @@
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
+use std::sync::OnceLock;
 use std::io::Read;
 
 use anyhow::{bail, Result};
@@ -58,6 +59,21 @@ use crate::models::{
 
 /// A parsing error returned by the helper functions in this module.
 pub type ParseError = quick_xml::DeError;
+
+fn should_log_rdf_about_fallback() -> bool {
+    static SHOULD_LOG: OnceLock<bool> = OnceLock::new();
+    *SHOULD_LOG.get_or_init(|| {
+        std::env::var("RAPTRIX_LOG_RDF_ABOUT_FALLBACK")
+            .map(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+            .unwrap_or(false)
+    })
+}
+
+fn log_rdf_about_fallback(mrid: &str) {
+    if should_log_rdf_about_fallback() {
+        eprintln!("Fallback: using rdf:about for mRID: {mrid}");
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Generic helper
@@ -166,6 +182,24 @@ pub struct FixedShuntSpec {
     pub status: Option<bool>,
     pub g_mw: Option<f64>,
     pub b_mvar: Option<f64>,
+}
+
+/// Parsed switch payload for optional node-breaker detail tables.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SwitchSpec {
+    pub switch_mrid: String,
+    pub switch_type: String,
+    pub name: Option<String>,
+    pub is_open: Option<bool>,
+    pub normal_open: Option<bool>,
+    pub retained: Option<bool>,
+}
+
+/// Parsed ConnectivityNode payload for optional node-breaker detail tables.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConnectivityNodeSpec {
+    pub connectivity_node_mrid: String,
+    pub topological_node_mrid: Option<String>,
 }
 
 /// Parsed PowerTransformer with attached winding-end parameters.
@@ -534,6 +568,87 @@ pub fn connectivity_node_groups_from_reader<R: Read>(
     Ok(out)
 }
 
+/// Parses switch-like CIM elements used for node-breaker detail emission.
+///
+/// Supported tags:
+/// - `cim:Breaker`
+/// - `cim:Disconnector`
+/// - `cim:LoadBreakSwitch`
+/// - `cim:Switch`
+pub fn switch_specs_from_reader<R: Read>(mut reader: R) -> Result<Vec<SwitchSpec>> {
+    let mut xml = String::new();
+    reader.read_to_string(&mut xml)?;
+
+    let mut rows = Vec::new();
+    for (tag, switch_type) in [
+        ("cim:Breaker", "Breaker"),
+        ("cim:Disconnector", "Disconnector"),
+        ("cim:LoadBreakSwitch", "LoadBreakSwitch"),
+        ("cim:Switch", "Switch"),
+    ] {
+        if !contains_exact_element_tag(&xml, tag) {
+            continue;
+        }
+        let fragments = extract_elements(&xml, tag)?;
+        for fragment in fragments {
+            let raw: RawSwitch<'_> = from_str(fragment)?;
+            let Some(switch_mrid) = raw.resolved_mrid() else {
+                continue;
+            };
+            rows.push(SwitchSpec {
+                switch_mrid,
+                switch_type: switch_type.to_string(),
+                name: raw
+                    .name
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToOwned::to_owned),
+                is_open: raw.open,
+                normal_open: raw.normal_open,
+                retained: raw.retained,
+            });
+        }
+    }
+
+    rows.sort_unstable_by(|left, right| left.switch_mrid.cmp(&right.switch_mrid));
+    rows.dedup_by(|left, right| left.switch_mrid == right.switch_mrid);
+    Ok(rows)
+}
+
+/// Parses raw `ConnectivityNode` rows for optional node-breaker detail tables.
+pub fn connectivity_nodes_from_reader<R: Read>(mut reader: R) -> Result<Vec<ConnectivityNodeSpec>> {
+    let mut xml = String::new();
+    reader.read_to_string(&mut xml)?;
+
+    if !contains_exact_element_tag(&xml, "cim:ConnectivityNode") {
+        return Ok(Vec::new());
+    }
+
+    let fragments = extract_elements(&xml, "cim:ConnectivityNode")?;
+    let mut rows = Vec::with_capacity(fragments.len());
+    for fragment in fragments {
+        let node: RawConnectivityNode = from_str(fragment)?;
+        let Some(connectivity_node_mrid) = node.resolved_mrid() else {
+            continue;
+        };
+        rows.push(ConnectivityNodeSpec {
+            connectivity_node_mrid,
+            topological_node_mrid: node
+                .topological_node
+                .as_ref()
+                .map(|reference| normalize_cgmes_ref(&reference.resource)),
+        });
+    }
+
+    rows.sort_unstable_by(|left, right| {
+        left.connectivity_node_mrid
+            .cmp(&right.connectivity_node_mrid)
+    });
+    rows.dedup_by(|left, right| left.connectivity_node_mrid == right.connectivity_node_mrid);
+    Ok(rows)
+}
+
 /// Parsed terminal endpoint linkage used for EQ topology joins.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TerminalLink {
@@ -732,8 +847,7 @@ impl RawTopologicalNodeLinks {
         }
         if let Some(about) = &self.about {
             let mrid = normalize_cgmes_ref(about);
-            #[cfg(debug_assertions)]
-            eprintln!("Fallback: using rdf:about for mRID: {mrid}");
+            log_rdf_about_fallback(&mrid);
             return Some(mrid);
         }
         None
@@ -792,7 +906,35 @@ struct RawPowerTransformer<'a> {
     rate_c: Option<f64>,
 }
 
+#[derive(Debug, Deserialize)]
+struct RawSwitch<'a> {
+    #[serde(rename = "@ID", default, borrow)]
+    m_rid: Option<Cow<'a, str>>,
+    #[serde(rename = "@about", default, borrow)]
+    about: Option<Cow<'a, str>>,
+    #[serde(rename = "IdentifiedObject.name", default, borrow)]
+    name: Option<Cow<'a, str>>,
+    #[serde(rename = "Switch.open", default)]
+    open: Option<bool>,
+    #[serde(rename = "Switch.normalOpen", default)]
+    normal_open: Option<bool>,
+    #[serde(rename = "Switch.retained", default)]
+    retained: Option<bool>,
+}
+
 impl RawPowerTransformer<'_> {
+    fn resolved_mrid(&self) -> Option<String> {
+        if let Some(mrid) = &self.m_rid {
+            return Some(normalize_cgmes_ref(mrid));
+        }
+        if let Some(about) = &self.about {
+            return Some(normalize_cgmes_ref(about));
+        }
+        None
+    }
+}
+
+impl RawSwitch<'_> {
     fn resolved_mrid(&self) -> Option<String> {
         if let Some(mrid) = &self.m_rid {
             return Some(normalize_cgmes_ref(mrid));
@@ -853,8 +995,7 @@ impl RawConnectivityNode {
         }
         if let Some(about) = &self.about {
             let mrid = normalize_cgmes_ref(about);
-            #[cfg(debug_assertions)]
-            eprintln!("Fallback: using rdf:about for mRID: {mrid}");
+            log_rdf_about_fallback(&mrid);
             return Some(mrid);
         }
         None
