@@ -25,12 +25,12 @@ use arrow::array::{
     Int8Builder, ListBuilder, MapBuilder, MapFieldNames, StringBuilder,
     StringDictionaryBuilder, StructArray, StructBuilder,
 };
+use arrow::buffer::NullBuffer;
 use arrow::compute::concat;
-use arrow::datatypes::{DataType, Field, Int32Type, Schema};
+use arrow::datatypes::{DataType, Field, Int32Type, Schema, UInt32Type};
 use arrow::ipc::reader::FileReader;
 use arrow::ipc::writer::FileWriter;
 use arrow::record_batch::RecordBatch;
-use arrow::buffer::NullBuffer;
 use memmap2::MmapOptions;
 
 use crate::arrow_schema::{
@@ -146,6 +146,7 @@ struct BranchRow<'a> {
     from_bus_id: i32,
     to_bus_id: i32,
     ckt: Cow<'a, str>,
+    name: Cow<'a, str>,
     r: f64,
     x: f64,
     b_shunt: f64,
@@ -161,6 +162,7 @@ struct BranchRow<'a> {
 struct GenRow<'a> {
     bus_id: i32,
     id: Cow<'a, str>,
+    name: Cow<'a, str>,
     p_sched_mw: f64,
     p_min_mw: f64,
     p_max_mw: f64,
@@ -177,6 +179,7 @@ struct GenRow<'a> {
 struct LoadRow<'a> {
     bus_id: i32,
     id: Cow<'a, str>,
+    name: Cow<'a, str>,
     status: bool,
     p_mw: f64,
     q_mvar: f64,
@@ -206,6 +209,7 @@ struct Transformer2WRow<'a> {
     from_bus_id: i32,
     to_bus_id: i32,
     ckt: Cow<'a, str>,
+    name: Cow<'a, str>,
     r: f64,
     x: f64,
     winding1_r: f64,
@@ -230,6 +234,7 @@ struct Transformer3WRow<'a> {
     bus_m_id: i32,
     bus_l_id: i32,
     ckt: Cow<'a, str>,
+    name: Cow<'a, str>,
     r_hm: f64,
     x_hm: f64,
     r_hl: f64,
@@ -303,6 +308,60 @@ struct Endpoints {
     to_terminal_idx: Option<usize>,
 }
 
+fn non_empty_name(name: &str) -> Option<&str> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
+fn shortened_mrid(mrid: &str) -> &str {
+    let len = mrid.len().min(8);
+    &mrid[..len]
+}
+
+fn bus_fallback_name(bus_key: &str) -> String {
+    // CGMES profiles here do not carry BaseVoltage joins yet, so we keep this
+    // deterministic placeholder until base-voltage ingestion is added.
+    format!("Bus unknownkV {}", shortened_mrid(bus_key))
+}
+
+fn equipment_fallback_name(prefix: &str, mrid: &str) -> String {
+    format!("{prefix} unknownkV {}", shortened_mrid(mrid))
+}
+
+fn branch_constructed_name(voltage_label: &str, from_bus_name: &str, to_bus_name: &str, ckt: &str) -> String {
+    if ckt.trim().is_empty() || ckt == "1" {
+        format!("{voltage_label} kV - {from_bus_name} to {to_bus_name}")
+    } else {
+        format!("{voltage_label} kV - {from_bus_name} to {to_bus_name} (Circuit {ckt})")
+    }
+}
+
+fn voltage_label_from_name(name: Option<&str>) -> &'static str {
+    let Some(text) = name else {
+        return "unknown";
+    };
+    let lower = text.to_ascii_lowercase();
+    if lower.contains("500") {
+        "500"
+    } else if lower.contains("345") {
+        "345"
+    } else if lower.contains("230") {
+        "230"
+    } else if lower.contains("138") {
+        "138"
+    } else if lower.contains("115") {
+        "115"
+    } else if lower.contains("69") {
+        "69"
+    } else {
+        "unknown"
+    }
+}
+
 fn root_rpf_schema() -> Schema {
     let fields = all_table_schemas()
         .into_iter()
@@ -322,7 +381,168 @@ fn row_count_metadata_key(table_name: &str) -> String {
     format!("rpf.rows.{table_name}")
 }
 
-/// Reads all canonical tables from an RPF v0.5.1 root Arrow IPC file.
+fn validate_pre_write_contract(
+    bus_rows: &[BusRow<'_>],
+    branch_rows: &[BranchRow<'_>],
+    gen_rows: &[GenRow<'_>],
+    load_rows: &[LoadRow<'_>],
+    transformer_2w_rows: &[Transformer2WRow<'_>],
+    transformer_3w_rows: &[Transformer3WRow<'_>],
+) -> Result<()> {
+    for row in bus_rows {
+        if row.bus_id <= 0 {
+            bail!("pre-write contract violation: buses.bus_id must be > 0")
+        }
+    }
+    for row in branch_rows {
+        if row.branch_id <= 0 {
+            bail!("pre-write contract violation: branches.branch_id must be > 0")
+        }
+        if row.from_bus_id <= 0 || row.to_bus_id <= 0 {
+            bail!("pre-write contract violation: branches.from_bus_id/to_bus_id must be > 0")
+        }
+    }
+    for row in gen_rows {
+        if row.bus_id <= 0 || row.id.is_empty() {
+            bail!("pre-write contract violation: generators.bus_id/id must be present")
+        }
+    }
+    for row in load_rows {
+        if row.bus_id <= 0 || row.id.is_empty() {
+            bail!("pre-write contract violation: loads.bus_id/id must be present")
+        }
+    }
+    for row in transformer_2w_rows {
+        if row.from_bus_id <= 0 || row.to_bus_id <= 0 {
+            bail!("pre-write contract violation: transformers_2w.from_bus_id/to_bus_id must be > 0")
+        }
+    }
+    for row in transformer_3w_rows {
+        if row.bus_h_id <= 0 || row.bus_m_id <= 0 || row.bus_l_id <= 0 {
+            bail!("pre-write contract violation: transformers_3w.bus_h_id/bus_m_id/bus_l_id must be > 0")
+        }
+    }
+    Ok(())
+}
+
+fn require_non_null_count_equals_len(
+    table_name: &str,
+    batch: &RecordBatch,
+    column_name: &str,
+) -> Result<()> {
+    let index = batch
+        .schema()
+        .index_of(column_name)
+        .with_context(|| format!("missing required column '{column_name}' in table '{table_name}'"))?;
+    let column = batch.column(index);
+    let non_null_count = batch.num_rows().saturating_sub(column.null_count());
+    if non_null_count != batch.num_rows() {
+        bail!(
+            "post-write contract violation: table '{table_name}' column '{column_name}' has non-null count {non_null_count} but table length is {}",
+            batch.num_rows()
+        );
+    }
+    Ok(())
+}
+
+fn validate_post_write_contract(path: impl AsRef<Path>) -> Result<()> {
+    let path = path.as_ref();
+
+    // Confirms the artifact is Arrow IPC File format by opening via FileReader.
+    let file = File::open(path)
+        .with_context(|| format!("failed to reopen emitted .rpf at {}", path.display()))?;
+    let mmap = unsafe { MmapOptions::new().map(&file) }
+        .with_context(|| format!("failed to memory-map emitted .rpf at {}", path.display()))?;
+    let mut reader = FileReader::try_new(Cursor::new(&mmap[..]), None)
+        .with_context(|| format!("failed to open Arrow IPC FileReader for {}", path.display()))?;
+
+    let canonical = all_table_schemas();
+    let reader_schema = reader.schema();
+    if reader_schema.fields().len() != canonical.len() {
+        bail!(
+            "post-write contract violation: expected {} canonical root columns, found {}",
+            canonical.len(),
+            reader_schema.fields().len()
+        );
+    }
+    for (index, (expected_name, _)) in canonical.iter().enumerate() {
+        let found = reader_schema.field(index).name();
+        if found != *expected_name {
+            bail!(
+                "post-write contract violation: root column {index} expected '{expected_name}', found '{found}'"
+            );
+        }
+    }
+
+    let metadata = reader_schema.metadata();
+    let version = metadata
+        .get("raptrix.version")
+        .context("post-write contract violation: missing metadata key 'raptrix.version'")?;
+    if version != SCHEMA_VERSION {
+        bail!(
+            "post-write contract violation: raptrix.version expected '{}', found '{}'",
+            SCHEMA_VERSION,
+            version
+        );
+    }
+    let branding = metadata
+        .get("raptrix.branding")
+        .context("post-write contract violation: missing metadata key 'raptrix.branding'")?;
+    if !branding.contains("Musto Technologies") {
+        bail!(
+            "post-write contract violation: raptrix.branding does not contain 'Musto Technologies'"
+        );
+    }
+
+    // Ensure at least one root record batch exists in the file.
+    if reader.next().is_none() {
+        bail!("post-write contract violation: file contains zero root record batches");
+    }
+
+    let tables = read_rpf_tables(path)?;
+    let by_name: HashMap<String, RecordBatch> = tables.into_iter().collect();
+
+    let buses = by_name
+        .get(TABLE_BUSES)
+        .context("post-write contract violation: missing buses table")?;
+    require_non_null_count_equals_len(TABLE_BUSES, buses, "bus_id")?;
+
+    let branches = by_name
+        .get(TABLE_BRANCHES)
+        .context("post-write contract violation: missing branches table")?;
+    require_non_null_count_equals_len(TABLE_BRANCHES, branches, "branch_id")?;
+    require_non_null_count_equals_len(TABLE_BRANCHES, branches, "from_bus_id")?;
+    require_non_null_count_equals_len(TABLE_BRANCHES, branches, "to_bus_id")?;
+
+    let generators = by_name
+        .get(TABLE_GENERATORS)
+        .context("post-write contract violation: missing generators table")?;
+    require_non_null_count_equals_len(TABLE_GENERATORS, generators, "bus_id")?;
+    require_non_null_count_equals_len(TABLE_GENERATORS, generators, "id")?;
+
+    let loads = by_name
+        .get(TABLE_LOADS)
+        .context("post-write contract violation: missing loads table")?;
+    require_non_null_count_equals_len(TABLE_LOADS, loads, "bus_id")?;
+    require_non_null_count_equals_len(TABLE_LOADS, loads, "id")?;
+
+    let t2w = by_name
+        .get(TABLE_TRANSFORMERS_2W)
+        .context("post-write contract violation: missing transformers_2w table")?;
+    require_non_null_count_equals_len(TABLE_TRANSFORMERS_2W, t2w, "from_bus_id")?;
+    require_non_null_count_equals_len(TABLE_TRANSFORMERS_2W, t2w, "to_bus_id")?;
+
+    let t3w = by_name
+        .get(TABLE_TRANSFORMERS_3W)
+        .context("post-write contract violation: missing transformers_3w table")?;
+    require_non_null_count_equals_len(TABLE_TRANSFORMERS_3W, t3w, "bus_h_id")?;
+    require_non_null_count_equals_len(TABLE_TRANSFORMERS_3W, t3w, "bus_m_id")?;
+    require_non_null_count_equals_len(TABLE_TRANSFORMERS_3W, t3w, "bus_l_id")?;
+
+    Ok(())
+}
+
+/// Reads all canonical tables from an RPF v0.5.2 root Arrow IPC file.
 ///
 /// Public API compatibility note:
 /// this still returns one `(table_name, RecordBatch)` entry per canonical table,
@@ -461,7 +681,7 @@ pub fn summarize_rpf(path: impl AsRef<Path>) -> Result<RpfSummary> {
     })
 }
 
-/// Writes a complete Raptrix v0.5.1 `.rpf` Arrow IPC file.
+/// Writes a complete Raptrix v0.5.2 `.rpf` Arrow IPC file.
 ///
 /// The writer currently supports EQ-driven topology ingestion and materializes
 /// all required canonical tables (empty tables allowed) as struct columns in
@@ -476,7 +696,7 @@ pub fn write_complete_rpf(cgmes_paths: &[&str], output_path: &str) -> Result<()>
     Ok(())
 }
 
-/// Writes a complete Raptrix v0.5.1 `.rpf` IPC file with merge options.
+/// Writes a complete Raptrix v0.5.2 `.rpf` IPC file with merge options.
 pub fn write_complete_rpf_with_options(
     cgmes_paths: &[&str],
     output_path: &str,
@@ -513,6 +733,15 @@ pub fn write_complete_rpf_with_options(
         connectivity_group_rows,
         split_bus_stub_elements,
     ) = topology;
+
+    validate_pre_write_contract(
+        &bus_rows,
+        &branch_rows,
+        &gen_rows,
+        &load_rows,
+        &transformer_2w_rows,
+        &transformer_3w_rows,
+    )?;
 
     let metadata_row = MetadataRow {
         base_mva: 100.0,
@@ -625,7 +854,7 @@ pub fn write_complete_rpf_with_options(
     let root_batch = RecordBatch::try_new(root_schema.clone(), root_columns)
         .context("failed to build root RPF record batch")?;
 
-    // RPF v0.5.1 is a single, standard Arrow IPC File with one root batch.
+    // RPF v0.5.2 is a single, standard Arrow IPC File with one root batch.
     // Older segmented/concatenated layouts are deprecated and no longer emitted.
     let mut writer = FileWriter::try_new(&mut output, &root_schema)
         .context("failed to initialize root Arrow IPC FileWriter")?;
@@ -638,6 +867,8 @@ pub fn write_complete_rpf_with_options(
     writer
         .finish()
         .context("failed finishing root Arrow IPC file")?;
+
+    validate_post_write_contract(output_path)?;
 
     let tp_merged = options.bus_resolution_mode == BusResolutionMode::Topological
         && !connectivity_group_rows.is_empty();
@@ -930,11 +1161,37 @@ fn parse_eq_topology_rows(
         bus_key_to_bus_id.insert(*bus_key, (idx as i32) + 1);
     }
 
+    let mut topology_name_by_mrid: HashMap<&str, &str> = HashMap::new();
+    for node in &topological_nodes {
+        if let Some(name) = node.base.name.as_deref().and_then(non_empty_name) {
+            topology_name_by_mrid.insert(node.base.m_rid.as_ref(), name);
+        }
+    }
+
+    let mut bus_name_by_key: HashMap<&str, String> = HashMap::with_capacity(sorted_bus_keys.len());
+    for bus_key in &sorted_bus_keys {
+        let resolved = if use_topological {
+            topology_name_by_mrid
+                .get(*bus_key)
+                .copied()
+                .map(str::to_owned)
+                .unwrap_or_else(|| bus_fallback_name(bus_key))
+        } else {
+            bus_fallback_name(bus_key)
+        };
+        bus_name_by_key.insert(*bus_key, resolved);
+    }
+
     let bus_rows: Vec<BusRow<'static>> = sorted_bus_keys
         .iter()
         .map(|bus_key| BusRow {
             bus_id: bus_key_to_bus_id[bus_key],
-            name: Cow::Owned((*bus_key).to_owned()),
+            name: Cow::Owned(
+                bus_name_by_key
+                    .get(*bus_key)
+                    .cloned()
+                    .unwrap_or_else(|| bus_fallback_name(bus_key)),
+            ),
             bus_type: 1,
             p_sched: 0.0,
             q_sched: 0.0,
@@ -1019,11 +1276,29 @@ fn parse_eq_topology_rows(
             )
         })?;
 
+        let from_bus_name = bus_name_by_key
+            .get(from_bus_key)
+            .map(String::as_str)
+            .unwrap_or(from_bus_key);
+        let to_bus_name = bus_name_by_key
+            .get(to_bus_key)
+            .map(String::as_str)
+            .unwrap_or(to_bus_key);
+
+        let ckt = "1";
+        let name = if let Some(existing) = line.base.name.as_deref().and_then(non_empty_name) {
+            existing.to_owned()
+        } else {
+            let kv = voltage_label_from_name(line.base.name.as_deref());
+            branch_constructed_name(kv, from_bus_name, to_bus_name, ckt)
+        };
+
         branch_rows.push(BranchRow {
             branch_id: (idx as i32) + 1,
             from_bus_id,
             to_bus_id,
-            ckt: Cow::Borrowed("1"),
+            ckt: Cow::Borrowed(ckt),
+            name: Cow::Owned(name),
             r: line.r.unwrap_or(0.0),
             x: line.x.unwrap_or(0.0),
             b_shunt: line.bch.unwrap_or(0.0),
@@ -1099,9 +1374,20 @@ fn parse_eq_topology_rows(
                 })?
         };
 
+        let machine_id = machine.base.m_rid;
+        let machine_id_text = machine_id.as_ref().to_owned();
         gen_rows.push(GenRow {
             bus_id,
-            id: machine.base.m_rid,
+            id: machine_id,
+            name: machine
+                .base
+                .name
+                .as_deref()
+                .and_then(non_empty_name)
+                .map(|value| Cow::Owned(value.to_owned()))
+                .unwrap_or_else(|| {
+                    Cow::Owned(equipment_fallback_name("Gen", machine_id_text.as_ref()))
+                }),
             p_sched_mw: machine.p_sched_mw.unwrap_or(0.0),
             p_min_mw: machine.p_min_mw.unwrap_or(0.0),
             p_max_mw: machine.p_max_mw.unwrap_or(0.0),
@@ -1168,9 +1454,20 @@ fn parse_eq_topology_rows(
                 })?
         };
 
+        let load_id = load.base.m_rid;
+        let load_id_text = load_id.as_ref().to_owned();
         load_rows.push(LoadRow {
             bus_id,
-            id: load.base.m_rid,
+            id: load_id,
+            name: load
+                .base
+                .name
+                .as_deref()
+                .and_then(non_empty_name)
+                .map(|value| Cow::Owned(value.to_owned()))
+                .unwrap_or_else(|| {
+                    Cow::Owned(equipment_fallback_name("Load", load_id_text.as_ref()))
+                }),
             status: load.status.unwrap_or(true),
             p_mw: load.p_mw.unwrap_or(0.0),
             q_mvar: load.q_mvar.unwrap_or(0.0),
@@ -1278,6 +1575,15 @@ fn parse_eq_topology_rows(
                 from_bus_id,
                 to_bus_id,
                 ckt: Cow::Borrowed("1"),
+                name: transformer
+                    .base
+                    .name
+                    .as_deref()
+                    .and_then(non_empty_name)
+                    .map(|value| Cow::Owned(value.to_owned()))
+                    .unwrap_or_else(|| {
+                        Cow::Owned(equipment_fallback_name("Xfmr2W", transformer.base.m_rid.as_ref()))
+                    }),
                 r: winding1_r + winding2_r,
                 x: winding1_x + winding2_x,
                 winding1_r,
@@ -1319,6 +1625,15 @@ fn parse_eq_topology_rows(
                 bus_m_id,
                 bus_l_id,
                 ckt: Cow::Borrowed("1"),
+                name: transformer
+                    .base
+                    .name
+                    .as_deref()
+                    .and_then(non_empty_name)
+                    .map(|value| Cow::Owned(value.to_owned()))
+                    .unwrap_or_else(|| {
+                        Cow::Owned(equipment_fallback_name("Xfmr3W", transformer.base.m_rid.as_ref()))
+                    }),
                 r_hm: end_h.and_then(|end| end.r).unwrap_or(0.0),
                 x_hm: end_h.and_then(|end| end.x).unwrap_or(0.0),
                 r_hl: end_m.and_then(|end| end.r).unwrap_or(0.0),
@@ -1504,13 +1819,6 @@ fn parse_eq_topology_rows(
             b_steps,
             current_step: shunt.current_step.unwrap_or(0),
         });
-    }
-
-    let mut topology_name_by_mrid: HashMap<&str, &str> = HashMap::new();
-    for node in &topological_nodes {
-        if let Some(name) = node.base.name.as_deref() {
-            topology_name_by_mrid.insert(node.base.m_rid.as_ref(), name);
-        }
     }
 
     let mut connectivity_group_rows: Vec<ConnectivityGroupRow<'static>> = Vec::new();
@@ -1706,6 +2014,7 @@ fn build_branches_batch(rows: &[BranchRow<'_>]) -> Result<RecordBatch> {
     let mut rate_b_b = Float64Builder::new();
     let mut rate_c_b = Float64Builder::new();
     let mut status_b = BooleanBuilder::new();
+    let mut name_b = StringDictionaryBuilder::<UInt32Type>::new();
 
     for row in rows {
         branch_id_b.append_value(row.branch_id);
@@ -1721,6 +2030,7 @@ fn build_branches_batch(rows: &[BranchRow<'_>]) -> Result<RecordBatch> {
         rate_b_b.append_value(row.rate_b);
         rate_c_b.append_value(row.rate_c);
         status_b.append_value(row.status);
+        name_b.append(row.name.as_ref())?;
     }
 
     let arrays: Vec<ArrayRef> = vec![
@@ -1737,6 +2047,7 @@ fn build_branches_batch(rows: &[BranchRow<'_>]) -> Result<RecordBatch> {
         Arc::new(rate_b_b.finish()) as ArrayRef,
         Arc::new(rate_c_b.finish()) as ArrayRef,
         Arc::new(status_b.finish()) as ArrayRef,
+        Arc::new(name_b.finish()) as ArrayRef,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build branches record batch")
@@ -1757,6 +2068,7 @@ fn build_generators_batch(rows: &[GenRow<'_>]) -> Result<RecordBatch> {
     let mut h_b = Float64Builder::new();
     let mut xd_prime_b = Float64Builder::new();
     let mut d_b = Float64Builder::new();
+    let mut name_b = StringDictionaryBuilder::<UInt32Type>::new();
 
     for row in rows {
         bus_id_b.append_value(row.bus_id);
@@ -1771,6 +2083,7 @@ fn build_generators_batch(rows: &[GenRow<'_>]) -> Result<RecordBatch> {
         h_b.append_value(row.h);
         xd_prime_b.append_value(row.xd_prime);
         d_b.append_value(row.d);
+        name_b.append(row.name.as_ref())?;
     }
 
     let arrays: Vec<ArrayRef> = vec![
@@ -1786,6 +2099,7 @@ fn build_generators_batch(rows: &[GenRow<'_>]) -> Result<RecordBatch> {
         Arc::new(h_b.finish()) as ArrayRef,
         Arc::new(xd_prime_b.finish()) as ArrayRef,
         Arc::new(d_b.finish()) as ArrayRef,
+        Arc::new(name_b.finish()) as ArrayRef,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build generators record batch")
@@ -1803,6 +2117,7 @@ fn build_loads_batch(rows: &[LoadRow<'_>]) -> Result<RecordBatch> {
     let mut status_b = BooleanBuilder::new();
     let mut p_mw_b = Float64Builder::new();
     let mut q_mvar_b = Float64Builder::new();
+    let mut name_b = StringDictionaryBuilder::<UInt32Type>::new();
 
     for row in rows {
         bus_id_b.append_value(row.bus_id);
@@ -1810,6 +2125,7 @@ fn build_loads_batch(rows: &[LoadRow<'_>]) -> Result<RecordBatch> {
         status_b.append_value(row.status);
         p_mw_b.append_value(row.p_mw);
         q_mvar_b.append_value(row.q_mvar);
+        name_b.append(row.name.as_ref())?;
     }
 
     let arrays: Vec<ArrayRef> = vec![
@@ -1818,6 +2134,7 @@ fn build_loads_batch(rows: &[LoadRow<'_>]) -> Result<RecordBatch> {
         Arc::new(status_b.finish()) as ArrayRef,
         Arc::new(p_mw_b.finish()) as ArrayRef,
         Arc::new(q_mvar_b.finish()) as ArrayRef,
+        Arc::new(name_b.finish()) as ArrayRef,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build loads record batch")
@@ -1848,6 +2165,7 @@ fn build_transformers_2w_batch(rows: &[Transformer2WRow<'_>]) -> Result<RecordBa
     let mut rate_b_b = Float64Builder::new();
     let mut rate_c_b = Float64Builder::new();
     let mut status_b = BooleanBuilder::new();
+    let mut name_b = StringDictionaryBuilder::<UInt32Type>::new();
 
     for row in rows {
         from_bus_id_b.append_value(row.from_bus_id);
@@ -1869,6 +2187,7 @@ fn build_transformers_2w_batch(rows: &[Transformer2WRow<'_>]) -> Result<RecordBa
         rate_b_b.append_value(row.rate_b);
         rate_c_b.append_value(row.rate_c);
         status_b.append_value(row.status);
+        name_b.append(row.name.as_ref())?;
     }
 
     let arrays: Vec<ArrayRef> = vec![
@@ -1891,6 +2210,7 @@ fn build_transformers_2w_batch(rows: &[Transformer2WRow<'_>]) -> Result<RecordBa
         Arc::new(rate_b_b.finish()) as ArrayRef,
         Arc::new(rate_c_b.finish()) as ArrayRef,
         Arc::new(status_b.finish()) as ArrayRef,
+        Arc::new(name_b.finish()) as ArrayRef,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build transformers_2w record batch")
@@ -1922,6 +2242,7 @@ fn build_transformers_3w_batch(rows: &[Transformer3WRow<'_>]) -> Result<RecordBa
     let mut rate_b_b = Float64Builder::new();
     let mut rate_c_b = Float64Builder::new();
     let mut status_b = BooleanBuilder::new();
+    let mut name_b = StringDictionaryBuilder::<UInt32Type>::new();
 
     for row in rows {
         bus_h_id_b.append_value(row.bus_h_id);
@@ -1944,6 +2265,7 @@ fn build_transformers_3w_batch(rows: &[Transformer3WRow<'_>]) -> Result<RecordBa
         rate_b_b.append_value(row.rate_b);
         rate_c_b.append_value(row.rate_c);
         status_b.append_value(row.status);
+        name_b.append(row.name.as_ref())?;
     }
 
     let arrays: Vec<ArrayRef> = vec![
@@ -1967,6 +2289,7 @@ fn build_transformers_3w_batch(rows: &[Transformer3WRow<'_>]) -> Result<RecordBa
         Arc::new(rate_b_b.finish()) as ArrayRef,
         Arc::new(rate_c_b.finish()) as ArrayRef,
         Arc::new(status_b.finish()) as ArrayRef,
+        Arc::new(name_b.finish()) as ArrayRef,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build transformers_3w record batch")

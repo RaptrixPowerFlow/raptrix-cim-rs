@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.5.1 profile.
+//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.5.2 profile.
 //!
 //! This module exposes one exact Arrow schema per required table in the locked
 //! `.rpf` contract, plus a deterministic table registry helper.
@@ -16,7 +16,7 @@ use arrow::datatypes::{DataType, Field, Schema};
 pub const BRANDING: &str = "Raptrix CIM-Arrow — High-performance open CIM profile by Musto Technologies LLC\nCopyright (c) 2026 Musto Technologies LLC";
 
 /// Schema version tag embedded as file-level metadata.
-pub const SCHEMA_VERSION: &str = "0.5.1";
+pub const SCHEMA_VERSION: &str = "0.5.2";
 
 pub const TABLE_METADATA: &str = "metadata";
 pub const TABLE_BUSES: &str = "buses";
@@ -43,6 +43,10 @@ pub const COLUMN_CONTINGENCY_ID: &str = "contingency_id";
 
 fn dict_utf8() -> DataType {
     DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8))
+}
+
+fn dict_utf8_u32() -> DataType {
+    DataType::Dictionary(Box::new(DataType::UInt32), Box::new(DataType::Utf8))
 }
 
 fn map_string_string() -> DataType {
@@ -169,6 +173,8 @@ pub fn branches_schema() -> Schema {
             Field::new("rate_b", DataType::Float64, false),
             Field::new("rate_c", DataType::Float64, false),
             Field::new("status", DataType::Boolean, false),
+            // Optional operator-friendly label; additive in v0.5.2.
+            Field::new("name", dict_utf8_u32(), true),
         ],
         schema_metadata(),
     )
@@ -190,6 +196,8 @@ pub fn generators_schema() -> Schema {
             Field::new("H", DataType::Float64, false),
             Field::new("xd_prime", DataType::Float64, false),
             Field::new("D", DataType::Float64, false),
+            // Optional operator-friendly label; additive in v0.5.2.
+            Field::new("name", dict_utf8_u32(), true),
         ],
         schema_metadata(),
     )
@@ -204,6 +212,8 @@ pub fn loads_schema() -> Schema {
             Field::new("status", DataType::Boolean, false),
             Field::new("p_mw", DataType::Float64, false),
             Field::new("q_mvar", DataType::Float64, false),
+            // Optional operator-friendly label; additive in v0.5.2.
+            Field::new("name", dict_utf8_u32(), true),
         ],
         schema_metadata(),
     )
@@ -265,6 +275,8 @@ pub fn transformers_2w_schema() -> Schema {
             Field::new("rate_b", DataType::Float64, false),
             Field::new("rate_c", DataType::Float64, false),
             Field::new("status", DataType::Boolean, false),
+            // Optional operator-friendly label; additive in v0.5.2.
+            Field::new("name", dict_utf8_u32(), true),
         ],
         schema_metadata(),
     )
@@ -294,6 +306,8 @@ pub fn transformers_3w_schema() -> Schema {
             Field::new("rate_b", DataType::Float64, false),
             Field::new("rate_c", DataType::Float64, false),
             Field::new("status", DataType::Boolean, false),
+            // Optional operator-friendly label; additive in v0.5.2.
+            Field::new("name", dict_utf8_u32(), true),
         ],
         schema_metadata(),
     )
