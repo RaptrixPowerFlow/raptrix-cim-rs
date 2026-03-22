@@ -28,7 +28,7 @@ Copyright (c) 2026 Musto Technologies LLC
 
 ### Output capabilities
 
-- Build Arrow schema objects for the locked Raptrix PowerFlow Interchange v0.5.1 contract:
+- Build Arrow schema objects for the locked Raptrix PowerFlow Interchange v0.5.2 contract:
 	- metadata
 	- buses
 	- branches
@@ -54,7 +54,7 @@ Copyright (c) 2026 Musto Technologies LLC
 
 ## Data Contract (Locked)
 
-- Current schema contract: v0.5.1
+- Current schema contract: v0.5.2
 - Canonical source: src/arrow_schema.rs
 - Contract policy and semantics: docs/schema-contract.md
 
@@ -109,7 +109,17 @@ Use these as baseline indicators, not final production benchmarks.
 
 - src/models: CIM data structures and traits
 - src/parser.rs: parse helpers and EQ-to-branch mapping
-- src/arrow_schema.rs: v0.5.1 table schemas, metadata constants, and schema registry helpers
+- src/arrow_schema.rs: v0.5.2 table schemas, metadata constants, and schema registry helpers
+
+### v0.5.2 naming additions
+
+- Added optional dictionary-encoded `name` columns to:
+	- branches
+	- generators
+	- loads
+	- transformers_2w
+	- transformers_3w
+- Existing `buses.name` remains required and now prioritizes CIM human-readable names with deterministic fallback.
 - src/main.rs: production CLI for CGMES-to-RPF conversion
 - src/test_utils.rs: test-only path helper for external CGMES data
 - tests/integration_parse.rs: ignored live-data integration test
