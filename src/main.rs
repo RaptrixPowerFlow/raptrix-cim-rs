@@ -20,7 +20,7 @@ use clap::{ArgGroup, Parser, Subcommand};
 
 use raptrix_cim_rs::arrow_schema::BRANDING;
 use raptrix_cim_rs::rpf_writer::{
-    write_complete_rpf_with_options, BusResolutionMode, WriteOptions,
+    summarize_rpf, write_complete_rpf_with_options, BusResolutionMode, WriteOptions,
 };
 
 const COPYRIGHT: &str = "Copyright (c) 2026 Musto Technologies LLC";
@@ -44,6 +44,8 @@ struct Cli {
 enum Commands {
     /// Convert CGMES profiles into a canonical `.rpf` Arrow IPC artifact.
     Convert(ConvertArgs),
+    /// View summary stats from an existing `.rpf` Arrow IPC artifact.
+    View(ViewArgs),
 }
 
 /// Conversion arguments for explicit profile paths or auto-detection.
@@ -95,6 +97,13 @@ struct ConvertArgs {
     connectivity_detail: bool,
 }
 
+#[derive(Debug, clap::Args)]
+struct ViewArgs {
+    /// Input `.rpf` file to inspect.
+    #[arg(long)]
+    input: PathBuf,
+}
+
 #[derive(Debug, Clone, Copy)]
 enum DetectionMode {
     Explicit,
@@ -113,7 +122,45 @@ fn run() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Convert(args) => run_convert(args),
+        Commands::View(args) => run_view(args),
     }
+}
+
+fn run_view(args: ViewArgs) -> Result<()> {
+    let cwd = std::env::current_dir().context("failed to resolve current working directory")?;
+    let input_path = normalize_existing_path(&args.input, &cwd)?;
+    validate_rpf_input_path(&input_path)?;
+
+    let summary = summarize_rpf(&input_path).with_context(|| {
+        format!(
+            "failed to read Raptrix CIM-Arrow input from {}",
+            input_path.display()
+        )
+    })?;
+
+    println!("{BRANDING}");
+    println!("Input: {}", input_path.display());
+    println!("Tables: {}", summary.tables.len());
+    println!("Total record batches: {}", summary.total_batches);
+    println!("Total rows: {}", summary.total_rows);
+    println!("Canonical tables expected: {}", summary.canonical_table_count);
+    println!(
+        "Canonical coverage: {}",
+        if summary.has_all_canonical_tables {
+            "complete"
+        } else {
+            "partial"
+        }
+    );
+
+    for table in &summary.tables {
+        println!(
+            "Table {}: {} batch(es), {} row(s)",
+            table.table_name, table.batches, table.rows
+        );
+    }
+
+    Ok(())
 }
 
 fn run_convert(args: ConvertArgs) -> Result<()> {
@@ -208,6 +255,20 @@ fn validate_output_path(output: &Path) -> Result<()> {
 
     if !extension {
         bail!("Output must end with .rpf");
+    }
+
+    Ok(())
+}
+
+fn validate_rpf_input_path(input: &Path) -> Result<()> {
+    let extension = input
+        .extension()
+        .and_then(OsStr::to_str)
+        .map(|value| value == "rpf")
+        .unwrap_or(false);
+
+    if !extension {
+        bail!("Input must end with .rpf");
     }
 
     Ok(())

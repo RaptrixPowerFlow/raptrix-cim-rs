@@ -79,6 +79,33 @@ pub struct WriteSummary {
     pub connectivity_groups_rows: usize,
 }
 
+/// Per-table summary stats for an `.rpf` file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableSummary {
+    pub table_name: String,
+    pub batches: usize,
+    pub rows: usize,
+}
+
+/// Aggregate summary stats for an `.rpf` file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RpfSummary {
+    pub tables: Vec<TableSummary>,
+    pub total_batches: usize,
+    pub total_rows: usize,
+    pub canonical_table_count: usize,
+    pub has_all_canonical_tables: bool,
+}
+
+impl RpfSummary {
+    pub fn table_rows(&self, table_name: &str) -> Option<usize> {
+        self.tables
+            .iter()
+            .find(|table| table.table_name == table_name)
+            .map(|table| table.rows)
+    }
+}
+
 #[derive(Debug, Clone)]
 struct MetadataRow<'a> {
     base_mva: f64,
@@ -380,6 +407,44 @@ pub fn read_rpf_tables(path: impl AsRef<Path>) -> Result<Vec<(String, RecordBatc
     }
 
     Ok(out)
+}
+
+/// Reads an `.rpf` file and returns table-level row and batch counts.
+pub fn summarize_rpf(path: impl AsRef<Path>) -> Result<RpfSummary> {
+    let tables = read_rpf_tables(path)?;
+    let canonical_table_count = all_table_schemas().len();
+
+    let mut summaries: Vec<TableSummary> = Vec::new();
+    let mut by_name_index: HashMap<String, usize> = HashMap::new();
+
+    for (table_name, batch) in tables {
+        let idx = if let Some(existing_idx) = by_name_index.get(&table_name) {
+            *existing_idx
+        } else {
+            let next_idx = summaries.len();
+            summaries.push(TableSummary {
+                table_name: table_name.clone(),
+                batches: 0,
+                rows: 0,
+            });
+            by_name_index.insert(table_name, next_idx);
+            next_idx
+        };
+
+        summaries[idx].batches += 1;
+        summaries[idx].rows += batch.num_rows();
+    }
+
+    let total_batches = summaries.iter().map(|table| table.batches).sum();
+    let total_rows = summaries.iter().map(|table| table.rows).sum();
+
+    Ok(RpfSummary {
+        has_all_canonical_tables: summaries.len() >= canonical_table_count,
+        tables: summaries,
+        total_batches,
+        total_rows,
+        canonical_table_count,
+    })
 }
 
 /// Writes a complete Raptrix v0.5 `.rpf` IPC artifact.
@@ -2225,7 +2290,7 @@ mod tests {
         dynamics_models_schema, metadata_schema, BRANDING, SCHEMA_VERSION,
     };
 
-    use super::{read_rpf_tables, schema_with_table_name, write_complete_rpf};
+    use super::{read_rpf_tables, schema_with_table_name, summarize_rpf, write_complete_rpf};
 
     fn assert_schema_shape_matches(actual: &Schema, expected: &Schema) {
         assert_eq!(actual.fields().len(), expected.fields().len());
@@ -2254,6 +2319,30 @@ mod tests {
 
         xml.push_str("</rdf:RDF>");
         xml
+    }
+
+    #[test]
+    fn summarize_rpf_reports_expected_counts() -> Result<()> {
+        let tmp_dir = std::env::temp_dir().join("raptrix_rpf_summary_tests");
+        fs::create_dir_all(&tmp_dir)?;
+
+        let eq_path = tmp_dir.join("summary_fixture_eq.xml");
+        fs::write(&eq_path, generate_eq_fixture_branch_count(2))?;
+
+        let output_path = tmp_dir.join("summary_fixture.rpf");
+        let eq_path_str = eq_path.to_string_lossy().into_owned();
+        let output_path_str = output_path.to_string_lossy().into_owned();
+
+        write_complete_rpf(&[&eq_path_str], &output_path_str)?;
+
+        let summary = summarize_rpf(&output_path)?;
+        assert!(summary.has_all_canonical_tables);
+        assert_eq!(summary.tables.len(), all_table_schemas().len());
+        assert_eq!(summary.total_batches, all_table_schemas().len());
+        assert_eq!(summary.table_rows("branches"), Some(2));
+        assert_eq!(summary.table_rows("buses"), Some(4));
+
+        Ok(())
     }
 
     #[test]
