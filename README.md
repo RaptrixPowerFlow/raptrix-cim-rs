@@ -128,7 +128,23 @@ Auto-detect mode:
 
 - `cargo run --release -- convert --input-dir cgmes_case/ --output case.rpf`
 
+Inspect an existing `.rpf` file:
+
+- `cargo run --release -- view --input case.rpf`
+
 The CLI requires `--output` to end with `.rpf`. In auto-detect mode it scans the provided directory for filenames containing `EQ`, `TP`, `SV`, `SSH`, and `DY` case-insensitively, and `EQ` must be present.
+
+## First Working `.rpf` (Generate + View)
+
+Create a first `.rpf` artifact from the SmallGrid EQ profile (contains required terminal connectivity):
+
+- `cargo run --release -- convert --eq C:\tmp\CGMES_ConformityAssessmentScheme_TestConfigurations_v3-0-3\v3.0\SmallGrid\SmallGrid-Merged\SmallGrid_EQ.xml --output tests/data/external/smallgrid_eq.rpf`
+
+Then inspect table counts and coverage:
+
+- `cargo run --release -- view --input tests/data/external/smallgrid_eq.rpf`
+
+The `view` command prints table-by-table row counts for quick import checks in `raptrix-core` and `raptrix-cim-viewer`.
 
 ## Library Usage
 
