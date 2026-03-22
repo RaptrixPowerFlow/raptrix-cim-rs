@@ -15,34 +15,35 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{Cursor, Write};
+use std::io::Cursor;
 use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
 use arrow::array::{
-    new_null_array, ArrayBuilder, ArrayRef, BooleanBuilder, Float64Builder, Int32Builder,
+    new_null_array, Array, ArrayBuilder, ArrayRef, BooleanBuilder, Float64Builder, Int32Builder,
     Int8Builder, ListBuilder, MapBuilder, MapFieldNames, StringBuilder,
-    StringDictionaryBuilder, StructBuilder,
+    StringDictionaryBuilder, StructArray, StructBuilder,
 };
+use arrow::compute::concat;
 use arrow::datatypes::{DataType, Field, Int32Type, Schema};
 use arrow::ipc::reader::FileReader;
 use arrow::ipc::writer::FileWriter;
 use arrow::record_batch::RecordBatch;
+use arrow::buffer::NullBuffer;
 use memmap2::MmapOptions;
 
 use crate::arrow_schema::{
     all_table_schemas, areas_schema, buses_schema, branches_schema, contingencies_schema,
-    dynamics_models_schema, connectivity_groups_schema, fixed_shunts_schema, generators_schema,
-    loads_schema, metadata_schema, owners_schema, switched_shunts_schema, transformers_2w_schema,
-    transformers_3w_schema, zones_schema, BRANDING,
-    SCHEMA_VERSION, TABLE_AREAS, TABLE_BRANCHES, TABLE_BUSES, TABLE_CONNECTIVITY_GROUPS,
+    connectivity_groups_schema, dynamics_models_schema, fixed_shunts_schema, generators_schema,
+    interfaces_schema, loads_schema, metadata_schema, owners_schema, schema_metadata,
+    switched_shunts_schema, transformers_2w_schema, transformers_3w_schema,
+    zones_schema, BRANDING,
+    SCHEMA_VERSION, TABLE_AREAS, TABLE_BRANCHES, TABLE_BUSES,
     TABLE_CONTINGENCIES, TABLE_DYNAMICS_MODELS, TABLE_FIXED_SHUNTS, TABLE_GENERATORS,
     TABLE_INTERFACES, TABLE_LOADS, TABLE_METADATA, TABLE_OWNERS, TABLE_SWITCHED_SHUNTS,
     TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, TABLE_ZONES,
 };
-#[cfg(any(debug_assertions, feature = "strict"))]
-use crate::arrow_schema::table_schema;
 use crate::parser;
 
 /// Bus resolution mode for EQ+TP merges.
@@ -302,66 +303,31 @@ struct Endpoints {
     to_terminal_idx: Option<usize>,
 }
 
-fn schema_with_table_name(table_name: &str, schema: &Schema) -> Schema {
-    let mut metadata = schema.metadata().clone();
-    metadata.insert("table_name".to_string(), table_name.to_string());
-    schema.clone().with_metadata(metadata)
+fn root_rpf_schema() -> Schema {
+    let fields = all_table_schemas()
+        .into_iter()
+        .map(|(table_name, schema)| {
+            Field::new(
+                table_name,
+                DataType::Struct(schema.fields().clone()),
+                true,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    Schema::new_with_metadata(fields, schema_metadata())
 }
 
-fn split_concatenated_ipc_segments(bytes: &[u8]) -> Vec<&[u8]> {
-    const ARROW_MAGIC: &[u8] = b"ARROW1";
-    const DOUBLE_MAGIC: &[u8] = b"ARROW1ARROW1";
-
-    let mut starts = vec![0usize];
-    let mut cursor = 0usize;
-
-    while cursor + DOUBLE_MAGIC.len() <= bytes.len() {
-        if &bytes[cursor..cursor + DOUBLE_MAGIC.len()] == DOUBLE_MAGIC {
-            starts.push(cursor + ARROW_MAGIC.len());
-            cursor += DOUBLE_MAGIC.len();
-            continue;
-        }
-        cursor += 1;
-    }
-
-    let mut segments = Vec::new();
-    for (idx, start) in starts.iter().enumerate() {
-        let end = starts.get(idx + 1).copied().unwrap_or(bytes.len());
-        segments.push(&bytes[*start..end]);
-    }
-    segments
+fn row_count_metadata_key(table_name: &str) -> String {
+    format!("rpf.rows.{table_name}")
 }
 
-/// Validates that the active writer schema matches the expected v0.5 schema.
+/// Reads all canonical tables from an RPF v0.5.1 root Arrow IPC file.
 ///
-/// Tenet 2: catches schema drift at write-time by enforcing exact
-/// field-by-field schema equality.
-pub fn validate_rpf_segments<W: Write>(
-    writer: &mut FileWriter<W>,
-    expected_schemas: &[(String, Schema)],
-) -> Result<()> {
-    let writer_schema = writer.schema().as_ref();
-    let table_name = writer_schema
-        .metadata()
-        .get("table_name")
-        .cloned()
-        .context("writer schema missing required table_name metadata key")?;
-
-    let (_, expected_schema) = expected_schemas
-        .first()
-        .context("validate_rpf_segments requires at least one expected schema")?;
-
-    if writer_schema != expected_schema {
-        bail!("Schema drift in table {table_name}")
-    }
-
-    Ok(())
-}
-
-/// Reads all tables from a concatenated `.rpf` file in write order.
-///
-/// Uses memory-mapped reads to avoid copying file bytes while iterating
-/// individual IPC file segments.
+/// Public API compatibility note:
+/// this still returns one `(table_name, RecordBatch)` entry per canonical table,
+/// even though the physical file now stores one root record batch containing
+/// 15 struct columns.
 pub fn read_rpf_tables(path: impl AsRef<Path>) -> Result<Vec<(String, RecordBatch)>> {
     let path = path.as_ref();
     let file = File::open(path)
@@ -369,41 +335,89 @@ pub fn read_rpf_tables(path: impl AsRef<Path>) -> Result<Vec<(String, RecordBatc
     let mmap = unsafe { MmapOptions::new().map(&file) }
         .with_context(|| format!("failed to memory-map .rpf file at {}", path.display()))?;
 
-    let expected_table_names: Vec<String> = all_table_schemas()
-        .into_iter()
-        .map(|(name, _)| name.to_string())
-        .collect();
-    let segments = split_concatenated_ipc_segments(&mmap);
+    let mut reader = FileReader::try_new(Cursor::new(&mmap[..]), None)
+        .with_context(|| format!("failed to open Arrow IPC file reader for {}", path.display()))?;
+
+    let canonical = all_table_schemas();
+    let expected_root_fields = canonical
+        .iter()
+        .map(|(name, _)| *name)
+        .collect::<Vec<_>>();
+    let reader_schema = reader.schema();
+    if reader_schema.fields().len() != expected_root_fields.len() {
+        bail!(
+            "invalid RPF root schema: expected {} columns, found {}",
+            expected_root_fields.len(),
+            reader_schema.fields().len()
+        );
+    }
+    for (idx, expected_name) in expected_root_fields.iter().enumerate() {
+        let actual_name = reader_schema.field(idx).name();
+        if actual_name != *expected_name {
+            bail!(
+                "invalid RPF root schema at column {idx}: expected '{expected_name}', found '{actual_name}'"
+            );
+        }
+    }
 
     let mut out = Vec::new();
-    for (segment_idx, segment) in segments.into_iter().enumerate() {
-        let mut reader = FileReader::try_new(Cursor::new(segment), None)
-            .with_context(|| format!("Failed reading segment {segment_idx}"))?;
+    for root_batch_result in &mut reader {
+        let root_batch = root_batch_result
+            .with_context(|| format!("failed reading root record batch from {}", path.display()))?;
 
-        let fallback_name = expected_table_names
-            .get(segment_idx)
-            .cloned()
-            .unwrap_or_else(|| format!("segment_{segment_idx}"));
-        let table_name = reader
-            .schema()
-            .metadata()
-            .get("table_name")
-            .cloned()
-            .unwrap_or(fallback_name);
-
-        let expected_batches = reader.num_batches();
-        for _ in 0..expected_batches {
-            let batch = reader
-                .next()
-                .transpose()
-                .with_context(|| format!("Failed reading segment {segment_idx}"))?
+        for (column_idx, (table_name, expected_schema)) in canonical.iter().enumerate() {
+            let struct_array = root_batch
+                .column(column_idx)
+                .as_any()
+                .downcast_ref::<StructArray>()
                 .with_context(|| {
                     format!(
-                        "segment {segment_idx} ended before expected record batch count"
+                        "invalid root column '{table_name}': expected StructArray at index {column_idx}"
                     )
                 })?;
-            out.push((table_name.clone(), batch));
+
+            if struct_array.columns().len() != expected_schema.fields().len() {
+                bail!(
+                    "invalid struct column '{table_name}': expected {} fields, found {}",
+                    expected_schema.fields().len(),
+                    struct_array.columns().len()
+                );
+            }
+
+            let expected_rows = reader_schema
+                .metadata()
+                .get(&row_count_metadata_key(table_name))
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(struct_array.len());
+
+            if expected_rows > struct_array.len() {
+                bail!(
+                    "invalid row count metadata for table '{table_name}': expected_rows={expected_rows} exceeds struct length {}",
+                    struct_array.len()
+                );
+            }
+
+            let trimmed_columns: Vec<ArrayRef> = struct_array
+                .columns()
+                .iter()
+                .map(|column| column.slice(0, expected_rows))
+                .collect();
+
+            let table_batch = RecordBatch::try_new(
+                Arc::new(expected_schema.clone()),
+                trimmed_columns,
+            )
+            .with_context(|| {
+                format!(
+                    "failed reconstructing table '{table_name}' from root record batch"
+                )
+            })?;
+            out.push(((*table_name).to_string(), table_batch));
         }
+    }
+
+    if out.is_empty() {
+        bail!("RPF file did not contain any root record batches")
     }
 
     Ok(out)
@@ -447,10 +461,11 @@ pub fn summarize_rpf(path: impl AsRef<Path>) -> Result<RpfSummary> {
     })
 }
 
-/// Writes a complete Raptrix v0.5 `.rpf` IPC artifact.
+/// Writes a complete Raptrix v0.5.1 `.rpf` Arrow IPC file.
 ///
 /// The writer currently supports EQ-driven topology ingestion and materializes
-/// all required v0.5 tables (empty tables allowed) in canonical order.
+/// all required canonical tables (empty tables allowed) as struct columns in
+/// one root record batch.
 ///
 /// Notes:
 /// - Multi-profile merges (TP/SV/SSH/DY) are intentionally incremental and
@@ -461,7 +476,7 @@ pub fn write_complete_rpf(cgmes_paths: &[&str], output_path: &str) -> Result<()>
     Ok(())
 }
 
-/// Writes a complete Raptrix v0.5 `.rpf` IPC artifact with merge options.
+/// Writes a complete Raptrix v0.5.1 `.rpf` IPC file with merge options.
 pub fn write_complete_rpf_with_options(
     cgmes_paths: &[&str],
     output_path: &str,
@@ -525,75 +540,104 @@ pub fn write_complete_rpf_with_options(
     let dynamics_models_rows = stub_dynamics_model_rows();
     let contingencies_batch = build_contingencies_batch(&contingencies_rows)?;
     let dynamics_models_batch = build_dynamics_models_batch(&dynamics_models_rows)?;
-    let connectivity_groups_batch = build_connectivity_groups_batch(&connectivity_group_rows)?;
-
-    let mut ordered_batches: Vec<(String, Schema, RecordBatch)> = Vec::new();
-    for (table_name, schema) in all_table_schemas() {
-        let schema = schema_with_table_name(table_name, &schema);
-        let batch = match table_name {
-            TABLE_METADATA => metadata_batch.clone(),
-            TABLE_BUSES => buses_batch.clone(),
-            TABLE_BRANCHES => branches_batch.clone(),
-            TABLE_GENERATORS => generators_batch.clone(),
-            TABLE_LOADS => loads_batch.clone(),
-            TABLE_FIXED_SHUNTS => fixed_shunts_batch.clone(),
-            TABLE_SWITCHED_SHUNTS => switched_shunts_batch.clone(),
-            TABLE_TRANSFORMERS_2W => transformers_2w_batch.clone(),
-            TABLE_TRANSFORMERS_3W => transformers_3w_batch.clone(),
-            TABLE_AREAS => areas_batch.clone(),
-            TABLE_ZONES => zones_batch.clone(),
-            TABLE_OWNERS => owners_batch.clone(),
-            TABLE_CONTINGENCIES => contingencies_batch.clone(),
-            TABLE_DYNAMICS_MODELS => dynamics_models_batch.clone(),
-            TABLE_INTERFACES
-            => RecordBatch::new_empty(Arc::new(schema.clone())),
-            _ => bail!("unrecognized table in canonical registry: {table_name}"),
-        };
-        ordered_batches.push((table_name.to_string(), schema, batch));
-    }
-
-    if options.emit_connectivity_groups {
-        let schema = schema_with_table_name(TABLE_CONNECTIVITY_GROUPS, &connectivity_groups_schema());
-        ordered_batches.push((
-            TABLE_CONNECTIVITY_GROUPS.to_string(),
-            schema,
-            connectivity_groups_batch,
-        ));
-    }
+    let _connectivity_groups_batch = build_connectivity_groups_batch(&connectivity_group_rows)?;
 
     let mut output = File::create(output_path)
         .with_context(|| format!("failed to create output .rpf file at {output_path}"))?;
 
-    // Arrow IPC FileWriter has a single-schema header per file segment.
-    // We emit canonical table segments in deterministic order to preserve each
-    // table's exact v0.5 schema while still using FileWriter for every segment.
-    for (table_name, schema, batch) in &ordered_batches {
-        let mut writer = FileWriter::try_new(&mut output, schema).with_context(|| {
-            format!("failed to initialize IPC FileWriter for table '{table_name}'")
-        })?;
-        writer.write_metadata("raptrix.branding", BRANDING);
-        writer.write_metadata("raptrix.version", SCHEMA_VERSION);
-        writer.write_metadata("raptrix.table", table_name);
-        writer.write(batch).with_context(|| {
-            format!("failed writing IPC record batch for table '{table_name}'")
-        })?;
+    let mut table_batches: HashMap<&'static str, RecordBatch> = HashMap::new();
+    table_batches.insert(TABLE_METADATA, metadata_batch.clone());
+    table_batches.insert(TABLE_BUSES, buses_batch.clone());
+    table_batches.insert(TABLE_BRANCHES, branches_batch.clone());
+    table_batches.insert(TABLE_GENERATORS, generators_batch.clone());
+    table_batches.insert(TABLE_LOADS, loads_batch.clone());
+    table_batches.insert(TABLE_FIXED_SHUNTS, fixed_shunts_batch.clone());
+    table_batches.insert(TABLE_SWITCHED_SHUNTS, switched_shunts_batch.clone());
+    table_batches.insert(TABLE_TRANSFORMERS_2W, transformers_2w_batch.clone());
+    table_batches.insert(TABLE_TRANSFORMERS_3W, transformers_3w_batch.clone());
+    table_batches.insert(TABLE_AREAS, areas_batch.clone());
+    table_batches.insert(TABLE_ZONES, zones_batch.clone());
+    table_batches.insert(TABLE_OWNERS, owners_batch.clone());
+    table_batches.insert(TABLE_CONTINGENCIES, contingencies_batch.clone());
+    table_batches.insert(TABLE_INTERFACES, RecordBatch::new_empty(Arc::new(interfaces_schema())));
+    table_batches.insert(TABLE_DYNAMICS_MODELS, dynamics_models_batch.clone());
 
-        #[cfg(any(debug_assertions, feature = "strict"))]
-        {
-            let expected = table_schema(table_name)
-                .with_context(|| format!("missing expected schema for table {table_name}"))?;
-            let expected_with_table = schema_with_table_name(table_name, &expected);
-            validate_rpf_segments(
-                &mut writer,
-                &[(table_name.clone(), expected_with_table)],
-            )
-            .with_context(|| format!("Schema drift in table {table_name}"))?;
+    let max_rows = all_table_schemas()
+        .into_iter()
+        .map(|(name, _)| table_batches.get(name).map(RecordBatch::num_rows).unwrap_or(0))
+        .max()
+        .unwrap_or(0);
+
+    let mut root_schema = root_rpf_schema();
+    let mut root_metadata = root_schema.metadata().clone();
+    for (table_name, _) in all_table_schemas() {
+        let row_count = table_batches
+            .get(table_name)
+            .map(RecordBatch::num_rows)
+            .unwrap_or(0);
+        root_metadata.insert(row_count_metadata_key(table_name), row_count.to_string());
+    }
+    root_schema = root_schema.with_metadata(root_metadata);
+    let root_schema = Arc::new(root_schema);
+
+    let mut root_columns: Vec<ArrayRef> = Vec::with_capacity(all_table_schemas().len());
+
+    for (table_name, expected_schema) in all_table_schemas() {
+        let table_batch = table_batches
+            .get(table_name)
+            .with_context(|| format!("missing required table batch '{table_name}'"))?;
+
+        if table_batch.schema().fields() != expected_schema.fields() {
+            bail!("schema drift in table '{table_name}' while assembling root IPC file");
         }
 
-        writer.finish().with_context(|| {
-            format!("failed finishing IPC segment for table '{table_name}'")
-        })?;
+        let mut padded_columns: Vec<ArrayRef> = Vec::with_capacity(table_batch.num_columns());
+        for column in table_batch.columns() {
+            if table_batch.num_rows() < max_rows {
+                let null_tail = new_null_array(column.data_type(), max_rows - table_batch.num_rows());
+                let concatenated = concat(&[column.as_ref(), null_tail.as_ref()]).with_context(|| {
+                    format!("failed to pad table '{table_name}' to root row length")
+                })?;
+                padded_columns.push(concatenated);
+            } else {
+                padded_columns.push(column.clone());
+            }
+        }
+
+        let struct_validity = if table_batch.num_rows() < max_rows {
+            Some(NullBuffer::from(
+                (0..max_rows)
+                    .map(|index| index < table_batch.num_rows())
+                    .collect::<Vec<_>>(),
+            ))
+        } else {
+            None
+        };
+
+        let struct_array = StructArray::new(
+            expected_schema.fields().clone(),
+            padded_columns,
+            struct_validity,
+        );
+        root_columns.push(Arc::new(struct_array) as ArrayRef);
     }
+
+    let root_batch = RecordBatch::try_new(root_schema.clone(), root_columns)
+        .context("failed to build root RPF record batch")?;
+
+    // RPF v0.5.1 is a single, standard Arrow IPC File with one root batch.
+    // Older segmented/concatenated layouts are deprecated and no longer emitted.
+    let mut writer = FileWriter::try_new(&mut output, &root_schema)
+        .context("failed to initialize root Arrow IPC FileWriter")?;
+    writer.write_metadata("raptrix.branding", BRANDING);
+    writer.write_metadata("raptrix.version", SCHEMA_VERSION);
+    writer.write_metadata("rpf_version", SCHEMA_VERSION);
+    writer
+        .write(&root_batch)
+        .context("failed writing root RPF record batch")?;
+    writer
+        .finish()
+        .context("failed finishing root Arrow IPC file")?;
 
     let tp_merged = options.bus_resolution_mode == BusResolutionMode::Topological
         && !connectivity_group_rows.is_empty();
@@ -2290,7 +2334,7 @@ mod tests {
         dynamics_models_schema, metadata_schema, BRANDING, SCHEMA_VERSION,
     };
 
-    use super::{read_rpf_tables, schema_with_table_name, summarize_rpf, write_complete_rpf};
+    use super::{read_rpf_tables, summarize_rpf, write_complete_rpf};
 
     fn assert_schema_shape_matches(actual: &Schema, expected: &Schema) {
         assert_eq!(actual.fields().len(), expected.fields().len());
@@ -2378,25 +2422,17 @@ mod tests {
         assert_eq!(actual_table_names, expected_table_names);
 
         // Spot-check metadata segment and required file metadata keys.
-        assert_eq!(
-            tables[0].1.schema().as_ref(),
-            &schema_with_table_name("metadata", &metadata_schema())
-        );
+        assert_schema_shape_matches(tables[0].1.schema().as_ref(), &metadata_schema());
         let schema_ref = tables[0].1.schema();
         let meta = schema_ref.metadata();
         assert_eq!(meta.get("raptrix.branding"), Some(&BRANDING.to_string()));
         assert_eq!(meta.get("raptrix.version"), Some(&SCHEMA_VERSION.to_string()));
-        assert_eq!(meta.get("table_name"), Some(&"metadata".to_string()));
+        assert_eq!(meta.get("rpf_version"), Some(&SCHEMA_VERSION.to_string()));
 
         assert_schema_shape_matches(tables[1].1.schema().as_ref(), &buses_schema());
         assert_schema_shape_matches(tables[2].1.schema().as_ref(), &branches_schema());
         assert_schema_shape_matches(tables[12].1.schema().as_ref(), &contingencies_schema());
         assert_schema_shape_matches(tables[14].1.schema().as_ref(), &dynamics_models_schema());
-        assert_eq!(
-            tables[14].1.schema().metadata().get("table_name"),
-            Some(&"dynamics_models".to_string())
-        );
-
         let branches_batch = &tables[2].1;
         assert_eq!(branches_batch.num_rows(), 1, "fixture should produce one branch");
 
