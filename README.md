@@ -28,7 +28,7 @@ Copyright (c) 2026 Musto Technologies LLC
 
 ### Output capabilities
 
-- Build Arrow schema objects for the locked Raptrix PowerFlow Interchange v0.5 contract:
+- Build Arrow schema objects for the locked Raptrix PowerFlow Interchange v0.5.1 contract:
 	- metadata
 	- buses
 	- branches
@@ -54,7 +54,7 @@ Copyright (c) 2026 Musto Technologies LLC
 
 ## Data Contract (Locked)
 
-- Current schema contract: v0.5
+- Current schema contract: v0.5.1
 - Canonical source: src/arrow_schema.rs
 - Contract policy and semantics: docs/schema-contract.md
 
@@ -109,7 +109,7 @@ Use these as baseline indicators, not final production benchmarks.
 
 - src/models: CIM data structures and traits
 - src/parser.rs: parse helpers and EQ-to-branch mapping
-- src/arrow_schema.rs: v0.5 table schemas, metadata constants, and schema registry helpers
+- src/arrow_schema.rs: v0.5.1 table schemas, metadata constants, and schema registry helpers
 - src/main.rs: production CLI for CGMES-to-RPF conversion
 - src/test_utils.rs: test-only path helper for external CGMES data
 - tests/integration_parse.rs: ignored live-data integration test
@@ -184,7 +184,7 @@ Run CLI in auto-detect mode:
 The repository includes a standalone pytest validator at `tests/inspect_rpf.py` that:
 
 - runs the CLI to generate a `.rpf` file from SmallGrid EQ input
-- validates all 15 canonical IPC segments are present and ordered
+- validates one canonical root IPC batch with all 15 required struct columns
 - verifies `raptrix.branding` and `raptrix.version` metadata
 - checks bus and branch row counts against source EQ XML topology
 - spot-checks first branch `r`/`x` values against EQ XML

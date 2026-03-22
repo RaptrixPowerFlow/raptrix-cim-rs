@@ -23,7 +23,7 @@ except ImportError:  # pragma: no cover - handled by skip branch below
 
 
 BRANDING = "Raptrix CIM-Arrow — High-performance open CIM profile by Musto Technologies LLC\nCopyright (c) 2026 Musto Technologies LLC"
-SCHEMA_VERSION = "v0.5"
+SCHEMA_VERSION = "0.5.1"
 CANONICAL_TABLE_ORDER = [
     "metadata",
     "buses",
@@ -48,48 +48,28 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "ignore: ignored/skipped due to missing external data")
 
 
-def _split_concatenated_ipc_segments(payload: bytes) -> list[bytes]:
-    magic = b"ARROW1"
-    boundary = b"ARROW1ARROW1"
-    starts = [0]
-    cursor = 0
-
-    while cursor + len(boundary) <= len(payload):
-        if payload[cursor : cursor + len(boundary)] == boundary:
-            starts.append(cursor + len(magic))
-            cursor += len(boundary)
-            continue
-        cursor += 1
-
-    out: list[bytes] = []
-    for idx, start in enumerate(starts):
-        end = starts[idx + 1] if idx + 1 < len(starts) else len(payload)
-        out.append(payload[start:end])
-    return out
-
-
-def _read_rpf_segments(path: Path) -> list[tuple[str, pa.RecordBatch]]:
-    payload = path.read_bytes()
-    segments = _split_concatenated_ipc_segments(payload)
+def _read_rpf_tables(path: Path) -> list[tuple[str, pa.RecordBatch]]:
+    """Read canonical per-table batches from the single-root v0.5.1 RPF file."""
+    reader = ipc.RecordBatchFileReader(pa.memory_map(str(path), "r"))
+    file_metadata = reader.schema.metadata or {}
     tables: list[tuple[str, pa.RecordBatch]] = []
 
-    for segment_idx, segment in enumerate(segments):
-        reader = ipc.RecordBatchFileReader(pa.BufferReader(segment))
-        schema = reader.schema
-        table_name = schema.metadata.get(b"table_name", f"segment_{segment_idx}".encode()).decode(
-            "utf-8", errors="replace"
-        )
-
-        for batch_idx in range(reader.num_record_batches):
-            batch = reader.get_batch(batch_idx)
-            tables.append((table_name, batch))
+    for root_batch_idx in range(reader.num_record_batches):
+        root_batch = reader.get_batch(root_batch_idx)
+        for table_idx, table_name in enumerate(CANONICAL_TABLE_ORDER):
+            struct_array = root_batch.column(table_idx)
+            if not pa.types.is_struct(struct_array.type):
+                raise AssertionError(
+                    f"Root column '{table_name}' must be Struct, found {struct_array.type}"
+                )
+            row_key = f"rpf.rows.{table_name}".encode("utf-8")
+            expected_rows = int(file_metadata.get(row_key, str(len(struct_array)).encode("utf-8")))
+            child_names = [field.name for field in struct_array.type]
+            child_arrays = [child.slice(0, expected_rows) for child in struct_array.flatten()]
+            table_batch = pa.RecordBatch.from_arrays(child_arrays, names=child_names)
+            tables.append((table_name, table_batch))
 
     return tables
-
-
-def _read_rpf_tables(path: Path) -> list[tuple[str, pa.RecordBatch]]:
-    """Compatibility alias used by tests that treat each segment as one logical table."""
-    return _read_rpf_segments(path)
 
 
 def _find_first(parent: ET.Element, tag_suffix: str) -> ET.Element | None:
@@ -243,19 +223,13 @@ def _parse_eq_metrics(
 
 
 def _write_memory_snapshot(source_path: Path, snapshot_path: Path) -> None:
-    """Re-serialize all IPC segments via Arrow memory APIs to confirm zero-copy compatibility (tenet 1)."""
-    with pa.memory_map(str(source_path), "r") as mmap_source:
-        payload = mmap_source.read_buffer()
-
-    segments = _split_concatenated_ipc_segments(payload.to_pybytes())
-    with snapshot_path.open("wb") as out_file:
-        for segment in segments:
-            reader = ipc.RecordBatchFileReader(pa.BufferReader(segment))
-            sink = pa.BufferOutputStream()
-            with ipc.RecordBatchFileWriter(sink, reader.schema) as writer:
-                for batch_idx in range(reader.num_record_batches):
-                    writer.write_batch(reader.get_batch(batch_idx))
-            out_file.write(sink.getvalue().to_pybytes())
+    """Re-serialize the single root IPC file via Arrow memory APIs."""
+    reader = ipc.RecordBatchFileReader(pa.memory_map(str(source_path), "r"))
+    sink = pa.BufferOutputStream()
+    with ipc.RecordBatchFileWriter(sink, reader.schema) as writer:
+        for batch_idx in range(reader.num_record_batches):
+            writer.write_batch(reader.get_batch(batch_idx))
+    snapshot_path.write_bytes(sink.getvalue().to_pybytes())
 
 
 def _repo_root() -> Path:
@@ -366,20 +340,15 @@ def _run_profile_validation(
         tables = _read_rpf_tables(output_path)
         _emit_table_row_report(profile_name, tables, capsys)
 
-        expected_table_count = 16 if connectivity_detail_mode else 15
+        expected_table_count = 15
         assert len(tables) == expected_table_count, (
-            f"Expected {expected_table_count} tables/segments, got {len(tables)}"
+            f"Expected {expected_table_count} canonical tables, got {len(tables)}"
         )
 
         observed_names = [name for name, _ in tables]
         assert observed_names[:15] == CANONICAL_TABLE_ORDER, (
             f"Unexpected core table order: {observed_names}"
         )
-        if connectivity_detail_mode:
-            assert observed_names[15] == "connectivity_groups", (
-                f"Expected optional connectivity_groups table at segment 16, got {observed_names[15]}"
-            )
-
         for table_idx, (table_name, batch) in enumerate(tables[:15]):
             expected_table_name = CANONICAL_TABLE_ORDER[table_idx]
             assert table_name == expected_table_name, (
@@ -387,11 +356,14 @@ def _run_profile_validation(
             )
             assert batch.num_rows >= 0, f"Table {table_name} must have non-negative row count"
 
-        first_schema_metadata = tables[0][1].schema.metadata or {}
-        assert b"raptrix.branding" in first_schema_metadata
-        assert b"raptrix.version" in first_schema_metadata
-        assert first_schema_metadata[b"raptrix.branding"].decode("utf-8") == BRANDING
-        assert first_schema_metadata[b"raptrix.version"].decode("utf-8") == SCHEMA_VERSION
+        file_reader = ipc.RecordBatchFileReader(pa.memory_map(str(output_path), "r"))
+        file_schema_metadata = file_reader.schema.metadata or {}
+        assert b"raptrix.branding" in file_schema_metadata
+        assert b"raptrix.version" in file_schema_metadata
+        assert b"rpf_version" in file_schema_metadata
+        assert file_schema_metadata[b"raptrix.branding"].decode("utf-8") == BRANDING
+        assert file_schema_metadata[b"raptrix.version"].decode("utf-8") == SCHEMA_VERSION
+        assert file_schema_metadata[b"rpf_version"].decode("utf-8") == SCHEMA_VERSION
 
         table_map = {name: batch for name, batch in tables}
         buses_batch = table_map["buses"]
@@ -432,15 +404,6 @@ def _run_profile_validation(
         assert branches_batch.num_rows == expected_branches, (
             f"Expected {expected_branches} branches from ACLineSegment count, got {branches_batch.num_rows}"
         )
-
-        if connectivity_detail_mode:
-            connectivity_groups_batch = tables[15][1]
-            if has_tp:
-                assert connectivity_groups_batch.num_rows > 0, (
-                    "connectivity_groups table must contain at least one row with TP in connectivity-detail mode"
-                )
-            else:
-                assert connectivity_groups_batch.num_rows >= 0
 
         assert generators_batch.num_rows >= 0
         assert loads_batch.num_rows >= 0

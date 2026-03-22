@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.5 profile.
+//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.5.1 profile.
 //!
 //! This module exposes one exact Arrow schema per required table in the locked
 //! `.rpf` contract, plus a deterministic table registry helper.
@@ -16,7 +16,7 @@ use arrow::datatypes::{DataType, Field, Schema};
 pub const BRANDING: &str = "Raptrix CIM-Arrow — High-performance open CIM profile by Musto Technologies LLC\nCopyright (c) 2026 Musto Technologies LLC";
 
 /// Schema version tag embedded as file-level metadata.
-pub const SCHEMA_VERSION: &str = "v0.5";
+pub const SCHEMA_VERSION: &str = "0.5.1";
 
 pub const TABLE_METADATA: &str = "metadata";
 pub const TABLE_BUSES: &str = "buses";
@@ -104,6 +104,7 @@ pub fn schema_metadata() -> HashMap<String, String> {
     let mut metadata = HashMap::new();
     metadata.insert("raptrix.branding".to_string(), BRANDING.to_string());
     metadata.insert("raptrix.version".to_string(), SCHEMA_VERSION.to_string());
+    metadata.insert("rpf_version".to_string(), SCHEMA_VERSION.to_string());
     metadata
 }
 
