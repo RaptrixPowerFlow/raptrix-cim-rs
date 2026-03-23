@@ -78,10 +78,12 @@ Readers should ignore unknown trailing root columns for forward compatibility, b
 
 ## Canonical Schema Source
 
-The executable contract is defined in `src/arrow_schema.rs` and exported through:
+The executable contract is defined in `raptrix-cim-arrow/src/schema.rs` and exported through the shared `raptrix-cim-arrow` crate:
 
 - `all_table_schemas()` for canonical ordering
 - `table_schema(name)` for table lookup
+
+Generic root Arrow IPC file assembly, validation, readback, and metadata inspection live beside the schema in `raptrix-cim-arrow/src/io.rs`.
 
 ## Locked Tables
 
@@ -466,7 +468,7 @@ An independent parser is considered compliant if it:
 
 ## Change Checklist
 
-1. Update `src/arrow_schema.rs`.
+1. Update `raptrix-cim-arrow/src/schema.rs` and any affected helpers in `raptrix-cim-arrow/src/io.rs`.
 2. Update this file with version and column docs.
 3. Add or update test coverage for schema construction and writer outputs.
 4. Update README capability and known-limits sections.

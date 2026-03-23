@@ -1,0 +1,14 @@
+[package]
+name = "raptrix-cim-arrow"
+version = "0.1.3"
+edition = "2021"
+description = "Shared Raptrix CIM-Arrow schema and RPF Arrow IPC infrastructure"
+license = "MPL-2.0"
+repository = "https://github.com/MustoTechnologies/raptrix-cim-rs"
+keywords = ["arrow", "power-systems", "schema", "rpf"]
+categories = ["data-structures", "science"]
+
+[dependencies]
+anyhow = "1.0"
+arrow = "58.0"
+memmap2 = "0.9"

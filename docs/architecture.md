@@ -2,7 +2,7 @@
 
 ## Purpose
 
-raptrix-cim-rs turns CGMES RDF/XML into Arrow-native outputs for power-flow and related solver pipelines, with a locked v0.5 Raptrix PowerFlow Interchange schema contract.
+raptrix-cim-rs turns CGMES RDF/XML into Arrow-native outputs for power-flow and related solver pipelines, with a locked v0.6.0 Raptrix PowerFlow Interchange schema contract.
 
 ## Design Goals
 
@@ -27,10 +27,12 @@ Current serialization status:
 
 ## Core Modules
 
+- raptrix-cim-arrow/src/schema.rs: locked v0.6.0 table schemas, metadata constants, and table registry helpers.
+- raptrix-cim-arrow/src/io.rs: generic `.rpf` root-file assembly, validation, and readback helpers.
 - src/models: CIM types and trait hierarchy.
 - src/parser.rs: parse helpers and profile-specific row mapping.
-- src/arrow_schema.rs: locked v0.5 table schemas, metadata constants, table registry helpers.
-- src/main.rs: small end-to-end writer sample.
+- src/rpf_writer.rs: CIM-specific row mapping and orchestration into canonical table batches.
+- src/main.rs: CLI entrypoint for CGMES-to-RPF conversion and inspection.
 - tests/integration_parse.rs: live-data ignored integration path.
 
 ## Data-Flow Boundaries
@@ -39,7 +41,7 @@ Current serialization status:
 - Mapping boundary: typed model values to solver-oriented row structures.
 - Serialization boundary: row structures to Arrow RecordBatch and output container bytes.
 
-Locked schema boundaries in v0.5:
+Locked schema boundaries in v0.6.0:
 
 - all 15 required tables must materialize (empty allowed)
 - dictionary-encoded string identity fields
@@ -59,6 +61,6 @@ Locked schema boundaries in v0.5:
 ## Near-Term Evolution
 
 - Add TP/SV/SSH joins for richer branch and bus attributes.
-- Implement `.rpf` Arrow IPC writer and reader utilities around the locked schemas.
+- Keep `.rpf` Arrow IPC writer and reader utilities centralized in `raptrix-cim-arrow`.
 - Add explicit performance harnesses for parse, map, and write phases.
 - Add schema evolution policy validation in CI.

@@ -15,13 +15,15 @@
 //! [`models`] | CIM data-model types and base traits |
 //! [`parser`] | RDF/XML parsing helpers built on `quick-xml` |
 
-pub mod arrow_schema;
 pub mod models;
 pub mod parser;
 pub mod rpf_writer;
 pub mod test_utils;
 
+pub use raptrix_cim_arrow as arrow_schema;
+pub use raptrix_cim_arrow::{read_rpf_tables, rpf_file_metadata, summarize_rpf, RpfSummary, TableSummary};
+
 pub use rpf_writer::{
-	read_rpf_tables, summarize_rpf, write_complete_rpf, write_complete_rpf_with_options,
-	BusResolutionMode, RpfSummary, TableSummary, WriteOptions, WriteSummary,
+	write_complete_rpf, write_complete_rpf_with_options, BusResolutionMode, WriteOptions,
+	WriteSummary,
 };

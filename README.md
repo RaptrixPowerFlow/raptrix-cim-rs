@@ -1,11 +1,20 @@
 # raptrix-cim-rs
-High-performance Rust implementation of the IEC 61970 Common Information Model (CIM), focused on a zero-copy-friendly pipeline from CGMES RDF/XML into Arrow and Parquet for power-flow and SCED workflows.
+High-performance Rust implementation of the IEC 61970 Common Information Model (CIM), focused on a zero-copy-friendly pipeline from CGMES RDF/XML into the locked Raptrix PowerFlow Interchange (`.rpf`) Arrow IPC format for power-flow and SCED workflows.
 
 This project is MPL-2.0 licensed and branded for Musto Technologies LLC.
 
 Raptrix CIM-Arrow — High-performance open CIM profile by Musto Technologies LLC
 
 Copyright (c) 2026 Musto Technologies LLC
+
+## Workspace Layout
+
+This repository is now a Cargo workspace with two crates:
+
+- `raptrix-cim-rs`: CIM-specific parsing, CGMES profile resolution, row mapping, and the production CLI
+- `raptrix-cim-arrow`: shared canonical Arrow schema definitions, metadata constants, root `.rpf` Arrow IPC assembly, and generic `.rpf` inspection helpers
+
+That split keeps the locked RPF contract in one reusable place so future converters such as `raptrix-psse-rs` can depend on the same crate and produce byte-compatible artifacts without copying schema or file IO code.
 
 ## Current Capabilities
 
@@ -55,7 +64,7 @@ Copyright (c) 2026 Musto Technologies LLC
 ## Data Contract (Locked)
 
 - Current schema contract: v0.6.0
-- Canonical source: src/arrow_schema.rs
+- Canonical source: raptrix-cim-arrow/src/schema.rs
 - Contract policy and semantics: docs/schema-contract.md
 
 ### Versioning Policy
@@ -74,6 +83,7 @@ Key lock points now documented and enforced:
 - explicit dynamics_models table
 - tightened contingencies element payload
 - solved-results contingency scoping field (contingency_id)
+- shared root Arrow IPC assembly and validation via `raptrix-cim-arrow`
 
 ## How It Works
 
@@ -116,9 +126,11 @@ Use these as baseline indicators, not final production benchmarks.
 
 ## Project Layout
 
+- raptrix-cim-arrow/src/schema.rs: v0.6.0 table schemas, metadata constants, and schema registry helpers
+- raptrix-cim-arrow/src/io.rs: generic root `.rpf` assembly, validation, readback, and summary helpers
 - src/models: CIM data structures and traits
 - src/parser.rs: parse helpers and EQ-to-branch mapping
-- src/arrow_schema.rs: v0.6.0 table schemas, metadata constants, and schema registry helpers
+- src/rpf_writer.rs: CIM-specific mapping from parsed CGMES content into canonical table batches
 
 ### Locked contract: v0.6.0 naming additions
 
@@ -173,7 +185,7 @@ Use `--verbose` when validating interoperability because it also prints the root
 
 ## Library Usage
 
-Use the public writer directly from Rust:
+Use the CIM converter directly from Rust:
 
 ```rust
 use raptrix_cim_rs::write_complete_rpf;
@@ -182,6 +194,14 @@ fn convert(eq_path: &str, output_path: &str) -> anyhow::Result<()> {
 	write_complete_rpf(&[eq_path], output_path)
 }
 ```
+
+Use the shared contract crate when building another converter:
+
+```rust
+use raptrix_cim_arrow::{all_table_schemas, write_root_rpf, RootWriteOptions};
+```
+
+See MIGRATION.md for the rationale and exact ownership boundary.
 
 ## Running in VS Code (Beginner-Friendly)
 
