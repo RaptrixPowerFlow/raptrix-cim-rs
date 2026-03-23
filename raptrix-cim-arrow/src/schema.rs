@@ -5,7 +5,8 @@
 //! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.6.0 profile.
 //!
 //! This module exposes one exact Arrow schema per required table in the locked
-//! `.rpf` contract, plus a deterministic table registry helper.
+//! `.rpf` contract, plus deterministic schema registry helpers used by both
+//! writers and readers.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -18,20 +19,35 @@ pub const BRANDING: &str = "Raptrix CIM-Arrow — High-performance open CIM prof
 /// Schema version tag embedded as file-level metadata.
 pub const SCHEMA_VERSION: &str = "0.6.0";
 
+/// Canonical metadata table name.
 pub const TABLE_METADATA: &str = "metadata";
+/// Canonical buses table name.
 pub const TABLE_BUSES: &str = "buses";
+/// Canonical branches table name.
 pub const TABLE_BRANCHES: &str = "branches";
+/// Canonical generators table name.
 pub const TABLE_GENERATORS: &str = "generators";
+/// Canonical loads table name.
 pub const TABLE_LOADS: &str = "loads";
+/// Canonical fixed shunts table name.
 pub const TABLE_FIXED_SHUNTS: &str = "fixed_shunts";
+/// Canonical switched shunts table name.
 pub const TABLE_SWITCHED_SHUNTS: &str = "switched_shunts";
+/// Canonical two-winding transformers table name.
 pub const TABLE_TRANSFORMERS_2W: &str = "transformers_2w";
+/// Canonical three-winding transformers table name.
 pub const TABLE_TRANSFORMERS_3W: &str = "transformers_3w";
+/// Canonical areas table name.
 pub const TABLE_AREAS: &str = "areas";
+/// Canonical zones table name.
 pub const TABLE_ZONES: &str = "zones";
+/// Canonical owners table name.
 pub const TABLE_OWNERS: &str = "owners";
+/// Canonical contingencies table name.
 pub const TABLE_CONTINGENCIES: &str = "contingencies";
+/// Canonical interfaces table name.
 pub const TABLE_INTERFACES: &str = "interfaces";
+/// Canonical dynamics models table name.
 pub const TABLE_DYNAMICS_MODELS: &str = "dynamics_models";
 /// Optional detail table emitted only when connectivity-detail mode is enabled.
 pub const TABLE_CONNECTIVITY_GROUPS: &str = "connectivity_groups";
@@ -59,11 +75,13 @@ fn map_string_string() -> DataType {
     DataType::Map(
         Arc::new(Field::new(
             "entries",
-            DataType::Struct(vec![
-                Field::new("key", DataType::Utf8, false),
-                Field::new("value", DataType::Utf8, false),
-            ]
-            .into()),
+            DataType::Struct(
+                vec![
+                    Field::new("key", DataType::Utf8, false),
+                    Field::new("value", DataType::Utf8, false),
+                ]
+                .into(),
+            ),
             false,
         )),
         false,
@@ -74,11 +92,13 @@ fn map_string_f64() -> DataType {
     DataType::Map(
         Arc::new(Field::new(
             "entries",
-            DataType::Struct(vec![
-                Field::new("key", DataType::Utf8, false),
-                Field::new("value", DataType::Float64, false),
-            ]
-            .into()),
+            DataType::Struct(
+                vec![
+                    Field::new("key", DataType::Utf8, false),
+                    Field::new("value", DataType::Float64, false),
+                ]
+                .into(),
+            ),
             false,
         )),
         false,
@@ -86,20 +106,20 @@ fn map_string_f64() -> DataType {
 }
 
 fn contingencies_elements_type() -> DataType {
-    // Allowed element_type values are explicitly constrained by contract docs:
-    // branch_outage, gen_trip, load_shed, shunt_switch.
     DataType::List(Arc::new(Field::new(
         "element",
-        DataType::Struct(vec![
-            Field::new("element_type", dict_utf8(), false),
-            Field::new("branch_id", DataType::Int32, true),
-            Field::new("bus_id", DataType::Int32, true),
-            Field::new("gen_id", dict_utf8(), true),
-            Field::new("load_id", dict_utf8(), true),
-            Field::new("amount_mw", DataType::Float64, true),
-            Field::new("status_change", DataType::Boolean, false),
-        ]
-        .into()),
+        DataType::Struct(
+            vec![
+                Field::new("element_type", dict_utf8(), false),
+                Field::new("branch_id", DataType::Int32, true),
+                Field::new("bus_id", DataType::Int32, true),
+                Field::new("gen_id", dict_utf8(), true),
+                Field::new("load_id", dict_utf8(), true),
+                Field::new("amount_mw", DataType::Float64, true),
+                Field::new("status_change", DataType::Boolean, false),
+            ]
+            .into(),
+        ),
         false,
     )))
 }
@@ -118,7 +138,7 @@ pub fn schema_metadata() -> HashMap<String, String> {
     metadata
 }
 
-/// v0.5 `metadata` table schema (exactly one row at write time).
+/// `metadata` table schema.
 pub fn metadata_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
@@ -135,7 +155,7 @@ pub fn metadata_schema() -> Schema {
     )
 }
 
-/// v0.5 `buses` table schema.
+/// `buses` table schema.
 pub fn buses_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
@@ -162,7 +182,7 @@ pub fn buses_schema() -> Schema {
     )
 }
 
-/// v0.5 `branches` table schema.
+/// `branches` table schema.
 pub fn branches_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
@@ -179,14 +199,13 @@ pub fn branches_schema() -> Schema {
             Field::new("rate_b", DataType::Float64, false),
             Field::new("rate_c", DataType::Float64, false),
             Field::new("status", DataType::Boolean, false),
-            // Optional operator-friendly label; additive in v0.5.2.
             Field::new("name", dict_utf8_u32(), true),
         ],
         schema_metadata(),
     )
 }
 
-/// v0.5 `generators` table schema.
+/// `generators` table schema.
 pub fn generators_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
@@ -202,14 +221,13 @@ pub fn generators_schema() -> Schema {
             Field::new("H", DataType::Float64, false),
             Field::new("xd_prime", DataType::Float64, false),
             Field::new("D", DataType::Float64, false),
-            // Optional operator-friendly label; additive in v0.5.2.
             Field::new("name", dict_utf8_u32(), true),
         ],
         schema_metadata(),
     )
 }
 
-/// v0.5 `loads` table schema.
+/// `loads` table schema.
 pub fn loads_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
@@ -218,14 +236,13 @@ pub fn loads_schema() -> Schema {
             Field::new("status", DataType::Boolean, false),
             Field::new("p_mw", DataType::Float64, false),
             Field::new("q_mvar", DataType::Float64, false),
-            // Optional operator-friendly label; additive in v0.5.2.
             Field::new("name", dict_utf8_u32(), true),
         ],
         schema_metadata(),
     )
 }
 
-/// v0.5 `fixed_shunts` table schema.
+/// `fixed_shunts` table schema.
 pub fn fixed_shunts_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
@@ -239,7 +256,7 @@ pub fn fixed_shunts_schema() -> Schema {
     )
 }
 
-/// v0.5 `switched_shunts` table schema.
+/// `switched_shunts` table schema.
 pub fn switched_shunts_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
@@ -258,7 +275,7 @@ pub fn switched_shunts_schema() -> Schema {
     )
 }
 
-/// v0.5 `transformers_2w` table schema.
+/// `transformers_2w` table schema.
 pub fn transformers_2w_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
@@ -281,14 +298,13 @@ pub fn transformers_2w_schema() -> Schema {
             Field::new("rate_b", DataType::Float64, false),
             Field::new("rate_c", DataType::Float64, false),
             Field::new("status", DataType::Boolean, false),
-            // Optional operator-friendly label; additive in v0.5.2.
             Field::new("name", dict_utf8_u32(), true),
         ],
         schema_metadata(),
     )
 }
 
-/// v0.5 `transformers_3w` table schema.
+/// `transformers_3w` table schema.
 pub fn transformers_3w_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
@@ -312,14 +328,13 @@ pub fn transformers_3w_schema() -> Schema {
             Field::new("rate_b", DataType::Float64, false),
             Field::new("rate_c", DataType::Float64, false),
             Field::new("status", DataType::Boolean, false),
-            // Optional operator-friendly label; additive in v0.5.2.
             Field::new("name", dict_utf8_u32(), true),
         ],
         schema_metadata(),
     )
 }
 
-/// v0.5 `areas` lookup table schema.
+/// `areas` lookup table schema.
 pub fn areas_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
@@ -331,7 +346,7 @@ pub fn areas_schema() -> Schema {
     )
 }
 
-/// v0.5 `zones` lookup table schema.
+/// `zones` lookup table schema.
 pub fn zones_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
@@ -342,7 +357,7 @@ pub fn zones_schema() -> Schema {
     )
 }
 
-/// v0.5 `owners` lookup table schema.
+/// `owners` lookup table schema.
 pub fn owners_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
@@ -353,7 +368,7 @@ pub fn owners_schema() -> Schema {
     )
 }
 
-/// v0.5 `contingencies` table schema.
+/// `contingencies` table schema.
 pub fn contingencies_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
@@ -364,7 +379,7 @@ pub fn contingencies_schema() -> Schema {
     )
 }
 
-/// v0.5 `interfaces` table schema.
+/// `interfaces` table schema.
 pub fn interfaces_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
@@ -381,7 +396,7 @@ pub fn interfaces_schema() -> Schema {
     )
 }
 
-/// v0.5 `dynamics_models` table schema.
+/// `dynamics_models` table schema.
 pub fn dynamics_models_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
@@ -395,9 +410,6 @@ pub fn dynamics_models_schema() -> Schema {
 }
 
 /// Optional `connectivity_groups` table schema.
-///
-/// This table preserves TP split-bus membership while core `buses` may be
-/// collapsed to TopologicalNode level for interoperability.
 pub fn connectivity_groups_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
@@ -415,9 +427,6 @@ pub fn connectivity_groups_schema() -> Schema {
 }
 
 /// Optional `node_breaker_detail` table schema.
-///
-/// This table carries switch-level connectivity for viewer and operational
-/// workflows and is emitted only when node-breaker detail mode is enabled.
 pub fn node_breaker_detail_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
@@ -471,7 +480,7 @@ pub fn node_breaker_table_schemas() -> Vec<(&'static str, Schema)> {
     ]
 }
 
-/// Returns all required table schemas in canonical v0.5 order.
+/// Returns all required table schemas in canonical v0.6.0 order.
 pub fn all_table_schemas() -> Vec<(&'static str, Schema)> {
     vec![
         (TABLE_METADATA, metadata_schema()),
@@ -492,7 +501,7 @@ pub fn all_table_schemas() -> Vec<(&'static str, Schema)> {
     ]
 }
 
-/// Returns the v0.5 schema for a known table name.
+/// Returns the schema for a known table name.
 pub fn table_schema(table_name: &str) -> Option<Schema> {
     match table_name {
         TABLE_METADATA => Some(metadata_schema()),

@@ -1,3 +1,7 @@
+[workspace]
+members = ["raptrix-cim-arrow"]
+resolver = "2"
+
 [package]
 name = "raptrix-cim-rs"
 version = "0.1.3"
@@ -12,6 +16,7 @@ categories = ["parsing", "science"]
 quick-xml = { version = "0.39.2", features = ["serialize"] }
 serde = { version = "1.0", features = ["derive"] }
 clap = { version = "4.5", features = ["derive"] }
+raptrix-cim-arrow = { path = "raptrix-cim-arrow" }
 
 # Arrow + Parquet for zero-copy CIM → columnar data pipeline
 arrow   = "58.0"
