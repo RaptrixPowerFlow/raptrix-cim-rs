@@ -82,6 +82,8 @@ fn parse_smallgrid_eq_aclinesegment() -> Result<()> {
     let rate_b: Vec<f64> = vec![250.0; branch_rows.len()];
     let rate_c: Vec<f64> = vec![250.0; branch_rows.len()];
     let status: Vec<bool> = vec![true; branch_rows.len()];
+    let from_nominal_kv = vec![None::<f64>; branch_rows.len()];
+    let to_nominal_kv = vec![None::<f64>; branch_rows.len()];
 
     let mut ckt = StringDictionaryBuilder::<Int32Type>::new();
     let mut name = StringDictionaryBuilder::<UInt32Type>::new();
@@ -105,6 +107,8 @@ fn parse_smallgrid_eq_aclinesegment() -> Result<()> {
         Arc::new(Float64Array::from(rate_c)) as ArrayRef,
         Arc::new(BooleanArray::from(status)) as ArrayRef,
         Arc::new(name.finish()) as ArrayRef,
+        Arc::new(Float64Array::from(from_nominal_kv)) as ArrayRef,
+        Arc::new(Float64Array::from(to_nominal_kv)) as ArrayRef,
     ];
 
     let schema = Arc::new(branch_schema());

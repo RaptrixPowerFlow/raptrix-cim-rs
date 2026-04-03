@@ -127,6 +127,7 @@ struct BusRow<'a> {
     v_max: f64,
     p_min_agg: f64,
     p_max_agg: f64,
+    nominal_kv: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -145,6 +146,8 @@ struct BranchRow<'a> {
     rate_b: f64,
     rate_c: f64,
     status: bool,
+    from_nominal_kv: Option<f64>,
+    to_nominal_kv: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -215,6 +218,8 @@ struct Transformer2WRow<'a> {
     rate_b: f64,
     rate_c: f64,
     status: bool,
+    from_nominal_kv: Option<f64>,
+    to_nominal_kv: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -239,6 +244,9 @@ struct Transformer3WRow<'a> {
     rate_b: f64,
     rate_c: f64,
     status: bool,
+    nominal_kv_h: Option<f64>,
+    nominal_kv_m: Option<f64>,
+    nominal_kv_l: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -309,8 +317,9 @@ struct ContingencyElement<'a> {
     element_type: Cow<'a, str>,
     branch_id: Option<i32>,
     bus_id: Option<i32>,
-    id: Option<Cow<'a, str>>,
     status_change: bool,
+    equipment_kind: Option<Cow<'a, str>>,
+    equipment_id: Option<Cow<'a, str>>,
 }
 
 #[derive(Debug, Clone)]
@@ -661,8 +670,9 @@ fn contingency_rows_from_switches_and_stubs(
                 element_type: Cow::Borrowed("shunt_switch"),
                 branch_id: None,
                 bus_id,
-                id: Some(Cow::Owned(row.switch_id.as_ref().to_owned())),
                 status_change: true,
+                equipment_kind: Some(Cow::Borrowed("switch")),
+                equipment_id: Some(Cow::Owned(row.switch_id.as_ref().to_owned())),
             }],
         });
     }
@@ -677,8 +687,9 @@ fn contingency_rows_from_switches_and_stubs(
                     element_type: Cow::Borrowed("branch_outage"),
                     branch_id: Some(1),
                     bus_id: None,
-                    id: Some(Cow::Borrowed("Line1")),
                     status_change: true,
+                    equipment_kind: None,
+                    equipment_id: None,
                 }],
             },
             ContingencyRow {
@@ -688,15 +699,17 @@ fn contingency_rows_from_switches_and_stubs(
                         element_type: Cow::Borrowed("branch_outage"),
                         branch_id: Some(1),
                         bus_id: None,
-                        id: Some(Cow::Borrowed("Line1")),
                         status_change: true,
+                        equipment_kind: None,
+                        equipment_id: None,
                     },
                     ContingencyElement {
                         element_type: Cow::Borrowed("shunt_switch"),
                         branch_id: None,
                         bus_id: Some(2),
-                        id: Some(Cow::Borrowed("ShuntA")),
                         status_change: true,
+                        equipment_kind: None,
+                        equipment_id: None,
                     },
                 ],
             },
@@ -735,7 +748,7 @@ fn dynamics_rows_from_generators(
         .map(|generator| DynamicsModelRow {
             bus_id: generator.bus_id,
             gen_id: Cow::Owned(generator.id.as_ref().to_owned()),
-            model_type: Cow::Borrowed("SYNC_MACHINE_EQ"),
+            model_type: Cow::Borrowed(infer_dynamics_model_type(generator)),
             params: vec![
                 (Cow::Borrowed("H"), generator.h),
                 (Cow::Borrowed("xd_prime"), generator.xd_prime),
@@ -746,6 +759,18 @@ fn dynamics_rows_from_generators(
         .collect();
 
     (rows, false)
+}
+
+fn infer_dynamics_model_type(generator: &GenRow<'_>) -> &'static str {
+    if generator.xd_prime > 0.0 && generator.h > 0.0 {
+        "GENROU"
+    } else if generator.h > 0.0 {
+        "GENCLS"
+    } else {
+        // Conservative fallback: preserve that this row came from EQ-side machine data,
+        // not a fully parsed DY dynamic model exchange payload.
+        "SYNC_MACHINE_EQ"
+    }
 }
 
 fn parse_eq_components_for_path(
@@ -832,9 +857,10 @@ fn parse_eq_components_for_path(
             format!("failed to extract ConnectivityNode elements from CGMES input file at {path}")
         })?;
 
-    let base_voltages = parser::base_voltage_specs_from_reader(Cursor::new(&bytes)).with_context(|| {
-        format!("failed to extract BaseVoltage elements from CGMES input file at {path}")
-    })?;
+    let base_voltages =
+        parser::base_voltage_specs_from_reader(Cursor::new(&bytes)).with_context(|| {
+            format!("failed to extract BaseVoltage elements from CGMES input file at {path}")
+        })?;
 
     let equipment_base_voltage_refs =
         parser::equipment_base_voltage_refs_from_reader(Cursor::new(&bytes)).with_context(|| {
@@ -1042,7 +1068,8 @@ fn parse_eq_topology_rows(
 
     let mut bus_kv_candidates: HashMap<&str, Vec<f64>> = HashMap::new();
     for terminal in &terminals {
-        let Some(base_voltage_mrid) = equipment_base_voltage_by_mrid.get(&terminal.line_mrid) else {
+        let Some(base_voltage_mrid) = equipment_base_voltage_by_mrid.get(&terminal.line_mrid)
+        else {
             continue;
         };
         let Some(nominal_kv) = base_voltage_by_mrid.get(base_voltage_mrid).copied() else {
@@ -1050,7 +1077,10 @@ fn parse_eq_topology_rows(
         };
 
         let bus_key = if use_topological {
-            match conn_to_topo.get(terminal.connectivity_node_mrid.as_str()).copied() {
+            match conn_to_topo
+                .get(terminal.connectivity_node_mrid.as_str())
+                .copied()
+            {
                 Some(value) => value,
                 None => continue,
             }
@@ -1058,14 +1088,19 @@ fn parse_eq_topology_rows(
             terminal.connectivity_node_mrid.as_str()
         };
 
-        bus_kv_candidates.entry(bus_key).or_default().push(nominal_kv);
+        bus_kv_candidates
+            .entry(bus_key)
+            .or_default()
+            .push(nominal_kv);
     }
 
+    let mut bus_nominal_kv_by_key: HashMap<&str, f64> = HashMap::new();
     let mut bus_voltage_label_by_key: HashMap<&str, String> = HashMap::new();
     for (bus_key, kvs) in bus_kv_candidates {
         let Some(best) = kvs.into_iter().max_by(|left, right| left.total_cmp(right)) else {
             continue;
         };
+        bus_nominal_kv_by_key.insert(bus_key, best);
         bus_voltage_label_by_key.insert(bus_key, format_kv_label(best));
     }
 
@@ -1107,17 +1142,12 @@ fn parse_eq_topology_rows(
         .iter()
         .map(|bus_key| BusRow {
             bus_id: bus_key_to_bus_id[bus_key],
-            name: Cow::Owned(
-                bus_name_by_key
-                    .get(*bus_key)
-                    .cloned()
-                    .unwrap_or_else(|| {
-                        bus_fallback_name(
-                            bus_key,
-                            bus_voltage_label_by_key.get(*bus_key).map(String::as_str),
-                        )
-                    }),
-            ),
+            name: Cow::Owned(bus_name_by_key.get(*bus_key).cloned().unwrap_or_else(|| {
+                bus_fallback_name(
+                    bus_key,
+                    bus_voltage_label_by_key.get(*bus_key).map(String::as_str),
+                )
+            })),
             bus_type: 1,
             p_sched: 0.0,
             q_sched: 0.0,
@@ -1134,6 +1164,7 @@ fn parse_eq_topology_rows(
             v_max: 1.1,
             p_min_agg: 0.0,
             p_max_agg: 0.0,
+            nominal_kv: bus_nominal_kv_by_key.get(*bus_key).copied(),
         })
         .collect();
 
@@ -1229,6 +1260,8 @@ fn parse_eq_topology_rows(
             rate_b: 9999.0,
             rate_c: 9999.0,
             status: true,
+            from_nominal_kv: bus_nominal_kv_by_key.get(from_bus_key).copied(),
+            to_nominal_kv: bus_nominal_kv_by_key.get(to_bus_key).copied(),
         });
     }
 
@@ -1442,37 +1475,31 @@ fn parse_eq_topology_rows(
             );
         }
 
-        let resolve_terminal_bus_id = |terminal: &parser::TerminalLink| -> Result<i32> {
+        let resolve_terminal_bus_key = |terminal: &parser::TerminalLink| -> Result<String> {
             if use_topological {
-                let topological_bus_key = conn_to_topo
+                conn_to_topo
                     .get(terminal.connectivity_node_mrid.as_str())
                     .copied()
+                    .map(str::to_owned)
                     .with_context(|| {
                         format!(
                             "failed to resolve ConnectivityNode '{}' to TopologicalNode for PowerTransformer mRID '{transformer_mrid}'",
                             terminal.connectivity_node_mrid
                         )
-                    })?;
-                bus_key_to_bus_id
-                    .get(topological_bus_key)
-                    .copied()
-                    .with_context(|| {
-                        format!(
-                            "failed to resolve TopologicalNode '{}' to dense bus_id for PowerTransformer mRID '{transformer_mrid}'",
-                            topological_bus_key
-                        )
                     })
             } else {
-                bus_key_to_bus_id
-                    .get(terminal.connectivity_node_mrid.as_str())
-                    .copied()
-                    .with_context(|| {
-                        format!(
-                            "failed to resolve ConnectivityNode '{}' to dense bus_id for PowerTransformer mRID '{transformer_mrid}'",
-                            terminal.connectivity_node_mrid
-                        )
-                    })
+                Ok(terminal.connectivity_node_mrid.clone())
             }
+        };
+
+        let resolve_terminal_bus_id = |terminal: &parser::TerminalLink| -> Result<i32> {
+            let bus_key = resolve_terminal_bus_key(terminal)?;
+            bus_key_to_bus_id.get(bus_key.as_str()).copied().with_context(|| {
+                format!(
+                    "failed to resolve bus key '{}' to dense bus_id for PowerTransformer mRID '{transformer_mrid}'",
+                    bus_key
+                )
+            })
         };
 
         let vector_group = transformer
@@ -1499,6 +1526,8 @@ fn parse_eq_topology_rows(
                 )
             })?;
 
+            let from_bus_key = resolve_terminal_bus_key(from_terminal)?;
+            let to_bus_key = resolve_terminal_bus_key(to_terminal)?;
             let from_bus_id = resolve_terminal_bus_id(from_terminal)?;
             let to_bus_id = resolve_terminal_bus_id(to_terminal)?;
 
@@ -1544,6 +1573,8 @@ fn parse_eq_topology_rows(
                 rate_b,
                 rate_c,
                 status,
+                from_nominal_kv: bus_nominal_kv_by_key.get(from_bus_key.as_str()).copied(),
+                to_nominal_kv: bus_nominal_kv_by_key.get(to_bus_key.as_str()).copied(),
             });
         } else {
             let terminal_h = unique_terminals.first().copied().with_context(|| {
@@ -1562,6 +1593,9 @@ fn parse_eq_topology_rows(
                 )
             })?;
 
+            let bus_h_key = resolve_terminal_bus_key(terminal_h)?;
+            let bus_m_key = resolve_terminal_bus_key(terminal_m)?;
+            let bus_l_key = resolve_terminal_bus_key(terminal_l)?;
             let bus_h_id = resolve_terminal_bus_id(terminal_h)?;
             let bus_m_id = resolve_terminal_bus_id(terminal_m)?;
             let bus_l_id = resolve_terminal_bus_id(terminal_l)?;
@@ -1605,6 +1639,9 @@ fn parse_eq_topology_rows(
                 rate_b,
                 rate_c,
                 status,
+                nominal_kv_h: bus_nominal_kv_by_key.get(bus_h_key.as_str()).copied(),
+                nominal_kv_m: bus_nominal_kv_by_key.get(bus_m_key.as_str()).copied(),
+                nominal_kv_l: bus_nominal_kv_by_key.get(bus_l_key.as_str()).copied(),
             });
         }
     }
@@ -1816,8 +1853,9 @@ fn parse_eq_topology_rows(
                 element_type: Cow::Borrowed("split_bus"),
                 branch_id: None,
                 bus_id: Some(topological_bus_id),
-                id: Some(Cow::Owned(split_id)),
                 status_change: true,
+                equipment_kind: Some(Cow::Borrowed("split_bus")),
+                equipment_id: Some(Cow::Owned(split_id)),
             });
         }
 
@@ -1992,6 +2030,7 @@ fn build_buses_batch(rows: &[BusRow<'_>]) -> Result<RecordBatch> {
     let mut v_max_b = Float64Builder::new();
     let mut p_min_agg_b = Float64Builder::new();
     let mut p_max_agg_b = Float64Builder::new();
+    let mut nominal_kv_b = Float64Builder::new();
 
     for row in rows {
         bus_id_b.append_value(row.bus_id);
@@ -2012,6 +2051,11 @@ fn build_buses_batch(rows: &[BusRow<'_>]) -> Result<RecordBatch> {
         v_max_b.append_value(row.v_max);
         p_min_agg_b.append_value(row.p_min_agg);
         p_max_agg_b.append_value(row.p_max_agg);
+        if let Some(nominal_kv) = row.nominal_kv {
+            nominal_kv_b.append_value(nominal_kv);
+        } else {
+            nominal_kv_b.append_null();
+        }
     }
 
     let arrays: Vec<ArrayRef> = vec![
@@ -2033,6 +2077,7 @@ fn build_buses_batch(rows: &[BusRow<'_>]) -> Result<RecordBatch> {
         Arc::new(v_max_b.finish()) as ArrayRef,
         Arc::new(p_min_agg_b.finish()) as ArrayRef,
         Arc::new(p_max_agg_b.finish()) as ArrayRef,
+        Arc::new(nominal_kv_b.finish()) as ArrayRef,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build buses record batch")
@@ -2055,6 +2100,8 @@ fn build_branches_batch(rows: &[BranchRow<'_>]) -> Result<RecordBatch> {
     let mut rate_c_b = Float64Builder::new();
     let mut status_b = BooleanBuilder::new();
     let mut name_b = StringDictionaryBuilder::<UInt32Type>::new();
+    let mut from_nominal_kv_b = Float64Builder::new();
+    let mut to_nominal_kv_b = Float64Builder::new();
 
     for row in rows {
         branch_id_b.append_value(row.branch_id);
@@ -2071,6 +2118,16 @@ fn build_branches_batch(rows: &[BranchRow<'_>]) -> Result<RecordBatch> {
         rate_c_b.append_value(row.rate_c);
         status_b.append_value(row.status);
         name_b.append(row.name.as_ref())?;
+        if let Some(from_nominal_kv) = row.from_nominal_kv {
+            from_nominal_kv_b.append_value(from_nominal_kv);
+        } else {
+            from_nominal_kv_b.append_null();
+        }
+        if let Some(to_nominal_kv) = row.to_nominal_kv {
+            to_nominal_kv_b.append_value(to_nominal_kv);
+        } else {
+            to_nominal_kv_b.append_null();
+        }
     }
 
     let arrays: Vec<ArrayRef> = vec![
@@ -2088,6 +2145,8 @@ fn build_branches_batch(rows: &[BranchRow<'_>]) -> Result<RecordBatch> {
         Arc::new(rate_c_b.finish()) as ArrayRef,
         Arc::new(status_b.finish()) as ArrayRef,
         Arc::new(name_b.finish()) as ArrayRef,
+        Arc::new(from_nominal_kv_b.finish()) as ArrayRef,
+        Arc::new(to_nominal_kv_b.finish()) as ArrayRef,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build branches record batch")
@@ -2206,6 +2265,8 @@ fn build_transformers_2w_batch(rows: &[Transformer2WRow<'_>]) -> Result<RecordBa
     let mut rate_c_b = Float64Builder::new();
     let mut status_b = BooleanBuilder::new();
     let mut name_b = StringDictionaryBuilder::<UInt32Type>::new();
+    let mut from_nominal_kv_b = Float64Builder::new();
+    let mut to_nominal_kv_b = Float64Builder::new();
 
     for row in rows {
         from_bus_id_b.append_value(row.from_bus_id);
@@ -2228,6 +2289,16 @@ fn build_transformers_2w_batch(rows: &[Transformer2WRow<'_>]) -> Result<RecordBa
         rate_c_b.append_value(row.rate_c);
         status_b.append_value(row.status);
         name_b.append(row.name.as_ref())?;
+        if let Some(from_nominal_kv) = row.from_nominal_kv {
+            from_nominal_kv_b.append_value(from_nominal_kv);
+        } else {
+            from_nominal_kv_b.append_null();
+        }
+        if let Some(to_nominal_kv) = row.to_nominal_kv {
+            to_nominal_kv_b.append_value(to_nominal_kv);
+        } else {
+            to_nominal_kv_b.append_null();
+        }
     }
 
     let arrays: Vec<ArrayRef> = vec![
@@ -2251,6 +2322,8 @@ fn build_transformers_2w_batch(rows: &[Transformer2WRow<'_>]) -> Result<RecordBa
         Arc::new(rate_c_b.finish()) as ArrayRef,
         Arc::new(status_b.finish()) as ArrayRef,
         Arc::new(name_b.finish()) as ArrayRef,
+        Arc::new(from_nominal_kv_b.finish()) as ArrayRef,
+        Arc::new(to_nominal_kv_b.finish()) as ArrayRef,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build transformers_2w record batch")
@@ -2283,6 +2356,9 @@ fn build_transformers_3w_batch(rows: &[Transformer3WRow<'_>]) -> Result<RecordBa
     let mut rate_c_b = Float64Builder::new();
     let mut status_b = BooleanBuilder::new();
     let mut name_b = StringDictionaryBuilder::<UInt32Type>::new();
+    let mut nominal_kv_h_b = Float64Builder::new();
+    let mut nominal_kv_m_b = Float64Builder::new();
+    let mut nominal_kv_l_b = Float64Builder::new();
 
     for row in rows {
         bus_h_id_b.append_value(row.bus_h_id);
@@ -2306,6 +2382,21 @@ fn build_transformers_3w_batch(rows: &[Transformer3WRow<'_>]) -> Result<RecordBa
         rate_c_b.append_value(row.rate_c);
         status_b.append_value(row.status);
         name_b.append(row.name.as_ref())?;
+        if let Some(nominal_kv_h) = row.nominal_kv_h {
+            nominal_kv_h_b.append_value(nominal_kv_h);
+        } else {
+            nominal_kv_h_b.append_null();
+        }
+        if let Some(nominal_kv_m) = row.nominal_kv_m {
+            nominal_kv_m_b.append_value(nominal_kv_m);
+        } else {
+            nominal_kv_m_b.append_null();
+        }
+        if let Some(nominal_kv_l) = row.nominal_kv_l {
+            nominal_kv_l_b.append_value(nominal_kv_l);
+        } else {
+            nominal_kv_l_b.append_null();
+        }
     }
 
     let arrays: Vec<ArrayRef> = vec![
@@ -2330,6 +2421,9 @@ fn build_transformers_3w_batch(rows: &[Transformer3WRow<'_>]) -> Result<RecordBa
         Arc::new(rate_c_b.finish()) as ArrayRef,
         Arc::new(status_b.finish()) as ArrayRef,
         Arc::new(name_b.finish()) as ArrayRef,
+        Arc::new(nominal_kv_h_b.finish()) as ArrayRef,
+        Arc::new(nominal_kv_m_b.finish()) as ArrayRef,
+        Arc::new(nominal_kv_l_b.finish()) as ArrayRef,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build transformers_3w record batch")
@@ -2687,6 +2781,16 @@ fn build_contingencies_batch(rows: &[ContingencyRow<'_>]) -> Result<RecordBatch>
         ),
         Field::new("amount_mw", DataType::Float64, true),
         Field::new("status_change", DataType::Boolean, false),
+        Field::new(
+            "equipment_kind",
+            DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8)),
+            true,
+        ),
+        Field::new(
+            "equipment_id",
+            DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8)),
+            true,
+        ),
     ];
     let element_field_builders: Vec<Box<dyn ArrayBuilder>> = vec![
         Box::new(StringDictionaryBuilder::<Int32Type>::new()),
@@ -2696,6 +2800,8 @@ fn build_contingencies_batch(rows: &[ContingencyRow<'_>]) -> Result<RecordBatch>
         Box::new(StringDictionaryBuilder::<Int32Type>::new()),
         Box::new(Float64Builder::new()),
         Box::new(BooleanBuilder::new()),
+        Box::new(StringDictionaryBuilder::<Int32Type>::new()),
+        Box::new(StringDictionaryBuilder::<Int32Type>::new()),
     ];
     let element_struct_b = StructBuilder::new(element_fields, element_field_builders);
     let elements_field = match schema.field(1).data_type() {
@@ -2741,18 +2847,10 @@ fn build_contingencies_batch(rows: &[ContingencyRow<'_>]) -> Result<RecordBatch>
                     .append_null();
             }
 
-            if let Some(id) = &element.id {
-                struct_b
-                    .field_builder::<StringDictionaryBuilder<Int32Type>>(3)
-                    .context("missing gen_id builder")?
-                    .append(id.as_ref())?;
-            } else {
-                struct_b
-                    .field_builder::<StringDictionaryBuilder<Int32Type>>(3)
-                    .context("missing gen_id builder")?
-                    .append_null();
-            }
-
+            struct_b
+                .field_builder::<StringDictionaryBuilder<Int32Type>>(3)
+                .context("missing gen_id builder")?
+                .append_null();
             struct_b
                 .field_builder::<StringDictionaryBuilder<Int32Type>>(4)
                 .context("missing load_id builder")?
@@ -2765,6 +2863,30 @@ fn build_contingencies_batch(rows: &[ContingencyRow<'_>]) -> Result<RecordBatch>
                 .field_builder::<BooleanBuilder>(6)
                 .context("missing status_change builder")?
                 .append_value(element.status_change);
+
+            if let Some(equipment_kind) = &element.equipment_kind {
+                struct_b
+                    .field_builder::<StringDictionaryBuilder<Int32Type>>(7)
+                    .context("missing equipment_kind builder")?
+                    .append(equipment_kind.as_ref())?;
+            } else {
+                struct_b
+                    .field_builder::<StringDictionaryBuilder<Int32Type>>(7)
+                    .context("missing equipment_kind builder")?
+                    .append_null();
+            }
+
+            if let Some(equipment_id) = &element.equipment_id {
+                struct_b
+                    .field_builder::<StringDictionaryBuilder<Int32Type>>(8)
+                    .context("missing equipment_id builder")?
+                    .append(equipment_id.as_ref())?;
+            } else {
+                struct_b
+                    .field_builder::<StringDictionaryBuilder<Int32Type>>(8)
+                    .context("missing equipment_id builder")?
+                    .append_null();
+            }
             struct_b.append(true);
         }
 
@@ -2827,6 +2949,7 @@ fn build_dynamics_models_batch(rows: &[DynamicsModelRow<'_>]) -> Result<RecordBa
 
 #[cfg(test)]
 mod tests {
+    use std::borrow::Cow;
     use std::fs;
     use std::time::Instant;
 
@@ -2835,8 +2958,8 @@ mod tests {
         Array, DictionaryArray, Float64Array, Int32Array, ListArray, MapArray, StringArray,
         StructArray,
     };
-    use arrow::datatypes::{Int32Type, UInt32Type};
     use arrow::datatypes::Schema;
+    use arrow::datatypes::{Int32Type, UInt32Type};
 
     use crate::arrow_schema::{
         BRANDING, SCHEMA_VERSION, all_table_schemas, branches_schema, buses_schema,
@@ -2845,8 +2968,8 @@ mod tests {
     };
 
     use super::{
-        BusResolutionMode, WriteOptions, read_rpf_tables, rpf_file_metadata, summarize_rpf,
-        write_complete_rpf, write_complete_rpf_with_options,
+        BusResolutionMode, GenRow, WriteOptions, infer_dynamics_model_type, read_rpf_tables,
+        rpf_file_metadata, summarize_rpf, write_complete_rpf, write_complete_rpf_with_options,
     };
 
     fn assert_schema_shape_matches(actual: &Schema, expected: &Schema) {
@@ -3305,10 +3428,59 @@ mod tests {
             .context("missing dynamics gen_id dictionary key")? as usize;
         assert_eq!(gen_values.value(gen_key), "G1");
 
+        let model_type_dict = dynamics_batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<DictionaryArray<Int32Type>>()
+            .context("dynamics_models.model_type should be dictionary-encoded UTF8")?;
+        let model_type_values = model_type_dict
+            .values()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .context("dynamics_models.model_type dictionary values should be Utf8")?;
+        let model_type_key = model_type_dict
+            .key(0)
+            .context("missing dynamics model_type dictionary key")?
+            as usize;
+        assert_eq!(model_type_values.value(model_type_key), "GENROU");
+
         let metadata = rpf_file_metadata(&output_path)?;
         assert_eq!(metadata.get("raptrix.features.dynamics_stub"), None);
 
         Ok(())
+    }
+
+    #[test]
+    fn infer_dynamics_model_type_uses_conservative_rules() {
+        let full = GenRow {
+            bus_id: 1,
+            id: Cow::Borrowed("G1"),
+            name: Cow::Borrowed("Gen 1"),
+            p_sched_mw: 0.0,
+            p_min_mw: 0.0,
+            p_max_mw: 0.0,
+            q_min_mvar: 0.0,
+            q_max_mvar: 0.0,
+            status: true,
+            mbase_mva: 100.0,
+            h: 4.0,
+            xd_prime: 0.2,
+            d: 0.5,
+        };
+        assert_eq!(infer_dynamics_model_type(&full), "GENROU");
+
+        let inertial = GenRow {
+            xd_prime: 0.0,
+            ..full.clone()
+        };
+        assert_eq!(infer_dynamics_model_type(&inertial), "GENCLS");
+
+        let minimal = GenRow {
+            h: 0.0,
+            xd_prime: 0.0,
+            ..full
+        };
+        assert_eq!(infer_dynamics_model_type(&minimal), "SYNC_MACHINE_EQ");
     }
 
     #[test]
@@ -3348,12 +3520,24 @@ mod tests {
             .downcast_ref::<StringArray>()
             .context("buses.name dictionary values should be Utf8")?;
         for idx in 0..bus_names.len() {
-            let key = bus_names.key(idx).context("missing bus name dictionary key")? as usize;
+            let key = bus_names
+                .key(idx)
+                .context("missing bus name dictionary key")? as usize;
             let name = bus_values.value(key);
             assert!(
                 name.contains("230kV"),
                 "expected BaseVoltage-aware bus fallback name, got '{name}'"
             );
+        }
+
+        let bus_nominal_kv = buses_batch
+            .column(18)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .context("buses.nominal_kv should be Float64")?;
+        for idx in 0..bus_nominal_kv.len() {
+            assert!(!bus_nominal_kv.is_null(idx));
+            assert!((bus_nominal_kv.value(idx) - 230.0).abs() < 1e-12);
         }
 
         let branch_names = branches_batch
@@ -3374,6 +3558,86 @@ mod tests {
             branch_name.contains("230 kV"),
             "expected BaseVoltage-aware branch fallback name, got '{branch_name}'"
         );
+
+        let from_nominal_kv = branches_batch
+            .column(14)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .context("branches.from_nominal_kv should be Float64")?;
+        let to_nominal_kv = branches_batch
+            .column(15)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .context("branches.to_nominal_kv should be Float64")?;
+        assert!((from_nominal_kv.value(0) - 230.0).abs() < 1e-12);
+        assert!((to_nominal_kv.value(0) - 230.0).abs() < 1e-12);
+
+        Ok(())
+    }
+
+    #[test]
+    fn write_complete_rpf_captures_switch_contingency_identity() -> Result<()> {
+        let tmp_dir = std::env::temp_dir().join("raptrix_rpf_contingency_identity_tests");
+        fs::create_dir_all(&tmp_dir)?;
+
+        let eq_path = tmp_dir.join("contingency_identity_fixture_eq.xml");
+        fs::write(&eq_path, generate_eq_fixture_with_breaker())?;
+
+        let output_path = tmp_dir.join("contingency_identity_fixture.rpf");
+        let eq_path_str = eq_path.to_string_lossy().into_owned();
+        let output_path_str = output_path.to_string_lossy().into_owned();
+
+        write_complete_rpf(&[&eq_path_str], &output_path_str)?;
+
+        let tables = read_rpf_tables(&output_path)?;
+        let contingencies_batch = tables
+            .iter()
+            .find(|(name, _)| name == "contingencies")
+            .map(|(_, batch)| batch)
+            .context("expected contingencies table")?;
+
+        let elements = contingencies_batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .context("contingencies.elements should be ListArray")?;
+        let element_values = elements.value(0);
+        let element_struct = element_values
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .context("contingency elements should downcast to StructArray")?;
+
+        let equipment_kind = element_struct
+            .column(7)
+            .as_any()
+            .downcast_ref::<DictionaryArray<Int32Type>>()
+            .context("contingencies.elements.equipment_kind should be dictionary-encoded UTF8")?;
+        let equipment_kind_values = equipment_kind
+            .values()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .context("contingencies.elements.equipment_kind values should be Utf8")?;
+        let equipment_kind_key = equipment_kind
+            .key(0)
+            .context("missing equipment_kind dictionary key")?
+            as usize;
+        assert_eq!(equipment_kind_values.value(equipment_kind_key), "switch");
+
+        let equipment_id = element_struct
+            .column(8)
+            .as_any()
+            .downcast_ref::<DictionaryArray<Int32Type>>()
+            .context("contingencies.elements.equipment_id should be dictionary-encoded UTF8")?;
+        let equipment_id_values = equipment_id
+            .values()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .context("contingencies.elements.equipment_id values should be Utf8")?;
+        let equipment_id_key = equipment_id
+            .key(0)
+            .context("missing equipment_id dictionary key")?
+            as usize;
+        assert_eq!(equipment_id_values.value(equipment_id_key), "BR1");
 
         Ok(())
     }

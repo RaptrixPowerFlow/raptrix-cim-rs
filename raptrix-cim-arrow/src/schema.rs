@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.6.0 profile.
+//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.7.0 profile.
 //!
 //! This module exposes one exact Arrow schema per required table in the locked
 //! `.rpf` contract, plus deterministic schema registry helpers used by both
@@ -14,10 +14,10 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, Schema};
 
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.6.0 - High-performance open profile by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.7.0 - High-performance open profile by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.";
 
 /// Schema version tag embedded as file-level metadata.
-pub const SCHEMA_VERSION: &str = "0.6.0";
+pub const SCHEMA_VERSION: &str = "0.7.0";
 
 /// File-level metadata key for branding string.
 pub const METADATA_KEY_BRANDING: &str = "raptrix.branding";
@@ -130,6 +130,8 @@ fn contingencies_elements_type() -> DataType {
                 Field::new("load_id", dict_utf8(), true),
                 Field::new("amount_mw", DataType::Float64, true),
                 Field::new("status_change", DataType::Boolean, false),
+                Field::new("equipment_kind", dict_utf8(), true),
+                Field::new("equipment_id", dict_utf8(), true),
             ]
             .into(),
         ),
@@ -147,7 +149,10 @@ pub fn schema_metadata() -> HashMap<String, String> {
     let mut metadata = HashMap::new();
     metadata.insert(METADATA_KEY_BRANDING.to_string(), BRANDING.to_string());
     metadata.insert(METADATA_KEY_VERSION.to_string(), SCHEMA_VERSION.to_string());
-    metadata.insert(METADATA_KEY_RPF_VERSION.to_string(), SCHEMA_VERSION.to_string());
+    metadata.insert(
+        METADATA_KEY_RPF_VERSION.to_string(),
+        SCHEMA_VERSION.to_string(),
+    );
     metadata
 }
 
@@ -190,6 +195,7 @@ pub fn buses_schema() -> Schema {
             Field::new("v_max", DataType::Float64, false),
             Field::new("p_min_agg", DataType::Float64, false),
             Field::new("p_max_agg", DataType::Float64, false),
+            Field::new("nominal_kv", DataType::Float64, true),
         ],
         schema_metadata(),
     )
@@ -213,6 +219,8 @@ pub fn branches_schema() -> Schema {
             Field::new("rate_c", DataType::Float64, false),
             Field::new("status", DataType::Boolean, false),
             Field::new("name", dict_utf8_u32(), true),
+            Field::new("from_nominal_kv", DataType::Float64, true),
+            Field::new("to_nominal_kv", DataType::Float64, true),
         ],
         schema_metadata(),
     )
@@ -312,6 +320,8 @@ pub fn transformers_2w_schema() -> Schema {
             Field::new("rate_c", DataType::Float64, false),
             Field::new("status", DataType::Boolean, false),
             Field::new("name", dict_utf8_u32(), true),
+            Field::new("from_nominal_kv", DataType::Float64, true),
+            Field::new("to_nominal_kv", DataType::Float64, true),
         ],
         schema_metadata(),
     )
@@ -342,6 +352,9 @@ pub fn transformers_3w_schema() -> Schema {
             Field::new("rate_c", DataType::Float64, false),
             Field::new("status", DataType::Boolean, false),
             Field::new("name", dict_utf8_u32(), true),
+            Field::new("nominal_kv_h", DataType::Float64, true),
+            Field::new("nominal_kv_m", DataType::Float64, true),
+            Field::new("nominal_kv_l", DataType::Float64, true),
         ],
         schema_metadata(),
     )
@@ -493,7 +506,7 @@ pub fn node_breaker_table_schemas() -> Vec<(&'static str, Schema)> {
     ]
 }
 
-/// Returns all required table schemas in canonical v0.6.0 order.
+/// Returns all required table schemas in canonical v0.7.0 order.
 pub fn all_table_schemas() -> Vec<(&'static str, Schema)> {
     vec![
         (TABLE_METADATA, metadata_schema()),

@@ -37,7 +37,7 @@ That split keeps the locked RPF contract in one reusable place so future convert
 
 ### Output capabilities
 
-- Build Arrow schema objects for the locked Raptrix PowerFlow Interchange v0.6.0 contract:
+- Build Arrow schema objects for the locked Raptrix PowerFlow Interchange v0.7.0 contract:
 	- metadata
 	- buses
 	- branches
@@ -63,7 +63,7 @@ That split keeps the locked RPF contract in one reusable place so future convert
 
 ## Data Contract (Locked)
 
-- Current schema contract: v0.6.0
+- Current schema contract: v0.7.0
 - Canonical source: raptrix-cim-arrow/src/schema.rs
 - Contract policy and semantics: docs/schema-contract.md
 - Cross-repo propagation workflow: docs/release-sync-workflow.md
@@ -71,9 +71,9 @@ That split keeps the locked RPF contract in one reusable place so future convert
 
 ### Versioning Policy
 
-Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is now locked at schema `v0.6.0` for interoperability and deterministic ingest behavior, while the converter crate release tracks implementation maturity and is currently `0.1.3`.
+Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is now locked at schema `v0.7.0` for interoperability and deterministic ingest behavior, while the converter crate release tracks implementation maturity and is currently `0.2.0`.
 
-This split preserves compatibility guarantees for downstream tools: existing `v0.5.2` Parquet artifacts remain valid to read on the core path, and new `v0.6.0` optional features are additive only.
+This split preserves compatibility guarantees for downstream tools: existing `v0.5.2` Parquet artifacts remain valid to read on the core path, and new `v0.7.0` optional features are additive only.
 
 For third-party implementers, [docs/schema-contract.md](docs/schema-contract.md) is the authoritative reader/writer contract. It now documents the `.rpf` Arrow IPC container layout, canonical root column ordering, row-count metadata trimming rules, optional table detection, and full column/type references needed to build a compatible parser.
 
@@ -106,7 +106,10 @@ High-level pipeline:
 - Connectivity preserved optionally: `--connectivity-detail` keeps granular bus mapping and emits `connectivity_groups` so ML and detailed contingency workflows can reconstruct split-bus structure.
 - Optional node-breaker support: `--node-breaker` emits additive node-breaker detail tables for operational/viewer fidelity while default ingest stays strict core tables only for maximum zero-copy speed.
 - Contingency derivation: when switch/open-state data is available, contingency rows are derived from switch state payloads; split-bus `split_bus` placeholder elements are still emitted when TP groups indicate multi-node topological buses.
-- Dynamics derivation: when generator rows are present, `dynamics_models` is derived from `SynchronousMachine` parameters (`H`, `xd_prime`, `D`, `mbase_mva`); otherwise a placeholder row is emitted and marked via metadata.
+- Voltage provenance: bus and branch-side nominal kV columns are now emitted when CGMES `BaseVoltage` joins are available, so downstream tools can reason about base voltage without reverse-parsing names.
+- Contingency identity: contingency elements now carry generic `equipment_kind` and `equipment_id` fields for switch and split-bus workflows that do not map cleanly to branch/gen/load IDs.
+- Nullability policy: the new 0.7 voltage and contingency identity fields are nullable by design when the source CIM payload cannot support an honest value; the writer should emit null rather than fabricate semantics.
+- Dynamics derivation: when generator rows are present, `dynamics_models` is derived from `SynchronousMachine` parameters (`H`, `xd_prime`, `D`, `mbase_mva`); `model_type` is conservatively inferred as `GENROU`, `GENCLS`, or `SYNC_MACHINE_EQ` based only on available parsed parameters. If generator-derived rows are unavailable, a placeholder row is emitted and marked via metadata.
 - Benchmark note: on SmallGrid-scale datasets this merge substantially reduces bus count versus raw ConnectivityNode granularity and improves solve-stage matrix dimensions.
 
 Contribution guidance:
@@ -129,13 +132,13 @@ Use these as baseline indicators, not final production benchmarks.
 
 ## Project Layout
 
-- raptrix-cim-arrow/src/schema.rs: v0.6.0 table schemas, metadata constants, and schema registry helpers
+- raptrix-cim-arrow/src/schema.rs: v0.7.0 table schemas, metadata constants, and schema registry helpers
 - raptrix-cim-arrow/src/io.rs: generic root `.rpf` assembly, validation, readback, and summary helpers
 - src/models: CIM data structures and traits
 - src/parser.rs: parse helpers and EQ-to-branch mapping
 - src/rpf_writer.rs: CIM-specific mapping from parsed CGMES content into canonical table batches
 
-### Locked contract: v0.6.0 naming additions
+### Locked contract: v0.7.0 additive fields
 
 - Added optional dictionary-encoded `name` columns to:
 	- branches
@@ -143,6 +146,14 @@ Use these as baseline indicators, not final production benchmarks.
 	- loads
 	- transformers_2w
 	- transformers_3w
+- Added nullable nominal-kV columns to:
+	- buses
+	- branches
+	- transformers_2w
+	- transformers_3w
+- Added generic contingency element identity fields:
+	- `equipment_kind`
+	- `equipment_id`
 - Existing `buses.name` remains required and now prioritizes CIM human-readable names with deterministic fallback.
 - src/main.rs: production CLI for CGMES-to-RPF conversion
 - src/test_utils.rs: test-only path helper for external CGMES data
@@ -286,9 +297,9 @@ Large model archives should stay outside the repository.
 
 - Parsing focus is currently EQ profile extraction for key equipment, not full multi-profile CGMES graph reconstruction.
 - Branch endpoint mapping currently relies on Terminal and ConnectivityNode references present in EQ.
-- Demo writer currently exercises buses/branches only; other locked contract: v0.6.0 tables are schema-defined and ready for row-mapping implementation.
+- Dynamics roadmap note: schema `v0.8` is expected to focus on richer dynamics coverage after feedback from `raptrix-core` and Smart Wires device workflows.
 - Some solver fields are default-filled in integration mapping until richer profile joins (TP/SV/SSH) are added.
-- BaseVoltage joins are not fully modeled yet, so voltage labels for generated fallback names are heuristic and may be `unknown` for sparse naming inputs.
+- BaseVoltage joins now feed core nominal-kV fields and fallback naming, but coverage is not yet exhaustive across every CIM equipment subtype, so sparse cases may still surface `unknown` labels.
 - If CGMES metadata is absent, `base_mva` and `frequency_hz` use CLI defaults; set these explicitly for non-60 Hz systems.
 
 ## How To Request New Solver Features

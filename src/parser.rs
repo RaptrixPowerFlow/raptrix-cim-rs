@@ -1403,9 +1403,9 @@ mod tests {
         );
     }
 
-        #[test]
-        fn parse_base_voltage_specs() {
-                let xml = r##"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#">
+    #[test]
+    fn parse_base_voltage_specs() {
+        let xml = r##"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#">
     <cim:BaseVoltage rdf:ID="BV_230">
         <BaseVoltage.nominalVoltage>230.0</BaseVoltage.nominalVoltage>
     </cim:BaseVoltage>
@@ -1414,17 +1414,17 @@ mod tests {
     </cim:BaseVoltage>
 </rdf:RDF>"##;
 
-                let rows = base_voltage_specs_from_reader(xml.as_bytes()).expect("parse should succeed");
-                assert_eq!(rows.len(), 2);
-                assert_eq!(rows[0].base_voltage_mrid, "BV_115");
-                assert_eq!(rows[0].nominal_kv, 115.0);
-                assert_eq!(rows[1].base_voltage_mrid, "BV_230");
-                assert_eq!(rows[1].nominal_kv, 230.0);
-        }
+        let rows = base_voltage_specs_from_reader(xml.as_bytes()).expect("parse should succeed");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].base_voltage_mrid, "BV_115");
+        assert_eq!(rows[0].nominal_kv, 115.0);
+        assert_eq!(rows[1].base_voltage_mrid, "BV_230");
+        assert_eq!(rows[1].nominal_kv, 230.0);
+    }
 
-        #[test]
-        fn parse_equipment_base_voltage_refs() {
-                let xml = r##"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#">
+    #[test]
+    fn parse_equipment_base_voltage_refs() {
+        let xml = r##"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#">
     <cim:ACLineSegment rdf:ID="Line1">
         <ConductingEquipment.BaseVoltage rdf:resource="#BV_230"/>
     </cim:ACLineSegment>
@@ -1436,14 +1436,14 @@ mod tests {
     </cim:PowerTransformer>
 </rdf:RDF>"##;
 
-                let refs = equipment_base_voltage_refs_from_reader(xml.as_bytes())
-                        .expect("parse should succeed");
-                assert_eq!(refs.len(), 3);
-                assert_eq!(refs[0].equipment_mrid, "Line1");
-                assert_eq!(refs[0].base_voltage_mrid, "BV_230");
-                assert_eq!(refs[1].equipment_mrid, "Load1");
-                assert_eq!(refs[1].base_voltage_mrid, "BV_115");
-                assert_eq!(refs[2].equipment_mrid, "Tx1");
-                assert_eq!(refs[2].base_voltage_mrid, "BV_345");
-        }
+        let refs =
+            equipment_base_voltage_refs_from_reader(xml.as_bytes()).expect("parse should succeed");
+        assert_eq!(refs.len(), 3);
+        assert_eq!(refs[0].equipment_mrid, "Line1");
+        assert_eq!(refs[0].base_voltage_mrid, "BV_230");
+        assert_eq!(refs[1].equipment_mrid, "Load1");
+        assert_eq!(refs[1].base_voltage_mrid, "BV_115");
+        assert_eq!(refs[2].equipment_mrid, "Tx1");
+        assert_eq!(refs[2].base_voltage_mrid, "BV_345");
+    }
 }
