@@ -22,8 +22,11 @@ Copyright (c) 2026 Musto Technologies LLC
 - Added explicit file-level metadata flags for provisional table payloads: `raptrix.features.contingencies_stub` and `raptrix.features.dynamics_stub`.
 - Contingencies now use a hybrid path: derive from switch/open-state payloads when available, with stub fallback only when derived rows are unavailable.
 - `raptrix.features.contingencies_stub` is now emitted conditionally only when placeholder contingency rows are present.
+- Dynamics now use a first-pass real extraction path from generator rows (`SynchronousMachine` parameters), with stub fallback only when generator-derived rows are unavailable.
+- `raptrix.features.dynamics_stub` now reflects whether dynamics payload is placeholder-derived.
 - Aligned `raptrix.branding` constant text with the documented schema contract value.
 - Consolidated metadata key usage through shared schema constants to reduce key drift across crates.
+- GitHub workflow now opts JavaScript actions into Node 24 runtime via `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true`.
 
 ### Documentation
 

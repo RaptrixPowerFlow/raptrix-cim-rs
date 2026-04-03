@@ -75,7 +75,7 @@ impl Default for WriteOptions {
             emit_connectivity_groups: false,
             emit_node_breaker_detail: false,
             contingencies_are_stub: false,
-            dynamics_are_stub: true,
+            dynamics_are_stub: false,
             base_mva: 100.0,
             frequency_hz: 60.0,
             study_name: None,
@@ -575,7 +575,7 @@ pub fn write_complete_rpf_with_options(
     let switched_shunts_batch = build_switched_shunts_batch(&switched_shunt_rows)?;
     let (contingencies_rows, contingencies_are_stub) =
         contingency_rows_from_switches_and_stubs(&node_breaker_rows, split_bus_stub_elements);
-    let dynamics_models_rows = stub_dynamics_model_rows();
+    let (dynamics_models_rows, dynamics_are_stub) = dynamics_rows_from_generators(&gen_rows);
     let contingencies_batch = build_contingencies_batch(&contingencies_rows)?;
     let dynamics_models_batch = build_dynamics_models_batch(&dynamics_models_rows)?;
     let _connectivity_groups_batch = build_connectivity_groups_batch(&connectivity_group_rows)?;
@@ -615,7 +615,7 @@ pub fn write_complete_rpf_with_options(
         &RootWriteOptions {
             include_node_breaker_detail: options.emit_node_breaker_detail,
             contingencies_are_stub: options.contingencies_are_stub || contingencies_are_stub,
-            dynamics_are_stub: options.dynamics_are_stub,
+            dynamics_are_stub: options.dynamics_are_stub || dynamics_are_stub,
         },
     )?;
 
@@ -721,6 +721,31 @@ fn stub_dynamics_model_rows() -> Vec<DynamicsModelRow<'static>> {
         model_type: Cow::Borrowed("GENROU"),
         params: vec![(Cow::Borrowed("H"), 5.0), (Cow::Borrowed("xd_prime"), 0.3)],
     }]
+}
+
+fn dynamics_rows_from_generators(
+    gen_rows: &[GenRow<'_>],
+) -> (Vec<DynamicsModelRow<'static>>, bool) {
+    if gen_rows.is_empty() {
+        return (stub_dynamics_model_rows(), true);
+    }
+
+    let rows = gen_rows
+        .iter()
+        .map(|generator| DynamicsModelRow {
+            bus_id: generator.bus_id,
+            gen_id: Cow::Owned(generator.id.as_ref().to_owned()),
+            model_type: Cow::Borrowed("SYNC_MACHINE_EQ"),
+            params: vec![
+                (Cow::Borrowed("H"), generator.h),
+                (Cow::Borrowed("xd_prime"), generator.xd_prime),
+                (Cow::Borrowed("D"), generator.d),
+                (Cow::Borrowed("mbase_mva"), generator.mbase_mva),
+            ],
+        })
+        .collect();
+
+    (rows, false)
 }
 
 fn parse_eq_components_for_path(
@@ -2879,6 +2904,18 @@ mod tests {
         )
     }
 
+    fn generate_eq_fixture_with_generator_dynamics() -> String {
+        String::from(
+            r##"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#">
+<cim:ACLineSegment rdf:ID="L1"><ACLineSegment.r>0.01</ACLineSegment.r><ACLineSegment.x>0.05</ACLineSegment.x></cim:ACLineSegment>
+<cim:Terminal rdf:ID="LT1"><Terminal.ConductingEquipment rdf:resource="#L1"/><Terminal.ConnectivityNode rdf:resource="#N1"/><ACDCTerminal.sequenceNumber>1</ACDCTerminal.sequenceNumber></cim:Terminal>
+<cim:Terminal rdf:ID="LT2"><Terminal.ConductingEquipment rdf:resource="#L1"/><Terminal.ConnectivityNode rdf:resource="#N2"/><ACDCTerminal.sequenceNumber>2</ACDCTerminal.sequenceNumber></cim:Terminal>
+<cim:SynchronousMachine rdf:ID="G1"><RotatingMachine.ratedS>150.0</RotatingMachine.ratedS><SynchronousMachine.H>4.5</SynchronousMachine.H><SynchronousMachine.xdPrime>0.25</SynchronousMachine.xdPrime><SynchronousMachine.D>1.2</SynchronousMachine.D></cim:SynchronousMachine>
+<cim:Terminal rdf:ID="GT1"><Terminal.ConductingEquipment rdf:resource="#G1"/><Terminal.ConnectivityNode rdf:resource="#N1"/><ACDCTerminal.sequenceNumber>1</ACDCTerminal.sequenceNumber></cim:Terminal>
+</rdf:RDF>"##,
+        )
+    }
+
     #[test]
     fn summarize_rpf_reports_expected_counts() -> Result<()> {
         let tmp_dir = std::env::temp_dir().join("raptrix_rpf_summary_tests");
@@ -3173,7 +3210,7 @@ mod tests {
                 emit_connectivity_groups: false,
                 emit_node_breaker_detail: true,
                 contingencies_are_stub: false,
-                dynamics_are_stub: true,
+                dynamics_are_stub: false,
                 base_mva: 100.0,
                 frequency_hz: 60.0,
                 study_name: None,
@@ -3227,6 +3264,49 @@ mod tests {
             metadata.get("raptrix.version"),
             Some(&SCHEMA_VERSION.to_string())
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn write_complete_rpf_derives_real_dynamics_from_generators() -> Result<()> {
+        let tmp_dir = std::env::temp_dir().join("raptrix_rpf_dynamics_tests");
+        fs::create_dir_all(&tmp_dir)?;
+
+        let eq_path = tmp_dir.join("dynamics_fixture_eq.xml");
+        fs::write(&eq_path, generate_eq_fixture_with_generator_dynamics())?;
+
+        let output_path = tmp_dir.join("dynamics_fixture.rpf");
+        let eq_path_str = eq_path.to_string_lossy().into_owned();
+        let output_path_str = output_path.to_string_lossy().into_owned();
+
+        write_complete_rpf(&[&eq_path_str], &output_path_str)?;
+
+        let tables = read_rpf_tables(&output_path)?;
+        let dynamics_batch = tables
+            .iter()
+            .find(|(name, _)| name == "dynamics_models")
+            .map(|(_, batch)| batch)
+            .context("expected dynamics_models table")?;
+        assert_eq!(dynamics_batch.num_rows(), 1);
+
+        let gen_id_dict = dynamics_batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<DictionaryArray<Int32Type>>()
+            .context("dynamics_models.gen_id should be dictionary-encoded UTF8")?;
+        let gen_values = gen_id_dict
+            .values()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .context("dynamics_models.gen_id dictionary values should be Utf8")?;
+        let gen_key = gen_id_dict
+            .key(0)
+            .context("missing dynamics gen_id dictionary key")? as usize;
+        assert_eq!(gen_values.value(gen_key), "G1");
+
+        let metadata = rpf_file_metadata(&output_path)?;
+        assert_eq!(metadata.get("raptrix.features.dynamics_stub"), None);
 
         Ok(())
     }
