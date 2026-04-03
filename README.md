@@ -106,6 +106,7 @@ High-level pipeline:
 - Connectivity preserved optionally: `--connectivity-detail` keeps granular bus mapping and emits `connectivity_groups` so ML and detailed contingency workflows can reconstruct split-bus structure.
 - Optional node-breaker support: `--node-breaker` emits additive node-breaker detail tables for operational/viewer fidelity while default ingest stays strict core tables only for maximum zero-copy speed.
 - Contingency derivation: when switch/open-state data is available, contingency rows are derived from switch state payloads; split-bus `split_bus` placeholder elements are still emitted when TP groups indicate multi-node topological buses.
+- Dynamics derivation: when generator rows are present, `dynamics_models` is derived from `SynchronousMachine` parameters (`H`, `xd_prime`, `D`, `mbase_mva`); otherwise a placeholder row is emitted and marked via metadata.
 - Benchmark note: on SmallGrid-scale datasets this merge substantially reduces bus count versus raw ConnectivityNode granularity and improves solve-stage matrix dimensions.
 
 Contribution guidance:
