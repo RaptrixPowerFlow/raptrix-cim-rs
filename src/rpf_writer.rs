@@ -74,7 +74,7 @@ impl Default for WriteOptions {
             bus_resolution_mode: BusResolutionMode::Topological,
             emit_connectivity_groups: false,
             emit_node_breaker_detail: false,
-            contingencies_are_stub: true,
+            contingencies_are_stub: false,
             dynamics_are_stub: true,
             base_mva: 100.0,
             frequency_hz: 60.0,
@@ -573,7 +573,8 @@ pub fn write_complete_rpf_with_options(
     let owners_batch = build_owners_batch(&owner_rows)?;
     let fixed_shunts_batch = build_fixed_shunts_batch(&fixed_shunt_rows)?;
     let switched_shunts_batch = build_switched_shunts_batch(&switched_shunt_rows)?;
-    let contingencies_rows = stub_contingency_rows(split_bus_stub_elements);
+    let (contingencies_rows, contingencies_are_stub) =
+        contingency_rows_from_switches_and_stubs(&node_breaker_rows, split_bus_stub_elements);
     let dynamics_models_rows = stub_dynamics_model_rows();
     let contingencies_batch = build_contingencies_batch(&contingencies_rows)?;
     let dynamics_models_batch = build_dynamics_models_batch(&dynamics_models_rows)?;
@@ -613,7 +614,7 @@ pub fn write_complete_rpf_with_options(
         &table_batches,
         &RootWriteOptions {
             include_node_breaker_detail: options.emit_node_breaker_detail,
-            contingencies_are_stub: options.contingencies_are_stub,
+            contingencies_are_stub: options.contingencies_are_stub || contingencies_are_stub,
             dynamics_are_stub: options.dynamics_are_stub,
         },
     )?;
@@ -640,49 +641,77 @@ pub fn write_complete_rpf_with_options(
     })
 }
 
-fn stub_contingency_rows(
+fn contingency_rows_from_switches_and_stubs(
+    node_breaker_rows: &[NodeBreakerDetailRow<'_>],
     split_bus_stub_elements: Vec<ContingencyElement<'static>>,
-) -> Vec<ContingencyRow<'static>> {
-    let mut rows = vec![
-        ContingencyRow {
-            contingency_id: Cow::Borrowed("N-1 Line1"),
+) -> (Vec<ContingencyRow<'static>>, bool) {
+    let mut rows: Vec<ContingencyRow<'static>> = Vec::new();
+
+    for row in node_breaker_rows {
+        // Derive contingency candidates only when switch state is explicitly present.
+        let has_switch_state = row.is_open.is_some() || row.normal_open.is_some();
+        if !has_switch_state {
+            continue;
+        }
+
+        let bus_id = row.from_bus_id.or(row.to_bus_id);
+        rows.push(ContingencyRow {
+            contingency_id: Cow::Owned(format!("SWITCH-{}", row.switch_id.as_ref())),
             elements: vec![ContingencyElement {
-                element_type: Cow::Borrowed("branch_outage"),
-                branch_id: Some(1),
-                bus_id: None,
-                id: Some(Cow::Borrowed("Line1")),
+                element_type: Cow::Borrowed("shunt_switch"),
+                branch_id: None,
+                bus_id,
+                id: Some(Cow::Owned(row.switch_id.as_ref().to_owned())),
                 status_change: true,
             }],
-        },
-        ContingencyRow {
-            contingency_id: Cow::Borrowed("N-1 Bus2"),
-            elements: vec![
-                ContingencyElement {
+        });
+    }
+
+    let mut contains_stub = false;
+    if rows.is_empty() {
+        contains_stub = true;
+        rows = vec![
+            ContingencyRow {
+                contingency_id: Cow::Borrowed("N-1 Line1"),
+                elements: vec![ContingencyElement {
                     element_type: Cow::Borrowed("branch_outage"),
                     branch_id: Some(1),
                     bus_id: None,
                     id: Some(Cow::Borrowed("Line1")),
                     status_change: true,
-                },
-                ContingencyElement {
-                    element_type: Cow::Borrowed("shunt_switch"),
-                    branch_id: None,
-                    bus_id: Some(2),
-                    id: Some(Cow::Borrowed("ShuntA")),
-                    status_change: true,
-                },
-            ],
-        },
-    ];
+                }],
+            },
+            ContingencyRow {
+                contingency_id: Cow::Borrowed("N-1 Bus2"),
+                elements: vec![
+                    ContingencyElement {
+                        element_type: Cow::Borrowed("branch_outage"),
+                        branch_id: Some(1),
+                        bus_id: None,
+                        id: Some(Cow::Borrowed("Line1")),
+                        status_change: true,
+                    },
+                    ContingencyElement {
+                        element_type: Cow::Borrowed("shunt_switch"),
+                        branch_id: None,
+                        bus_id: Some(2),
+                        id: Some(Cow::Borrowed("ShuntA")),
+                        status_change: true,
+                    },
+                ],
+            },
+        ];
+    }
 
     if !split_bus_stub_elements.is_empty() {
+        contains_stub = true;
         rows.push(ContingencyRow {
             contingency_id: Cow::Borrowed("split-bus-stub"),
             elements: split_bus_stub_elements,
         });
     }
 
-    rows
+    (rows, contains_stub)
 }
 
 fn stub_dynamics_model_rows() -> Vec<DynamicsModelRow<'static>> {
@@ -3143,7 +3172,7 @@ mod tests {
                 bus_resolution_mode: BusResolutionMode::Topological,
                 emit_connectivity_groups: false,
                 emit_node_breaker_detail: true,
-                contingencies_are_stub: true,
+                contingencies_are_stub: false,
                 dynamics_are_stub: true,
                 base_mva: 100.0,
                 frequency_hz: 60.0,
@@ -3189,10 +3218,7 @@ mod tests {
             metadata.get("raptrix.features.node_breaker"),
             Some(&"true".to_string())
         );
-        assert_eq!(
-            metadata.get("raptrix.features.contingencies_stub"),
-            Some(&"true".to_string())
-        );
+        assert_eq!(metadata.get("raptrix.features.contingencies_stub"), None);
         assert_eq!(
             metadata.get("raptrix.features.dynamics_stub"),
             Some(&"true".to_string())
@@ -3267,6 +3293,29 @@ mod tests {
         assert!(
             branch_name.contains("230 kV"),
             "expected BaseVoltage-aware branch fallback name, got '{branch_name}'"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn write_complete_rpf_sets_contingencies_stub_flag_when_only_stub_rows_exist() -> Result<()> {
+        let tmp_dir = std::env::temp_dir().join("raptrix_rpf_contingency_stub_tests");
+        fs::create_dir_all(&tmp_dir)?;
+
+        let eq_path = tmp_dir.join("contingency_stub_fixture_eq.xml");
+        fs::write(&eq_path, generate_eq_fixture_branch_count(1))?;
+
+        let output_path = tmp_dir.join("contingency_stub_fixture.rpf");
+        let eq_path_str = eq_path.to_string_lossy().into_owned();
+        let output_path_str = output_path.to_string_lossy().into_owned();
+
+        write_complete_rpf(&[&eq_path_str], &output_path_str)?;
+
+        let metadata = rpf_file_metadata(&output_path)?;
+        assert_eq!(
+            metadata.get("raptrix.features.contingencies_stub"),
+            Some(&"true".to_string())
         );
 
         Ok(())

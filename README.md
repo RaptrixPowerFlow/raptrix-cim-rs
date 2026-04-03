@@ -105,7 +105,7 @@ High-level pipeline:
 - Topological by default: solver-facing bus IDs are collapsed to TP TopologicalNode for interoperability with common power-flow toolchains.
 - Connectivity preserved optionally: `--connectivity-detail` keeps granular bus mapping and emits `connectivity_groups` so ML and detailed contingency workflows can reconstruct split-bus structure.
 - Optional node-breaker support: `--node-breaker` emits additive node-breaker detail tables for operational/viewer fidelity while default ingest stays strict core tables only for maximum zero-copy speed.
-- Split-bus contingency stub: a placeholder `split_bus` contingency element is emitted when TP groups indicate multiple connectivity nodes under one topological bus (full breaker-state parsing is intentionally deferred).
+- Contingency derivation: when switch/open-state data is available, contingency rows are derived from switch state payloads; split-bus `split_bus` placeholder elements are still emitted when TP groups indicate multi-node topological buses.
 - Benchmark note: on SmallGrid-scale datasets this merge substantially reduces bus count versus raw ConnectivityNode granularity and improves solve-stage matrix dimensions.
 
 Contribution guidance:

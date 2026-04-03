@@ -18,7 +18,10 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use clap::{ArgGroup, Parser, Subcommand};
 
-use raptrix_cim_rs::arrow_schema::BRANDING;
+use raptrix_cim_rs::arrow_schema::{
+    BRANDING, METADATA_KEY_FEATURE_CONTINGENCIES_STUB, METADATA_KEY_FEATURE_DYNAMICS_STUB,
+    METADATA_KEY_FEATURE_NODE_BREAKER,
+};
 use raptrix_cim_rs::rpf_writer::{
     BusResolutionMode, WriteOptions, rpf_file_metadata, summarize_rpf,
     write_complete_rpf_with_options,
@@ -196,21 +199,21 @@ fn run_view(args: ViewArgs) -> Result<()> {
 
     let mut enabled_features = Vec::new();
     if metadata
-        .get("raptrix.features.node_breaker")
+        .get(METADATA_KEY_FEATURE_NODE_BREAKER)
         .map(|value| value == "true")
         .unwrap_or(false)
     {
         enabled_features.push("node-breaker");
     }
     if metadata
-        .get("raptrix.features.contingencies_stub")
+        .get(METADATA_KEY_FEATURE_CONTINGENCIES_STUB)
         .map(|value| value == "true")
         .unwrap_or(false)
     {
         enabled_features.push("contingencies-stub");
     }
     if metadata
-        .get("raptrix.features.dynamics_stub")
+        .get(METADATA_KEY_FEATURE_DYNAMICS_STUB)
         .map(|value| value == "true")
         .unwrap_or(false)
     {
@@ -269,7 +272,7 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
             bus_resolution_mode: BusResolutionMode::ConnectivityDetail,
             emit_connectivity_groups: true,
             emit_node_breaker_detail: args.node_breaker,
-            contingencies_are_stub: true,
+            contingencies_are_stub: false,
             dynamics_are_stub: true,
             base_mva: args.base_mva,
             frequency_hz: args.frequency_hz,
@@ -282,7 +285,7 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
             bus_resolution_mode: BusResolutionMode::Topological,
             emit_connectivity_groups: false,
             emit_node_breaker_detail: args.node_breaker,
-            contingencies_are_stub: true,
+            contingencies_are_stub: false,
             dynamics_are_stub: true,
             base_mva: args.base_mva,
             frequency_hz: args.frequency_hz,

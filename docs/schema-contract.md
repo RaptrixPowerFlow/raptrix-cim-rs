@@ -453,6 +453,12 @@ payload encodes:
 These values are serialized in the existing `gen_id` slot as a compact string
 to preserve strict Locked contract: v0.6.0 field layout.
 
+Current writer behavior for contingencies is hybrid:
+
+- prefers switch-derived contingency rows when switch/open-state payloads are present
+- emits `split_bus` placeholder elements only when split-bus topology hints are present
+- emits `raptrix.features.contingencies_stub=true` only when placeholder contingency rows are present in the file
+
 ### 8) Optional node-breaker detail tables (opt-in only)
 
 Locked contract: v0.6.0 adds optional node-breaker detail tables (`node_breaker_detail`, `switch_detail`, and `connectivity_nodes`) for operational CGMES fidelity and viewer workflows while preserving the strict core solver path. These tables are emitted only when explicitly requested with `--node-breaker` and are advertised in `.rpf` file-level Arrow IPC metadata with `raptrix.features.node_breaker=true`, so default power-flow ingest remains core tables only and preserves zero-copy performance semantics end-to-end (memory-mapped Arrow IPC to Arrow arrays with no additional allocations or copies on the default path).
