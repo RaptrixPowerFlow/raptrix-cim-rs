@@ -27,8 +27,8 @@ use crate::schema::{
     BRANDING, METADATA_KEY_BRANDING, METADATA_KEY_FEATURE_CONTINGENCIES_STUB,
     METADATA_KEY_FEATURE_DYNAMICS_STUB, METADATA_KEY_FEATURE_NODE_BREAKER,
     METADATA_KEY_RPF_VERSION, METADATA_KEY_VERSION, SCHEMA_VERSION, TABLE_BRANCHES, TABLE_BUSES,
-    TABLE_GENERATORS, TABLE_LOADS, TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W,
-    all_table_schemas, node_breaker_table_schemas, schema_metadata, table_schema,
+    TABLE_GENERATORS, TABLE_LOADS, TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, all_table_schemas,
+    node_breaker_table_schemas, schema_metadata, table_schema,
 };
 
 /// Summary stats for a single logical table found in an `.rpf` file.
@@ -120,7 +120,7 @@ fn require_non_null_count_equals_len(
     Ok(())
 }
 
-/// Reads all known tables from an RPF v0.6.0 root Arrow IPC file.
+/// Reads all known tables from an RPF v0.7.0 root Arrow IPC file.
 pub fn read_rpf_tables(path: impl AsRef<Path>) -> Result<Vec<(String, RecordBatch)>> {
     let path = path.as_ref();
     let file = File::open(path)
@@ -428,14 +428,12 @@ pub fn validate_rpf_file(path: impl AsRef<Path>, options: &RootWriteOptions) -> 
     }
 
     let metadata = reader_schema.metadata();
-    let version = metadata
-        .get(METADATA_KEY_VERSION)
-        .with_context(|| {
-            format!(
-                "post-write contract violation: missing metadata key '{}'",
-                METADATA_KEY_VERSION
-            )
-        })?;
+    let version = metadata.get(METADATA_KEY_VERSION).with_context(|| {
+        format!(
+            "post-write contract violation: missing metadata key '{}'",
+            METADATA_KEY_VERSION
+        )
+    })?;
     if version != SCHEMA_VERSION {
         bail!(
             "post-write contract violation: raptrix.version expected '{}', found '{}'",

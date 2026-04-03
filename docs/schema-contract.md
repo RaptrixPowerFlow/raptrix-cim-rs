@@ -1,4 +1,4 @@
-# Schema Contract (Locked contract: v0.6.0)
+# Schema Contract (Locked contract: v0.7.0)
 
 ## Contract Policy
 
@@ -14,6 +14,13 @@
 - Additive changes (new optional columns, new optional tables, new optional metadata keys) require at least a MINOR bump.
 - PATCH bumps are reserved for non-structural fixes: bug fixes, metadata text fixes, and documentation clarifications without wire-shape changes.
 
+## 0.7 Nullability Guidance
+
+- The new 0.7 fields are important, but they are not universally recoverable from every accepted CIM dataset.
+- Writers should emit null for `nominal_kv`, `from_nominal_kv`, `to_nominal_kv`, `nominal_kv_h`, `nominal_kv_m`, `nominal_kv_l`, `equipment_kind`, and `equipment_id` when the source payload cannot support an honest value.
+- Writers should not fabricate these fields from lossy heuristics just to satisfy a non-null contract.
+- Solver-ready or production ingestion pipelines may enforce stricter local validation, for example rejecting files with unresolved nominal-kV fields on core network rows.
+
 ## File Metadata Keys
 
 Every `.rpf` file must include:
@@ -23,8 +30,8 @@ Every `.rpf` file must include:
 
 Current locked values:
 
-- `raptrix.version = v0.6.0`
-- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.6.0 - High-performance open profile by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.`
+- `raptrix.version = 0.7.0`
+- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.7.0 - High-performance open profile by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.`
 
 Optional file-level metadata keys:
 
@@ -160,6 +167,7 @@ This section is normative for external parser authors.
 - `v_max`: Float64, required
 - `p_min_agg`: Float64, required
 - `p_max_agg`: Float64, required
+- `nominal_kv`: Float64, nullable
 
 ### branches
 
@@ -177,6 +185,8 @@ This section is normative for external parser authors.
 - `rate_c`: Float64, required
 - `status`: Boolean, required
 - `name`: Dictionary<UInt32, Utf8>, nullable
+- `from_nominal_kv`: Float64, nullable
+- `to_nominal_kv`: Float64, nullable
 
 ### generators
 
@@ -242,6 +252,8 @@ This section is normative for external parser authors.
 - `rate_c`: Float64, required
 - `status`: Boolean, required
 - `name`: Dictionary<UInt32, Utf8>, nullable
+- `from_nominal_kv`: Float64, nullable
+- `to_nominal_kv`: Float64, nullable
 
 ### transformers_3w
 
@@ -266,6 +278,9 @@ This section is normative for external parser authors.
 - `rate_c`: Float64, required
 - `status`: Boolean, required
 - `name`: Dictionary<UInt32, Utf8>, nullable
+- `nominal_kv_h`: Float64, nullable
+- `nominal_kv_m`: Float64, nullable
+- `nominal_kv_l`: Float64, nullable
 
 ### areas
 
@@ -297,6 +312,8 @@ This section is normative for external parser authors.
 - `load_id`: Dictionary<Int32, Utf8>, nullable
 - `amount_mw`: Float64, nullable
 - `status_change`: Boolean, required
+- `equipment_kind`: Dictionary<Int32, Utf8>, nullable
+- `equipment_id`: Dictionary<Int32, Utf8>, nullable
 
 ### interfaces
 
@@ -346,7 +363,7 @@ This section is normative for external parser authors.
 - `topological_node_mrid`: Dictionary<Int32, Utf8>, nullable
 - `bus_id`: Int32, nullable
 
-## Blocker Fixes Incorporated in Locked contract: v0.6.0
+## Blocker Fixes Incorporated in Locked contract: v0.7.0
 
 ### 1) Expanded transformer detail
 
@@ -434,7 +451,7 @@ When connectivity-detail mode is requested, writers may emit
 - `connectivity_count` (Int32)
 
 This table preserves switchyard-level split-bus structure for ML and detailed
-contingency analysis without changing core Locked contract: v0.6.0 table schemas.
+contingency analysis without changing core Locked contract: v0.7.0 table schemas.
 
 ### 7) `split_bus` contingency stub element
 
@@ -450,8 +467,9 @@ payload encodes:
 - `connectivity_node_b`
 - `breaker_mrid` (`stub` placeholder)
 
-These values are serialized in the existing `gen_id` slot as a compact string
-to preserve strict Locked contract: v0.6.0 field layout.
+These values are serialized in the additive `equipment_kind` and `equipment_id`
+fields to preserve strict Locked contract: v0.7.0 field layout while giving
+switch and split-bus workflows a stable generic equipment identifier.
 
 Current writer behavior for contingencies is hybrid:
 
@@ -461,14 +479,14 @@ Current writer behavior for contingencies is hybrid:
 
 ### 8) Optional node-breaker detail tables (opt-in only)
 
-Locked contract: v0.6.0 adds optional node-breaker detail tables (`node_breaker_detail`, `switch_detail`, and `connectivity_nodes`) for operational CGMES fidelity and viewer workflows while preserving the strict core solver path. These tables are emitted only when explicitly requested with `--node-breaker` and are advertised in `.rpf` file-level Arrow IPC metadata with `raptrix.features.node_breaker=true`, so default power-flow ingest remains core tables only and preserves zero-copy performance semantics end-to-end (memory-mapped Arrow IPC to Arrow arrays with no additional allocations or copies on the default path).
+Locked contract: v0.7.0 adds optional node-breaker detail tables (`node_breaker_detail`, `switch_detail`, and `connectivity_nodes`) for operational CGMES fidelity and viewer workflows while preserving the strict core solver path. These tables are emitted only when explicitly requested with `--node-breaker` and are advertised in `.rpf` file-level Arrow IPC metadata with `raptrix.features.node_breaker=true`, so default power-flow ingest remains core tables only and preserves zero-copy performance semantics end-to-end (memory-mapped Arrow IPC to Arrow arrays with no additional allocations or copies on the default path).
 
 ## Parser Author Checklist
 
 An independent parser is considered compliant if it:
 
 1. Opens `.rpf` as Arrow IPC File format.
-2. Verifies `raptrix.version = v0.6.0`.
+2. Verifies `raptrix.version = 0.7.0`.
 3. Verifies required root columns appear in canonical order.
 4. Uses `rpf.rows.<table_name>` metadata to trim padded null tails.
 5. Treats the 15 required root columns as mandatory even when their logical row counts are zero.

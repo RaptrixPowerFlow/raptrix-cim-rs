@@ -25,7 +25,19 @@
 - Add deterministic benchmark command for parse and map phases.
 - Harden dual-profile ingest compatibility for both CGMES 2.4.x and 3.x naming/layout variants.
 
-## 0.7 Mid Term
+## 0.7 Schema Tightening
+
+- Promote nominal base-voltage fields into core bus, branch, and transformer tables.
+- Add generic contingency equipment identity for switch and split-bus workflows.
+- Keep the 0.7 change additive so downstream readers can migrate as a minor contract update.
+
+## 0.8 Dynamics Roadmap
+
+- Improve dynamics coverage beyond first-pass generator-derived payloads.
+- Wait for integration feedback from `raptrix-core` and Smart Wires device workflows before locking new dynamics fields.
+- Prefer correctness of the interchange contract over early backend expansion.
+
+## Later Work
 
 - Multi-profile merge support (EQ + TP + SV + SSH).
 - Validation layer for required links and data quality checks.
