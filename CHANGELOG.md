@@ -20,6 +20,8 @@ Copyright (c) 2026 Musto Technologies LLC
 - Fallback voltage-name inference now supports broader grid voltage ranges via numeric token extraction instead of a fixed regional list.
 - Added BaseVoltage extraction and equipment/BaseVoltage joins so fallback naming can use profile-derived nominal kV when available.
 - Added explicit file-level metadata flags for provisional table payloads: `raptrix.features.contingencies_stub` and `raptrix.features.dynamics_stub`.
+- Contingencies now use a hybrid path: derive from switch/open-state payloads when available, with stub fallback only when derived rows are unavailable.
+- `raptrix.features.contingencies_stub` is now emitted conditionally only when placeholder contingency rows are present.
 - Aligned `raptrix.branding` constant text with the documented schema contract value.
 - Consolidated metadata key usage through shared schema constants to reduce key drift across crates.
 
