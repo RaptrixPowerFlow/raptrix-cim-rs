@@ -337,14 +337,22 @@ fn shortened_mrid(mrid: &str) -> &str {
     &mrid[..len]
 }
 
-fn bus_fallback_name(bus_key: &str) -> String {
-    // CGMES profiles here do not carry BaseVoltage joins yet, so we keep this
-    // deterministic placeholder until base-voltage ingestion is added.
-    format!("Bus unknownkV {}", shortened_mrid(bus_key))
+fn format_kv_label(nominal_kv: f64) -> String {
+    if (nominal_kv.fract()).abs() < f64::EPSILON {
+        format!("{}", nominal_kv as i32)
+    } else {
+        format!("{nominal_kv:.1}")
+    }
 }
 
-fn equipment_fallback_name(prefix: &str, mrid: &str) -> String {
-    format!("{prefix} unknownkV {}", shortened_mrid(mrid))
+fn bus_fallback_name(bus_key: &str, voltage_label: Option<&str>) -> String {
+    let voltage = voltage_label.unwrap_or("unknown");
+    format!("Bus {voltage}kV {}", shortened_mrid(bus_key))
+}
+
+fn equipment_fallback_name(prefix: &str, mrid: &str, voltage_label: Option<&str>) -> String {
+    let voltage = voltage_label.unwrap_or("unknown");
+    format!("{prefix} {voltage}kV {}", shortened_mrid(mrid))
 }
 
 fn branch_constructed_name(
@@ -697,6 +705,8 @@ fn parse_eq_components_for_path(
     Vec<crate::models::ConnectivityNodeGroup<'static>>,
     Vec<parser::SwitchSpec>,
     Vec<parser::ConnectivityNodeSpec>,
+    Vec<parser::BaseVoltageSpec>,
+    Vec<parser::EquipmentBaseVoltageRef>,
 )> {
     let bytes = std::fs::read(path)
         .with_context(|| format!("failed to open CGMES input file at {path}"))?;
@@ -762,6 +772,17 @@ fn parse_eq_components_for_path(
             format!("failed to extract ConnectivityNode elements from CGMES input file at {path}")
         })?;
 
+    let base_voltages = parser::base_voltage_specs_from_reader(Cursor::new(&bytes)).with_context(|| {
+        format!("failed to extract BaseVoltage elements from CGMES input file at {path}")
+    })?;
+
+    let equipment_base_voltage_refs =
+        parser::equipment_base_voltage_refs_from_reader(Cursor::new(&bytes)).with_context(|| {
+            format!(
+                "failed to extract ConductingEquipment.BaseVoltage links from CGMES input file at {path}"
+            )
+        })?;
+
     Ok((
         lines,
         machines,
@@ -777,6 +798,8 @@ fn parse_eq_components_for_path(
         connectivity_groups,
         switches,
         connectivity_nodes,
+        base_voltages,
+        equipment_base_voltage_refs,
     ))
 }
 
@@ -824,6 +847,8 @@ fn parse_eq_topology_rows(
     let mut connectivity_groups = Vec::new();
     let mut switches = Vec::new();
     let mut connectivity_nodes = Vec::new();
+    let mut base_voltages = Vec::new();
+    let mut equipment_base_voltage_refs = Vec::new();
 
     for path in cgmes_paths {
         let (
@@ -841,6 +866,8 @@ fn parse_eq_topology_rows(
             mut parsed_connectivity_groups,
             mut parsed_switches,
             mut parsed_connectivity_nodes,
+            mut parsed_base_voltages,
+            mut parsed_equipment_base_voltage_refs,
         ) = parse_eq_components_for_path(path)?;
         if !parsed_lines.is_empty() {
             lines.append(&mut parsed_lines);
@@ -884,6 +911,12 @@ fn parse_eq_topology_rows(
         if !parsed_connectivity_nodes.is_empty() {
             connectivity_nodes.append(&mut parsed_connectivity_nodes);
         }
+        if !parsed_base_voltages.is_empty() {
+            base_voltages.append(&mut parsed_base_voltages);
+        }
+        if !parsed_equipment_base_voltage_refs.is_empty() {
+            equipment_base_voltage_refs.append(&mut parsed_equipment_base_voltage_refs);
+        }
     }
 
     if lines.is_empty() {
@@ -903,6 +936,28 @@ fn parse_eq_topology_rows(
 
     let use_topological =
         !conn_to_topo.is_empty() && bus_resolution_mode == BusResolutionMode::Topological;
+
+    let mut base_voltage_by_mrid: HashMap<String, f64> = HashMap::new();
+    for entry in base_voltages {
+        base_voltage_by_mrid
+            .entry(entry.base_voltage_mrid)
+            .or_insert(entry.nominal_kv);
+    }
+
+    let mut equipment_base_voltage_by_mrid: HashMap<String, String> = HashMap::new();
+    for entry in equipment_base_voltage_refs {
+        equipment_base_voltage_by_mrid
+            .entry(entry.equipment_mrid)
+            .or_insert(entry.base_voltage_mrid);
+    }
+
+    let mut equipment_voltage_label_by_mrid: HashMap<String, String> = HashMap::new();
+    for (equipment_mrid, base_voltage_mrid) in &equipment_base_voltage_by_mrid {
+        if let Some(nominal_kv) = base_voltage_by_mrid.get(base_voltage_mrid) {
+            equipment_voltage_label_by_mrid
+                .insert(equipment_mrid.clone(), format_kv_label(*nominal_kv));
+        }
+    }
 
     let mut sorted_bus_keys: Vec<&str> = terminals
         .iter()
@@ -925,6 +980,35 @@ fn parse_eq_topology_rows(
     sorted_bus_keys.sort_unstable();
     sorted_bus_keys.dedup();
 
+    let mut bus_kv_candidates: HashMap<&str, Vec<f64>> = HashMap::new();
+    for terminal in &terminals {
+        let Some(base_voltage_mrid) = equipment_base_voltage_by_mrid.get(&terminal.line_mrid) else {
+            continue;
+        };
+        let Some(nominal_kv) = base_voltage_by_mrid.get(base_voltage_mrid).copied() else {
+            continue;
+        };
+
+        let bus_key = if use_topological {
+            match conn_to_topo.get(terminal.connectivity_node_mrid.as_str()).copied() {
+                Some(value) => value,
+                None => continue,
+            }
+        } else {
+            terminal.connectivity_node_mrid.as_str()
+        };
+
+        bus_kv_candidates.entry(bus_key).or_default().push(nominal_kv);
+    }
+
+    let mut bus_voltage_label_by_key: HashMap<&str, String> = HashMap::new();
+    for (bus_key, kvs) in bus_kv_candidates {
+        let Some(best) = kvs.into_iter().max_by(|left, right| left.total_cmp(right)) else {
+            continue;
+        };
+        bus_voltage_label_by_key.insert(bus_key, format_kv_label(best));
+    }
+
     let mut bus_key_to_bus_id: HashMap<&str, i32> = HashMap::with_capacity(sorted_bus_keys.len());
     for (idx, bus_key) in sorted_bus_keys.iter().enumerate() {
         bus_key_to_bus_id.insert(*bus_key, (idx as i32) + 1);
@@ -944,9 +1028,17 @@ fn parse_eq_topology_rows(
                 .get(*bus_key)
                 .copied()
                 .map(str::to_owned)
-                .unwrap_or_else(|| bus_fallback_name(bus_key))
+                .unwrap_or_else(|| {
+                    bus_fallback_name(
+                        bus_key,
+                        bus_voltage_label_by_key.get(*bus_key).map(String::as_str),
+                    )
+                })
         } else {
-            bus_fallback_name(bus_key)
+            bus_fallback_name(
+                bus_key,
+                bus_voltage_label_by_key.get(*bus_key).map(String::as_str),
+            )
         };
         bus_name_by_key.insert(*bus_key, resolved);
     }
@@ -959,7 +1051,12 @@ fn parse_eq_topology_rows(
                 bus_name_by_key
                     .get(*bus_key)
                     .cloned()
-                    .unwrap_or_else(|| bus_fallback_name(bus_key)),
+                    .unwrap_or_else(|| {
+                        bus_fallback_name(
+                            bus_key,
+                            bus_voltage_label_by_key.get(*bus_key).map(String::as_str),
+                        )
+                    }),
             ),
             bus_type: 1,
             p_sched: 0.0,
@@ -1050,7 +1147,10 @@ fn parse_eq_topology_rows(
         let name = if let Some(existing) = line.base.name.as_deref().and_then(non_empty_name) {
             existing.to_owned()
         } else {
-            let kv = voltage_label_from_name(line.base.name.as_deref());
+            let kv = equipment_voltage_label_by_mrid
+                .get(line_mrid)
+                .cloned()
+                .unwrap_or_else(|| voltage_label_from_name(line.base.name.as_deref()));
             branch_constructed_name(&kv, from_bus_name, to_bus_name, ckt)
         };
 
@@ -1145,7 +1245,13 @@ fn parse_eq_topology_rows(
                 .and_then(non_empty_name)
                 .map(|value| Cow::Owned(value.to_owned()))
                 .unwrap_or_else(|| {
-                    Cow::Owned(equipment_fallback_name("Gen", machine_id_text.as_ref()))
+                    Cow::Owned(equipment_fallback_name(
+                        "Gen",
+                        machine_id_text.as_ref(),
+                        equipment_voltage_label_by_mrid
+                            .get(machine_id_text.as_str())
+                            .map(String::as_str),
+                    ))
                 }),
             p_sched_mw: machine.p_sched_mw.unwrap_or(0.0),
             p_min_mw: machine.p_min_mw.unwrap_or(0.0),
@@ -1225,7 +1331,13 @@ fn parse_eq_topology_rows(
                 .and_then(non_empty_name)
                 .map(|value| Cow::Owned(value.to_owned()))
                 .unwrap_or_else(|| {
-                    Cow::Owned(equipment_fallback_name("Load", load_id_text.as_ref()))
+                    Cow::Owned(equipment_fallback_name(
+                        "Load",
+                        load_id_text.as_ref(),
+                        equipment_voltage_label_by_mrid
+                            .get(load_id_text.as_str())
+                            .map(String::as_str),
+                    ))
                 }),
             status: load.status.unwrap_or(true),
             p_mw: load.p_mw.unwrap_or(0.0),
@@ -1351,6 +1463,9 @@ fn parse_eq_topology_rows(
                         Cow::Owned(equipment_fallback_name(
                             "Xfmr2W",
                             transformer.base.m_rid.as_ref(),
+                            equipment_voltage_label_by_mrid
+                                .get(transformer.base.m_rid.as_ref())
+                                .map(String::as_str),
                         ))
                     }),
                 r: winding1_r + winding2_r,
@@ -1410,6 +1525,9 @@ fn parse_eq_topology_rows(
                         Cow::Owned(equipment_fallback_name(
                             "Xfmr3W",
                             transformer.base.m_rid.as_ref(),
+                            equipment_voltage_label_by_mrid
+                                .get(transformer.base.m_rid.as_ref())
+                                .map(String::as_str),
                         ))
                     }),
                 r_hm: end_h.and_then(|end| end.r).unwrap_or(0.0),
@@ -2654,8 +2772,10 @@ mod tests {
 
     use anyhow::{Context, Result};
     use arrow::array::{
-        Array, Float64Array, Int32Array, ListArray, MapArray, StringArray, StructArray,
+        Array, DictionaryArray, Float64Array, Int32Array, ListArray, MapArray, StringArray,
+        StructArray,
     };
+    use arrow::datatypes::{Int32Type, UInt32Type};
     use arrow::datatypes::Schema;
 
     use crate::arrow_schema::{
@@ -2709,6 +2829,17 @@ mod tests {
 <cim:Breaker rdf:ID="BR1"><IdentifiedObject.name>Breaker 1</IdentifiedObject.name><Switch.open>false</Switch.open><Switch.normalOpen>false</Switch.normalOpen><Switch.retained>true</Switch.retained></cim:Breaker>
 <cim:Terminal rdf:ID="BT1"><Terminal.ConductingEquipment rdf:resource="#BR1"/><Terminal.ConnectivityNode rdf:resource="#N1"/><ACDCTerminal.sequenceNumber>1</ACDCTerminal.sequenceNumber></cim:Terminal>
 <cim:Terminal rdf:ID="BT2"><Terminal.ConductingEquipment rdf:resource="#BR1"/><Terminal.ConnectivityNode rdf:resource="#N2"/><ACDCTerminal.sequenceNumber>2</ACDCTerminal.sequenceNumber></cim:Terminal>
+</rdf:RDF>"##,
+        )
+    }
+
+    fn generate_eq_fixture_with_base_voltage_fallbacks() -> String {
+        String::from(
+            r##"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#">
+<cim:BaseVoltage rdf:ID="BV230"><BaseVoltage.nominalVoltage>230</BaseVoltage.nominalVoltage></cim:BaseVoltage>
+<cim:ACLineSegment rdf:ID="L1"><ConductingEquipment.BaseVoltage rdf:resource="#BV230"/><ACLineSegment.r>0.01</ACLineSegment.r><ACLineSegment.x>0.05</ACLineSegment.x></cim:ACLineSegment>
+<cim:Terminal rdf:ID="T1"><Terminal.ConductingEquipment rdf:resource="#L1"/><Terminal.ConnectivityNode rdf:resource="#N1"/><ACDCTerminal.sequenceNumber>1</ACDCTerminal.sequenceNumber></cim:Terminal>
+<cim:Terminal rdf:ID="T2"><Terminal.ConductingEquipment rdf:resource="#L1"/><Terminal.ConnectivityNode rdf:resource="#N2"/><ACDCTerminal.sequenceNumber>2</ACDCTerminal.sequenceNumber></cim:Terminal>
 </rdf:RDF>"##,
         )
     }
@@ -3053,6 +3184,73 @@ mod tests {
         assert_eq!(
             metadata.get("raptrix.version"),
             Some(&SCHEMA_VERSION.to_string())
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn write_complete_rpf_uses_base_voltage_for_fallback_names() -> Result<()> {
+        let tmp_dir = std::env::temp_dir().join("raptrix_rpf_base_voltage_tests");
+        fs::create_dir_all(&tmp_dir)?;
+
+        let eq_path = tmp_dir.join("base_voltage_fixture_eq.xml");
+        fs::write(&eq_path, generate_eq_fixture_with_base_voltage_fallbacks())?;
+
+        let output_path = tmp_dir.join("base_voltage_fixture.rpf");
+        let eq_path_str = eq_path.to_string_lossy().into_owned();
+        let output_path_str = output_path.to_string_lossy().into_owned();
+
+        write_complete_rpf(&[&eq_path_str], &output_path_str)?;
+
+        let tables = read_rpf_tables(&output_path)?;
+        let buses_batch = tables
+            .iter()
+            .find(|(name, _)| name == "buses")
+            .map(|(_, batch)| batch)
+            .context("expected buses table")?;
+        let branches_batch = tables
+            .iter()
+            .find(|(name, _)| name == "branches")
+            .map(|(_, batch)| batch)
+            .context("expected branches table")?;
+
+        let bus_names = buses_batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<DictionaryArray<Int32Type>>()
+            .context("buses.name should be dictionary-encoded UTF8")?;
+        let bus_values = bus_names
+            .values()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .context("buses.name dictionary values should be Utf8")?;
+        for idx in 0..bus_names.len() {
+            let key = bus_names.key(idx).context("missing bus name dictionary key")? as usize;
+            let name = bus_values.value(key);
+            assert!(
+                name.contains("230kV"),
+                "expected BaseVoltage-aware bus fallback name, got '{name}'"
+            );
+        }
+
+        let branch_names = branches_batch
+            .column(13)
+            .as_any()
+            .downcast_ref::<DictionaryArray<UInt32Type>>()
+            .context("branches.name should be dictionary-encoded UTF8")?;
+        let branch_values = branch_names
+            .values()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .context("branches.name dictionary values should be Utf8")?;
+        let branch_key = branch_names
+            .key(0)
+            .context("missing branch name dictionary key")? as usize;
+        let branch_name = branch_values.value(branch_key);
+        assert!(
+            branch_name.contains("230 kV"),
+            "expected BaseVoltage-aware branch fallback name, got '{branch_name}'"
         );
 
         Ok(())

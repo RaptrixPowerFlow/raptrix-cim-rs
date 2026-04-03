@@ -66,6 +66,7 @@ That split keeps the locked RPF contract in one reusable place so future convert
 - Current schema contract: v0.6.0
 - Canonical source: raptrix-cim-arrow/src/schema.rs
 - Contract policy and semantics: docs/schema-contract.md
+- Cross-repo propagation workflow: docs/release-sync-workflow.md
 - Target ingest compatibility: CGMES 2.4.x and CGMES 3.x profile sets (auto-detect and explicit mode supported)
 
 ### Versioning Policy

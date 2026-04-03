@@ -207,6 +207,107 @@ pub struct ConnectivityNodeSpec {
     pub topological_node_mrid: Option<String>,
 }
 
+/// Parsed BaseVoltage payload keyed by mRID.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BaseVoltageSpec {
+    pub base_voltage_mrid: String,
+    pub nominal_kv: f64,
+}
+
+/// Parsed association from equipment mRID to BaseVoltage mRID.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EquipmentBaseVoltageRef {
+    pub equipment_mrid: String,
+    pub base_voltage_mrid: String,
+}
+
+/// Parses all `<cim:BaseVoltage>` elements from CGMES RDF/XML.
+pub fn base_voltage_specs_from_reader<R: Read>(mut reader: R) -> Result<Vec<BaseVoltageSpec>> {
+    let mut xml = String::new();
+    reader.read_to_string(&mut xml)?;
+
+    if !contains_exact_element_tag(&xml, "cim:BaseVoltage") {
+        return Ok(Vec::new());
+    }
+
+    let fragments = extract_elements(&xml, "cim:BaseVoltage")?;
+    let mut rows = Vec::with_capacity(fragments.len());
+    for fragment in fragments {
+        let raw: RawBaseVoltage = from_str(fragment)?;
+        let Some(base_voltage_mrid) = raw.resolved_mrid() else {
+            continue;
+        };
+        let Some(nominal_kv) = raw.nominal_voltage else {
+            continue;
+        };
+        rows.push(BaseVoltageSpec {
+            base_voltage_mrid,
+            nominal_kv,
+        });
+    }
+
+    rows.sort_unstable_by(|left, right| {
+        left.base_voltage_mrid
+            .cmp(&right.base_voltage_mrid)
+            .then_with(|| left.nominal_kv.total_cmp(&right.nominal_kv))
+    });
+    rows.dedup_by(|left, right| left.base_voltage_mrid == right.base_voltage_mrid);
+
+    Ok(rows)
+}
+
+/// Parses equipment to BaseVoltage references from common conducting equipment tags.
+pub fn equipment_base_voltage_refs_from_reader<R: Read>(
+    mut reader: R,
+) -> Result<Vec<EquipmentBaseVoltageRef>> {
+    let mut xml = String::new();
+    reader.read_to_string(&mut xml)?;
+
+    let mut refs = Vec::new();
+    for tag in [
+        "cim:ACLineSegment",
+        "cim:SynchronousMachine",
+        "cim:EnergyConsumer",
+        "cim:ConformLoad",
+        "cim:NonConformLoad",
+        "cim:PowerTransformer",
+    ] {
+        if !contains_exact_element_tag(&xml, tag) {
+            continue;
+        }
+
+        let fragments = extract_elements(&xml, tag)?;
+        for fragment in fragments {
+            let raw: RawEquipmentBaseVoltageRef = from_str(fragment)?;
+            let Some(equipment_mrid) = raw.resolved_mrid() else {
+                continue;
+            };
+            let Some(base_voltage) = raw
+                .conducting_equipment_base_voltage
+                .or(raw.equipment_base_voltage)
+            else {
+                continue;
+            };
+
+            refs.push(EquipmentBaseVoltageRef {
+                equipment_mrid,
+                base_voltage_mrid: normalize_cgmes_ref(&base_voltage.resource),
+            });
+        }
+    }
+
+    refs.sort_unstable_by(|left, right| {
+        left.equipment_mrid
+            .cmp(&right.equipment_mrid)
+            .then_with(|| left.base_voltage_mrid.cmp(&right.base_voltage_mrid))
+    });
+    refs.dedup_by(|left, right| {
+        left.equipment_mrid == right.equipment_mrid
+            && left.base_voltage_mrid == right.base_voltage_mrid
+    });
+    Ok(refs)
+}
+
 /// Parsed PowerTransformer with attached winding-end parameters.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PowerTransformer<'a> {
@@ -898,6 +999,28 @@ struct RawLinearShuntCompensator {
 }
 
 #[derive(Debug, Deserialize)]
+struct RawBaseVoltage {
+    #[serde(rename = "@ID", default)]
+    m_rid: Option<String>,
+    #[serde(rename = "@about", default)]
+    about: Option<String>,
+    #[serde(rename = "BaseVoltage.nominalVoltage", default)]
+    nominal_voltage: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawEquipmentBaseVoltageRef {
+    #[serde(rename = "@ID", default)]
+    m_rid: Option<String>,
+    #[serde(rename = "@about", default)]
+    about: Option<String>,
+    #[serde(rename = "ConductingEquipment.BaseVoltage", default)]
+    conducting_equipment_base_voltage: Option<RdfResourceRef>,
+    #[serde(rename = "Equipment.BaseVoltage", default)]
+    equipment_base_voltage: Option<RdfResourceRef>,
+}
+
+#[derive(Debug, Deserialize)]
 struct RawPowerTransformer<'a> {
     #[serde(rename = "@ID", default, borrow)]
     m_rid: Option<Cow<'a, str>>,
@@ -990,6 +1113,30 @@ impl RawPowerTransformerEnd {
 }
 
 impl RawLinearShuntCompensator {
+    fn resolved_mrid(&self) -> Option<String> {
+        if let Some(mrid) = &self.m_rid {
+            return Some(normalize_cgmes_ref(mrid));
+        }
+        if let Some(about) = &self.about {
+            return Some(normalize_cgmes_ref(about));
+        }
+        None
+    }
+}
+
+impl RawBaseVoltage {
+    fn resolved_mrid(&self) -> Option<String> {
+        if let Some(mrid) = &self.m_rid {
+            return Some(normalize_cgmes_ref(mrid));
+        }
+        if let Some(about) = &self.about {
+            return Some(normalize_cgmes_ref(about));
+        }
+        None
+    }
+}
+
+impl RawEquipmentBaseVoltageRef {
     fn resolved_mrid(&self) -> Option<String> {
         if let Some(mrid) = &self.m_rid {
             return Some(normalize_cgmes_ref(mrid));
@@ -1255,4 +1402,48 @@ mod tests {
             iterations as f64 / load_elapsed.as_secs_f64()
         );
     }
+
+        #[test]
+        fn parse_base_voltage_specs() {
+                let xml = r##"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#">
+    <cim:BaseVoltage rdf:ID="BV_230">
+        <BaseVoltage.nominalVoltage>230.0</BaseVoltage.nominalVoltage>
+    </cim:BaseVoltage>
+    <cim:BaseVoltage rdf:about="#BV_115">
+        <BaseVoltage.nominalVoltage>115</BaseVoltage.nominalVoltage>
+    </cim:BaseVoltage>
+</rdf:RDF>"##;
+
+                let rows = base_voltage_specs_from_reader(xml.as_bytes()).expect("parse should succeed");
+                assert_eq!(rows.len(), 2);
+                assert_eq!(rows[0].base_voltage_mrid, "BV_115");
+                assert_eq!(rows[0].nominal_kv, 115.0);
+                assert_eq!(rows[1].base_voltage_mrid, "BV_230");
+                assert_eq!(rows[1].nominal_kv, 230.0);
+        }
+
+        #[test]
+        fn parse_equipment_base_voltage_refs() {
+                let xml = r##"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#">
+    <cim:ACLineSegment rdf:ID="Line1">
+        <ConductingEquipment.BaseVoltage rdf:resource="#BV_230"/>
+    </cim:ACLineSegment>
+    <cim:EnergyConsumer rdf:ID="Load1">
+        <ConductingEquipment.BaseVoltage rdf:resource="#BV_115"/>
+    </cim:EnergyConsumer>
+    <cim:PowerTransformer rdf:about="#Tx1">
+        <Equipment.BaseVoltage rdf:resource="#BV_345"/>
+    </cim:PowerTransformer>
+</rdf:RDF>"##;
+
+                let refs = equipment_base_voltage_refs_from_reader(xml.as_bytes())
+                        .expect("parse should succeed");
+                assert_eq!(refs.len(), 3);
+                assert_eq!(refs[0].equipment_mrid, "Line1");
+                assert_eq!(refs[0].base_voltage_mrid, "BV_230");
+                assert_eq!(refs[1].equipment_mrid, "Load1");
+                assert_eq!(refs[1].base_voltage_mrid, "BV_115");
+                assert_eq!(refs[2].equipment_mrid, "Tx1");
+                assert_eq!(refs[2].base_voltage_mrid, "BV_345");
+        }
 }
