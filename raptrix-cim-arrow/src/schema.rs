@@ -19,6 +19,19 @@ pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.6.0 - H
 /// Schema version tag embedded as file-level metadata.
 pub const SCHEMA_VERSION: &str = "0.6.0";
 
+/// File-level metadata key for branding string.
+pub const METADATA_KEY_BRANDING: &str = "raptrix.branding";
+/// File-level metadata key for schema version.
+pub const METADATA_KEY_VERSION: &str = "raptrix.version";
+/// File-level metadata key for RPF version alias.
+pub const METADATA_KEY_RPF_VERSION: &str = "rpf_version";
+/// Optional metadata key indicating node-breaker optional tables are emitted.
+pub const METADATA_KEY_FEATURE_NODE_BREAKER: &str = "raptrix.features.node_breaker";
+/// Optional metadata key indicating contingencies table uses placeholder rows.
+pub const METADATA_KEY_FEATURE_CONTINGENCIES_STUB: &str = "raptrix.features.contingencies_stub";
+/// Optional metadata key indicating dynamics_models table uses placeholder rows.
+pub const METADATA_KEY_FEATURE_DYNAMICS_STUB: &str = "raptrix.features.dynamics_stub";
+
 /// Canonical metadata table name.
 pub const TABLE_METADATA: &str = "metadata";
 /// Canonical buses table name.
@@ -132,9 +145,9 @@ pub fn solved_results_contingency_id_field() -> Field {
 /// File-level metadata applied to each table schema.
 pub fn schema_metadata() -> HashMap<String, String> {
     let mut metadata = HashMap::new();
-    metadata.insert("raptrix.branding".to_string(), BRANDING.to_string());
-    metadata.insert("raptrix.version".to_string(), SCHEMA_VERSION.to_string());
-    metadata.insert("rpf_version".to_string(), SCHEMA_VERSION.to_string());
+    metadata.insert(METADATA_KEY_BRANDING.to_string(), BRANDING.to_string());
+    metadata.insert(METADATA_KEY_VERSION.to_string(), SCHEMA_VERSION.to_string());
+    metadata.insert(METADATA_KEY_RPF_VERSION.to_string(), SCHEMA_VERSION.to_string());
     metadata
 }
 

@@ -22,8 +22,8 @@ except ImportError:  # pragma: no cover - handled by skip branch below
     ipc = None
 
 
-BRANDING = "Raptrix CIM-Arrow — High-performance open CIM profile by Musto Technologies LLC\nCopyright (c) 2026 Musto Technologies LLC"
-SCHEMA_VERSION = "0.5.2"
+BRANDING = "Raptrix CIM-Arrow / PowerFlow Interchange v0.6.0 - High-performance open profile by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC."
+SCHEMA_VERSION = "0.6.0"
 CANONICAL_TABLE_ORDER = [
     "metadata",
     "buses",
@@ -49,7 +49,7 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 def _read_rpf_tables(path: Path) -> list[tuple[str, pa.RecordBatch]]:
-    """Read canonical per-table batches from the single-root v0.5.2 RPF file."""
+    """Read canonical per-table batches from the single-root v0.6.0 RPF file."""
     reader = ipc.RecordBatchFileReader(pa.memory_map(str(path), "r"))
     file_metadata = reader.schema.metadata or {}
     tables: list[tuple[str, pa.RecordBatch]] = []

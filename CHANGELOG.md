@@ -18,11 +18,15 @@ Copyright (c) 2026 Musto Technologies LLC
 - Writer metadata defaults are now configurable through CLI flags (`--base-mva`, `--frequency-hz`, `--study-name`, `--timestamp-utc`).
 - Metadata timestamp now defaults to current UTC instead of a fixed epoch placeholder.
 - Fallback voltage-name inference now supports broader grid voltage ranges via numeric token extraction instead of a fixed regional list.
+- Added BaseVoltage extraction and equipment/BaseVoltage joins so fallback naming can use profile-derived nominal kV when available.
+- Added explicit file-level metadata flags for provisional table payloads: `raptrix.features.contingencies_stub` and `raptrix.features.dynamics_stub`.
 - Aligned `raptrix.branding` constant text with the documented schema contract value.
+- Consolidated metadata key usage through shared schema constants to reduce key drift across crates.
 
 ### Documentation
 
 - Added explicit compatibility/versioning rules for forward compatibility and MAJOR/MINOR/PATCH bump criteria in `docs/schema-contract.md`.
+- Added cross-repo release synchronization workflow (`docs/release-sync-workflow.md`) and linked it from README.
 
 ## [Schema Contract 0.6.0] - 2026-03-22
 
