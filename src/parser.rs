@@ -43,13 +43,13 @@
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
-use std::sync::OnceLock;
 use std::io::Read;
+use std::sync::OnceLock;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use quick_xml::de::from_str;
-use serde::de::DeserializeOwned;
 use serde::Deserialize;
+use serde::de::DeserializeOwned;
 
 use crate::models::base::BaseAttributes;
 use crate::models::{
@@ -64,7 +64,12 @@ fn should_log_rdf_about_fallback() -> bool {
     static SHOULD_LOG: OnceLock<bool> = OnceLock::new();
     *SHOULD_LOG.get_or_init(|| {
         std::env::var("RAPTRIX_LOG_RDF_ABOUT_FALLBACK")
-            .map(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+            .map(|value| {
+                matches!(
+                    value.to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            })
             .unwrap_or(false)
     })
 }
@@ -219,7 +224,9 @@ impl<'a> PowerTransformer<'a> {
         PowerTransformer {
             base: self.base.into_owned(),
             status: self.status,
-            vector_group: self.vector_group.map(|value| Cow::Owned(value.into_owned())),
+            vector_group: self
+                .vector_group
+                .map(|value| Cow::Owned(value.into_owned())),
             rate_a: self.rate_a,
             rate_b: self.rate_b,
             rate_c: self.rate_c,
@@ -247,13 +254,19 @@ pub struct PowerTransformerEnd {
 /// string data until explicit ownership conversion.
 /// Tenet 2: this helper maps directly to CIM `EnergyConsumer` without
 /// reshaping semantics.
-pub fn energy_consumers_from_reader<R: Read>(mut reader: R) -> Result<Vec<EnergyConsumer<'static>>> {
+pub fn energy_consumers_from_reader<R: Read>(
+    mut reader: R,
+) -> Result<Vec<EnergyConsumer<'static>>> {
     let mut xml = String::new();
     reader.read_to_string(&mut xml)?;
 
     // Tenet 2: include CIM subtype payloads that carry EnergyConsumer fields.
     let mut fragments: Vec<&str> = Vec::new();
-    for tag in ["cim:EnergyConsumer", "cim:ConformLoad", "cim:NonConformLoad"] {
+    for tag in [
+        "cim:EnergyConsumer",
+        "cim:ConformLoad",
+        "cim:NonConformLoad",
+    ] {
         if contains_exact_element_tag(&xml, tag) {
             let mut tag_fragments = extract_elements(&xml, tag)?;
             fragments.append(&mut tag_fragments);
@@ -357,7 +370,10 @@ pub fn power_transformers_from_reader<R: Read>(
         }
     }
 
-    Ok(transformers.into_iter().map(PowerTransformer::into_owned).collect())
+    Ok(transformers
+        .into_iter()
+        .map(PowerTransformer::into_owned)
+        .collect())
 }
 
 /// Parses all `<cim:ControlArea>` elements from CGMES RDF/XML.
@@ -558,10 +574,7 @@ pub fn connectivity_node_groups_from_reader<R: Read>(
         connectivity_nodes.dedup();
         out.push(ConnectivityNodeGroup {
             topological_node_mrid: Cow::Owned(topological_mrid),
-            connectivity_node_mrids: connectivity_nodes
-                .into_iter()
-                .map(Cow::Owned)
-                .collect(),
+            connectivity_node_mrids: connectivity_nodes.into_iter().map(Cow::Owned).collect(),
         });
     }
 

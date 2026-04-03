@@ -4,21 +4,19 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use arrow::array::{
-    ArrayRef, BooleanArray, Float64Array, Int32Array, StringDictionaryBuilder,
-};
+use arrow::array::{ArrayRef, BooleanArray, Float64Array, Int32Array, StringDictionaryBuilder};
 use arrow::datatypes::{Int32Type, UInt32Type};
 use arrow::record_batch::RecordBatch;
 use parquet::arrow::ArrowWriter;
 use parquet::file::metadata::KeyValue;
 use parquet::file::properties::WriterProperties;
+use raptrix_cim_rs::arrow_schema::{BRANDING, SCHEMA_VERSION, branch_schema};
 use raptrix_cim_rs::models::base::IdentifiedObject;
-use raptrix_cim_rs::test_utils::get_external_cgmes_path;
-use raptrix_cim_rs::arrow_schema::{branch_schema, BRANDING, SCHEMA_VERSION};
 use raptrix_cim_rs::parser;
 use raptrix_cim_rs::rpf_writer::{
-    read_rpf_tables, write_complete_rpf_with_options, BusResolutionMode, WriteOptions,
+    BusResolutionMode, WriteOptions, read_rpf_tables, write_complete_rpf_with_options,
 };
+use raptrix_cim_rs::test_utils::get_external_cgmes_path;
 
 #[test]
 #[ignore = "requires RAPTRIX_TEST_DATA_ROOT pointing at the CGMES v3.0 data root"]
@@ -31,25 +29,41 @@ fn parse_smallgrid_eq_aclinesegment() -> Result<()> {
 
     let file = File::open(&path)
         .with_context(|| format!("failed to open external CGMES file at {}", path.display()))?;
-    let lines = parser::ac_line_segments_from_reader(BufReader::new(file))
-        .with_context(|| format!("failed to parse ACLineSegment elements from {}", path.display()))?;
+    let lines = parser::ac_line_segments_from_reader(BufReader::new(file)).with_context(|| {
+        format!(
+            "failed to parse ACLineSegment elements from {}",
+            path.display()
+        )
+    })?;
 
     let file = File::open(&path)
         .with_context(|| format!("failed to reopen external CGMES file at {}", path.display()))?;
-    let branch_rows = parser::branch_rows_from_eq_reader(BufReader::new(file))
-        .with_context(|| {
+    let branch_rows =
+        parser::branch_rows_from_eq_reader(BufReader::new(file)).with_context(|| {
             format!(
                 "failed to map ACLineSegment + Terminal endpoint data from {}",
                 path.display()
             )
         })?;
 
-    println!("Parsed {} ACLineSegment elements from {}", lines.len(), path.display());
+    println!(
+        "Parsed {} ACLineSegment elements from {}",
+        lines.len(),
+        path.display()
+    );
     if let Some(first) = lines.first() {
-        println!("First ACLineSegment: mRID={} r={:?} x={:?}", first.mrid(), first.r, first.x);
+        println!(
+            "First ACLineSegment: mRID={} r={:?} x={:?}",
+            first.mrid(),
+            first.r,
+            first.x
+        );
     }
 
-    assert!(!lines.is_empty(), "expected at least one ACLineSegment in SmallGrid EQ");
+    assert!(
+        !lines.is_empty(),
+        "expected at least one ACLineSegment in SmallGrid EQ"
+    );
     assert!(
         !branch_rows.is_empty(),
         "expected at least one ACLineSegment with terminal endpoint data"
@@ -154,6 +168,10 @@ fn write_smallgrid_rpf_with_optional_node_breaker_tables() -> Result<()> {
             bus_resolution_mode: BusResolutionMode::Topological,
             emit_connectivity_groups: false,
             emit_node_breaker_detail: true,
+            base_mva: 100.0,
+            frequency_hz: 60.0,
+            study_name: None,
+            timestamp_utc: None,
         },
     )?;
 
@@ -177,7 +195,10 @@ fn write_fullgrid_rpf_with_optional_node_breaker_tables() -> Result<()> {
     let tp_path = fullgrid_merged.join("FullGrid_TP.xml");
 
     if !eq_path.is_file() {
-        println!("Skipping: FullGrid_EQ.xml not found at {}", eq_path.display());
+        println!(
+            "Skipping: FullGrid_EQ.xml not found at {}",
+            eq_path.display()
+        );
         return Ok(());
     }
 
@@ -195,6 +216,10 @@ fn write_fullgrid_rpf_with_optional_node_breaker_tables() -> Result<()> {
             bus_resolution_mode: BusResolutionMode::Topological,
             emit_connectivity_groups: false,
             emit_node_breaker_detail: true,
+            base_mva: 100.0,
+            frequency_hz: 60.0,
+            study_name: None,
+            timestamp_utc: None,
         },
     )?;
 

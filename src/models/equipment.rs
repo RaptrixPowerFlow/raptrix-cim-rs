@@ -441,7 +441,9 @@ impl<'de: 'a, 'a> Deserialize<'de> for SvShuntCompensator<'a> {
             ));
         };
 
-        let current_step = raw.current_step.or_else(|| raw.sections.map(|value| value.round() as i32));
+        let current_step = raw
+            .current_step
+            .or_else(|| raw.sections.map(|value| value.round() as i32));
         let b_steps = if !raw.b_steps.is_empty() {
             Some(raw.b_steps)
         } else if let (Some(step), Some(per_section)) = (current_step, raw.b_per_section) {
@@ -1137,4 +1139,3 @@ mod tests {
         assert_eq!(line.base.name.as_deref(), Some("Composed Line"));
     }
 }
-

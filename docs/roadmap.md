@@ -23,6 +23,7 @@
 - Materialize additional v0.5 tables beyond current demo bus/branch pipeline.
 - Replace placeholder branch defaults (tap, phase, rate_a, status) when profile data exists.
 - Add deterministic benchmark command for parse and map phases.
+- Harden dual-profile ingest compatibility for both CGMES 2.4.x and 3.x naming/layout variants.
 
 ## 0.7 Mid Term
 

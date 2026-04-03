@@ -15,30 +15,33 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::Cursor;
+use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use arrow::array::{
-    new_null_array, ArrayBuilder, ArrayRef, BooleanBuilder, Float64Builder, Int32Builder,
-    Int8Builder, ListBuilder, MapBuilder, MapFieldNames, StringBuilder,
-    StringDictionaryBuilder, StructBuilder,
+    ArrayBuilder, ArrayRef, BooleanBuilder, Float64Builder, Int8Builder, Int32Builder, ListBuilder,
+    MapBuilder, MapFieldNames, StringBuilder, StringDictionaryBuilder, StructBuilder,
+    new_null_array,
 };
 use arrow::datatypes::{DataType, Field, Int32Type, UInt32Type};
 use arrow::record_batch::RecordBatch;
-pub use raptrix_cim_arrow::{read_rpf_tables, rpf_file_metadata, summarize_rpf, RpfSummary, TableSummary};
-use raptrix_cim_arrow::{write_root_rpf, RootWriteOptions};
+use chrono::Utc;
+use raptrix_cim_arrow::{RootWriteOptions, write_root_rpf};
+pub use raptrix_cim_arrow::{
+    RpfSummary, TableSummary, read_rpf_tables, rpf_file_metadata, summarize_rpf,
+};
 
 use crate::arrow_schema::{
-    areas_schema, buses_schema, branches_schema, contingencies_schema,
-    connectivity_groups_schema, connectivity_nodes_schema, dynamics_models_schema,
-    fixed_shunts_schema, generators_schema, interfaces_schema, loads_schema, metadata_schema,
+    SCHEMA_VERSION, TABLE_AREAS, TABLE_BRANCHES, TABLE_BUSES, TABLE_CONNECTIVITY_NODES,
+    TABLE_CONTINGENCIES, TABLE_DYNAMICS_MODELS, TABLE_FIXED_SHUNTS, TABLE_GENERATORS,
+    TABLE_INTERFACES, TABLE_LOADS, TABLE_METADATA, TABLE_NODE_BREAKER_DETAIL, TABLE_OWNERS,
+    TABLE_SWITCH_DETAIL, TABLE_SWITCHED_SHUNTS, TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W,
+    TABLE_ZONES, areas_schema, branches_schema, buses_schema, connectivity_groups_schema,
+    connectivity_nodes_schema, contingencies_schema, dynamics_models_schema, fixed_shunts_schema,
+    generators_schema, interfaces_schema, loads_schema, metadata_schema,
     node_breaker_detail_schema, owners_schema, switch_detail_schema, switched_shunts_schema,
-    transformers_2w_schema, transformers_3w_schema, zones_schema, SCHEMA_VERSION, TABLE_AREAS,
-    TABLE_BRANCHES, TABLE_BUSES,
-    TABLE_CONNECTIVITY_NODES, TABLE_CONTINGENCIES, TABLE_DYNAMICS_MODELS,
-    TABLE_FIXED_SHUNTS, TABLE_GENERATORS, TABLE_INTERFACES, TABLE_LOADS, TABLE_METADATA,
-    TABLE_NODE_BREAKER_DETAIL, TABLE_OWNERS, TABLE_SWITCH_DETAIL, TABLE_SWITCHED_SHUNTS,
-    TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, TABLE_ZONES,
+    transformers_2w_schema, transformers_3w_schema, zones_schema,
 };
 use crate::parser;
 
@@ -57,6 +60,10 @@ pub struct WriteOptions {
     pub bus_resolution_mode: BusResolutionMode,
     pub emit_connectivity_groups: bool,
     pub emit_node_breaker_detail: bool,
+    pub base_mva: f64,
+    pub frequency_hz: f64,
+    pub study_name: Option<String>,
+    pub timestamp_utc: Option<String>,
 }
 
 impl Default for WriteOptions {
@@ -65,6 +72,10 @@ impl Default for WriteOptions {
             bus_resolution_mode: BusResolutionMode::Topological,
             emit_connectivity_groups: false,
             emit_node_breaker_detail: false,
+            base_mva: 100.0,
+            frequency_hz: 60.0,
+            study_name: None,
+            timestamp_utc: None,
         }
     }
 }
@@ -336,7 +347,12 @@ fn equipment_fallback_name(prefix: &str, mrid: &str) -> String {
     format!("{prefix} unknownkV {}", shortened_mrid(mrid))
 }
 
-fn branch_constructed_name(voltage_label: &str, from_bus_name: &str, to_bus_name: &str, ckt: &str) -> String {
+fn branch_constructed_name(
+    voltage_label: &str,
+    from_bus_name: &str,
+    to_bus_name: &str,
+    ckt: &str,
+) -> String {
     if ckt.trim().is_empty() || ckt == "1" {
         format!("{voltage_label} kV - {from_bus_name} to {to_bus_name}")
     } else {
@@ -344,26 +360,64 @@ fn branch_constructed_name(voltage_label: &str, from_bus_name: &str, to_bus_name
     }
 }
 
-fn voltage_label_from_name(name: Option<&str>) -> &'static str {
+fn voltage_label_from_name(name: Option<&str>) -> String {
     let Some(text) = name else {
-        return "unknown";
+        return "unknown".to_string();
     };
-    let lower = text.to_ascii_lowercase();
-    if lower.contains("500") {
-        "500"
-    } else if lower.contains("345") {
-        "345"
-    } else if lower.contains("230") {
-        "230"
-    } else if lower.contains("138") {
-        "138"
-    } else if lower.contains("115") {
-        "115"
-    } else if lower.contains("69") {
-        "69"
-    } else {
-        "unknown"
+    infer_voltage_kv(text).unwrap_or_else(|| "unknown".to_string())
+}
+
+fn infer_voltage_kv(text: &str) -> Option<String> {
+    let mut token = String::new();
+    let mut best_value: Option<f64> = None;
+
+    let mut commit_token = |candidate: &str| {
+        let Ok(value) = candidate.parse::<f64>() else {
+            return;
+        };
+        if !(10.0..=1200.0).contains(&value) {
+            return;
+        }
+        match best_value {
+            Some(existing) if value <= existing => {}
+            _ => best_value = Some(value),
+        }
+    };
+
+    for ch in text.chars() {
+        if ch.is_ascii_digit() || ch == '.' {
+            token.push(ch);
+        } else if !token.is_empty() {
+            commit_token(&token);
+            token.clear();
+        }
     }
+    if !token.is_empty() {
+        commit_token(&token);
+    }
+
+    let value = best_value?;
+    if (value.fract()).abs() < f64::EPSILON {
+        Some(format!("{}", value as i32))
+    } else {
+        Some(format!("{value:.1}"))
+    }
+}
+
+fn infer_study_name(cgmes_paths: &[&str]) -> String {
+    let Some(first_path) = cgmes_paths.first() else {
+        return "cgmes_import".to_string();
+    };
+    Path::new(first_path)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_string())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "cgmes_import".to_string())
+}
+
+fn current_timestamp_utc() -> String {
+    Utc::now().to_rfc3339()
 }
 
 fn validate_pre_write_contract(
@@ -404,7 +458,9 @@ fn validate_pre_write_contract(
     }
     for row in transformer_3w_rows {
         if row.bus_h_id <= 0 || row.bus_m_id <= 0 || row.bus_l_id <= 0 {
-            bail!("pre-write contract violation: transformers_3w.bus_h_id/bus_m_id/bus_l_id must be > 0")
+            bail!(
+                "pre-write contract violation: transformers_3w.bus_h_id/bus_m_id/bus_l_id must be > 0"
+            )
         }
     }
     Ok(())
@@ -435,13 +491,11 @@ pub fn write_complete_rpf_with_options(
         bail!("cgmes_paths is empty; provide at least one CGMES XML file path");
     }
     if !output_path.ends_with(".rpf") {
-        bail!(
-            "output_path must end with .rpf for Arrow IPC interchange output; got {output_path}"
-        );
+        bail!("output_path must end with .rpf for Arrow IPC interchange output; got {output_path}");
     }
 
-    let topology = parse_eq_topology_rows(cgmes_paths, options.bus_resolution_mode)
-        .with_context(|| {
+    let topology =
+        parse_eq_topology_rows(cgmes_paths, options.bus_resolution_mode).with_context(|| {
             format!(
                 "failed while parsing EQ/TP profile content from {} input path(s)",
                 cgmes_paths.len()
@@ -476,11 +530,21 @@ pub fn write_complete_rpf_with_options(
     )?;
 
     let metadata_row = MetadataRow {
-        base_mva: 100.0,
-        frequency_hz: 60.0,
+        base_mva: options.base_mva,
+        frequency_hz: options.frequency_hz,
         psse_version: 35,
-        study_name: Cow::Borrowed("cgmes_eq_import"),
-        timestamp_utc: Cow::Borrowed("1970-01-01T00:00:00Z"),
+        study_name: Cow::Owned(
+            options
+                .study_name
+                .clone()
+                .unwrap_or_else(|| infer_study_name(cgmes_paths)),
+        ),
+        timestamp_utc: Cow::Owned(
+            options
+                .timestamp_utc
+                .clone()
+                .unwrap_or_else(current_timestamp_utc),
+        ),
         raptrix_version: Cow::Borrowed(SCHEMA_VERSION),
         is_planning_case: true,
     };
@@ -520,7 +584,10 @@ pub fn write_complete_rpf_with_options(
     table_batches.insert(TABLE_ZONES, zones_batch.clone());
     table_batches.insert(TABLE_OWNERS, owners_batch.clone());
     table_batches.insert(TABLE_CONTINGENCIES, contingencies_batch.clone());
-    table_batches.insert(TABLE_INTERFACES, RecordBatch::new_empty(Arc::new(interfaces_schema())));
+    table_batches.insert(
+        TABLE_INTERFACES,
+        RecordBatch::new_empty(Arc::new(interfaces_schema())),
+    );
     table_batches.insert(TABLE_DYNAMICS_MODELS, dynamics_models_batch.clone());
 
     if options.emit_node_breaker_detail {
@@ -559,7 +626,9 @@ pub fn write_complete_rpf_with_options(
     })
 }
 
-fn stub_contingency_rows(split_bus_stub_elements: Vec<ContingencyElement<'static>>) -> Vec<ContingencyRow<'static>> {
+fn stub_contingency_rows(
+    split_bus_stub_elements: Vec<ContingencyElement<'static>>,
+) -> Vec<ContingencyRow<'static>> {
     let mut rows = vec![
         ContingencyRow {
             contingency_id: Cow::Borrowed("N-1 Line1"),
@@ -607,10 +676,7 @@ fn stub_dynamics_model_rows() -> Vec<DynamicsModelRow<'static>> {
         bus_id: 1,
         gen_id: Cow::Borrowed("G1"),
         model_type: Cow::Borrowed("GENROU"),
-        params: vec![
-            (Cow::Borrowed("H"), 5.0),
-            (Cow::Borrowed("xd_prime"), 0.3),
-        ],
+        params: vec![(Cow::Borrowed("H"), 5.0), (Cow::Borrowed("xd_prime"), 0.3)],
     }]
 }
 
@@ -646,9 +712,10 @@ fn parse_eq_components_for_path(
         format!("failed to extract EnergyConsumer elements from CGMES input file at {path}")
     })?;
 
-    let transformers = parser::power_transformers_from_reader(Cursor::new(&bytes)).with_context(|| {
-        format!("failed to extract PowerTransformer elements from CGMES input file at {path}")
-    })?;
+    let transformers =
+        parser::power_transformers_from_reader(Cursor::new(&bytes)).with_context(|| {
+            format!("failed to extract PowerTransformer elements from CGMES input file at {path}")
+        })?;
 
     let areas = parser::areas_from_reader(Cursor::new(&bytes)).with_context(|| {
         format!("failed to extract ControlArea elements from CGMES input file at {path}")
@@ -662,16 +729,22 @@ fn parse_eq_components_for_path(
         format!("failed to extract Organisation elements from CGMES input file at {path}")
     })?;
 
-    let fixed_shunts = parser::fixed_shunts_from_reader(Cursor::new(&bytes)).with_context(|| {
-        format!("failed to extract LinearShuntCompensator elements from CGMES input file at {path}")
-    })?;
+    let fixed_shunts =
+        parser::fixed_shunts_from_reader(Cursor::new(&bytes)).with_context(|| {
+            format!(
+                "failed to extract LinearShuntCompensator elements from CGMES input file at {path}"
+            )
+        })?;
 
-    let switched_shunts = parser::sv_shunt_compensators_from_reader(Cursor::new(&bytes)).with_context(|| {
-        format!("failed to extract SvShuntCompensator elements from CGMES input file at {path}")
-    })?;
+    let switched_shunts = parser::sv_shunt_compensators_from_reader(Cursor::new(&bytes))
+        .with_context(|| {
+            format!("failed to extract SvShuntCompensator elements from CGMES input file at {path}")
+        })?;
 
     let topological_nodes = parser::topological_nodes_from_reader(Cursor::new(&bytes))
-        .with_context(|| format!("failed to extract TopologicalNode elements from CGMES input file at {path}"))?;
+        .with_context(|| {
+            format!("failed to extract TopologicalNode elements from CGMES input file at {path}")
+        })?;
 
     let connectivity_groups = parser::connectivity_node_groups_from_reader(Cursor::new(&bytes))
         .with_context(|| {
@@ -684,9 +757,10 @@ fn parse_eq_components_for_path(
         format!("failed to extract switch elements from CGMES input file at {path}")
     })?;
 
-    let connectivity_nodes = parser::connectivity_nodes_from_reader(Cursor::new(&bytes)).with_context(|| {
-        format!("failed to extract ConnectivityNode elements from CGMES input file at {path}")
-    })?;
+    let connectivity_nodes = parser::connectivity_nodes_from_reader(Cursor::new(&bytes))
+        .with_context(|| {
+            format!("failed to extract ConnectivityNode elements from CGMES input file at {path}")
+        })?;
 
     Ok((
         lines,
@@ -767,8 +841,7 @@ fn parse_eq_topology_rows(
             mut parsed_connectivity_groups,
             mut parsed_switches,
             mut parsed_connectivity_nodes,
-        ) =
-            parse_eq_components_for_path(path)?;
+        ) = parse_eq_components_for_path(path)?;
         if !parsed_lines.is_empty() {
             lines.append(&mut parsed_lines);
         }
@@ -828,7 +901,8 @@ fn parse_eq_topology_rows(
         }
     }
 
-    let use_topological = !conn_to_topo.is_empty() && bus_resolution_mode == BusResolutionMode::Topological;
+    let use_topological =
+        !conn_to_topo.is_empty() && bus_resolution_mode == BusResolutionMode::Topological;
 
     let mut sorted_bus_keys: Vec<&str> = terminals
         .iter()
@@ -924,20 +998,14 @@ fn parse_eq_topology_rows(
     for (idx, line) in lines.iter().enumerate() {
         let line_mrid = line.base.m_rid.as_ref();
         let endpoints = endpoints_by_line.get(line_mrid).copied().with_context(|| {
-            format!(
-                "missing Terminal linkage for ACLineSegment mRID '{line_mrid}'"
-            )
+            format!("missing Terminal linkage for ACLineSegment mRID '{line_mrid}'")
         })?;
 
         let from_idx = endpoints.from_terminal_idx.with_context(|| {
-            format!(
-                "missing Terminal sequenceNumber=1 for ACLineSegment mRID '{line_mrid}'"
-            )
+            format!("missing Terminal sequenceNumber=1 for ACLineSegment mRID '{line_mrid}'")
         })?;
         let to_idx = endpoints.to_terminal_idx.with_context(|| {
-            format!(
-                "missing Terminal sequenceNumber=2 for ACLineSegment mRID '{line_mrid}'"
-            )
+            format!("missing Terminal sequenceNumber=2 for ACLineSegment mRID '{line_mrid}'")
         })?;
 
         let from_node = terminals[from_idx].connectivity_node_mrid.as_str();
@@ -945,9 +1013,7 @@ fn parse_eq_topology_rows(
 
         let from_bus_key = if use_topological {
             conn_to_topo.get(from_node).copied().with_context(|| {
-                format!(
-                    "failed to resolve ConnectivityNode '{from_node}' to TopologicalNode"
-                )
+                format!("failed to resolve ConnectivityNode '{from_node}' to TopologicalNode")
             })?
         } else {
             from_node
@@ -960,16 +1026,16 @@ fn parse_eq_topology_rows(
             to_node
         };
 
-        let from_bus_id = bus_key_to_bus_id.get(from_bus_key).copied().with_context(|| {
-            format!(
-                "failed to resolve bus key '{from_bus_key}' to dense bus_id"
-            )
-        })?;
-        let to_bus_id = bus_key_to_bus_id.get(to_bus_key).copied().with_context(|| {
-            format!(
-                "failed to resolve bus key '{to_bus_key}' to dense bus_id"
-            )
-        })?;
+        let from_bus_id = bus_key_to_bus_id
+            .get(from_bus_key)
+            .copied()
+            .with_context(|| {
+                format!("failed to resolve bus key '{from_bus_key}' to dense bus_id")
+            })?;
+        let to_bus_id = bus_key_to_bus_id
+            .get(to_bus_key)
+            .copied()
+            .with_context(|| format!("failed to resolve bus key '{to_bus_key}' to dense bus_id"))?;
 
         let from_bus_name = bus_name_by_key
             .get(from_bus_key)
@@ -985,7 +1051,7 @@ fn parse_eq_topology_rows(
             existing.to_owned()
         } else {
             let kv = voltage_label_from_name(line.base.name.as_deref());
-            branch_constructed_name(kv, from_bus_name, to_bus_name, ckt)
+            branch_constructed_name(&kv, from_bus_name, to_bus_name, ckt)
         };
 
         branch_rows.push(BranchRow {
@@ -1033,9 +1099,7 @@ fn parse_eq_topology_rows(
                 )
             })
             .with_context(|| {
-                format!(
-                    "missing Terminal linkage for SynchronousMachine mRID '{machine_mrid}'"
-                )
+                format!("missing Terminal linkage for SynchronousMachine mRID '{machine_mrid}'")
             })?;
 
         let bus_id = if use_topological {
@@ -1174,11 +1238,14 @@ fn parse_eq_topology_rows(
     let mut transformer_3w_rows = Vec::new();
     for transformer in transformers {
         let transformer_mrid = transformer.base.m_rid.as_ref();
-        let transformer_terminals = terminals_by_equipment
-            .get(transformer_mrid)
-            .with_context(|| {
-                format!("missing Terminal linkage for PowerTransformer mRID '{transformer_mrid}'")
-            })?;
+        let transformer_terminals =
+            terminals_by_equipment
+                .get(transformer_mrid)
+                .with_context(|| {
+                    format!(
+                        "missing Terminal linkage for PowerTransformer mRID '{transformer_mrid}'"
+                    )
+                })?;
 
         let mut unique_terminals: Vec<&parser::TerminalLink> = Vec::new();
         for terminal in transformer_terminals {
@@ -1250,10 +1317,14 @@ fn parse_eq_topology_rows(
 
         if winding_count == 2 {
             let from_terminal = unique_terminals.first().copied().with_context(|| {
-                format!("missing Terminal endpoint #1 for PowerTransformer mRID '{transformer_mrid}'")
+                format!(
+                    "missing Terminal endpoint #1 for PowerTransformer mRID '{transformer_mrid}'"
+                )
             })?;
             let to_terminal = unique_terminals.get(1).copied().with_context(|| {
-                format!("missing Terminal endpoint #2 for PowerTransformer mRID '{transformer_mrid}'")
+                format!(
+                    "missing Terminal endpoint #2 for PowerTransformer mRID '{transformer_mrid}'"
+                )
             })?;
 
             let from_bus_id = resolve_terminal_bus_id(from_terminal)?;
@@ -1277,7 +1348,10 @@ fn parse_eq_topology_rows(
                     .and_then(non_empty_name)
                     .map(|value| Cow::Owned(value.to_owned()))
                     .unwrap_or_else(|| {
-                        Cow::Owned(equipment_fallback_name("Xfmr2W", transformer.base.m_rid.as_ref()))
+                        Cow::Owned(equipment_fallback_name(
+                            "Xfmr2W",
+                            transformer.base.m_rid.as_ref(),
+                        ))
                     }),
                 r: winding1_r + winding2_r,
                 x: winding1_x + winding2_x,
@@ -1298,13 +1372,19 @@ fn parse_eq_topology_rows(
             });
         } else {
             let terminal_h = unique_terminals.first().copied().with_context(|| {
-                format!("missing Terminal endpoint #1 for PowerTransformer mRID '{transformer_mrid}'")
+                format!(
+                    "missing Terminal endpoint #1 for PowerTransformer mRID '{transformer_mrid}'"
+                )
             })?;
             let terminal_m = unique_terminals.get(1).copied().with_context(|| {
-                format!("missing Terminal endpoint #2 for PowerTransformer mRID '{transformer_mrid}'")
+                format!(
+                    "missing Terminal endpoint #2 for PowerTransformer mRID '{transformer_mrid}'"
+                )
             })?;
             let terminal_l = unique_terminals.get(2).copied().with_context(|| {
-                format!("missing Terminal endpoint #3 for PowerTransformer mRID '{transformer_mrid}'")
+                format!(
+                    "missing Terminal endpoint #3 for PowerTransformer mRID '{transformer_mrid}'"
+                )
             })?;
 
             let bus_h_id = resolve_terminal_bus_id(terminal_h)?;
@@ -1327,7 +1407,10 @@ fn parse_eq_topology_rows(
                     .and_then(non_empty_name)
                     .map(|value| Cow::Owned(value.to_owned()))
                     .unwrap_or_else(|| {
-                        Cow::Owned(equipment_fallback_name("Xfmr3W", transformer.base.m_rid.as_ref()))
+                        Cow::Owned(equipment_fallback_name(
+                            "Xfmr3W",
+                            transformer.base.m_rid.as_ref(),
+                        ))
                     }),
                 r_hm: end_h.and_then(|end| end.r).unwrap_or(0.0),
                 x_hm: end_h.and_then(|end| end.x).unwrap_or(0.0),
@@ -1549,8 +1632,7 @@ fn parse_eq_topology_rows(
         if connectivity_node_mrids.len() > 1 {
             let split_id = format!(
                 "topological_node_id={topological_bus_id};connectivity_node_a={};connectivity_node_b={};breaker_mrid=stub",
-                connectivity_node_mrids[0],
-                connectivity_node_mrids[1]
+                connectivity_node_mrids[0], connectivity_node_mrids[1]
             );
             split_bus_stub_elements.push(ContingencyElement {
                 element_type: Cow::Borrowed("split_bus"),
@@ -1585,8 +1667,12 @@ fn parse_eq_topology_rows(
             }
             unique_nodes.sort_unstable();
 
-            let connectivity_node_a = unique_nodes.first().map(|value| Cow::Owned((*value).to_string()));
-            let connectivity_node_b = unique_nodes.get(1).map(|value| Cow::Owned((*value).to_string()));
+            let connectivity_node_a = unique_nodes
+                .first()
+                .map(|value| Cow::Owned((*value).to_string()));
+            let connectivity_node_b = unique_nodes
+                .get(1)
+                .map(|value| Cow::Owned((*value).to_string()));
 
             let resolve_bus_id = |node: &str| -> Option<i32> {
                 if use_topological {
@@ -1688,10 +1774,7 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
     raptrix_version_b.append_value(row.raptrix_version.as_ref());
     planning_b.append_value(row.is_planning_case);
 
-    let custom_metadata_type = schema
-        .field(7)
-        .data_type()
-        .clone();
+    let custom_metadata_type = schema.field(7).data_type().clone();
     let custom_metadata_array = new_null_array(&custom_metadata_type, 1);
 
     let arrays: Vec<ArrayRef> = vec![
@@ -2177,10 +2260,7 @@ fn build_switched_shunts_batch(rows: &[SwitchedShuntRow]) -> Result<RecordBatch>
     let mut status_b = BooleanBuilder::new();
     let mut v_low_b = Float64Builder::new();
     let mut v_high_b = Float64Builder::new();
-    let list_field = schema
-        .field(4)
-        .data_type()
-        .clone();
+    let list_field = schema.field(4).data_type().clone();
     let mut b_steps_b = ListBuilder::new(Float64Builder::new()).with_field(match list_field {
         DataType::List(field) => field,
         _ => Arc::new(Field::new("item", DataType::Float64, false)),
@@ -2218,10 +2298,7 @@ fn build_connectivity_groups_batch(rows: &[ConnectivityGroupRow<'_>]) -> Result<
 
     let mut topological_bus_id_b = Int32Builder::new();
     let mut topological_node_mrid_b = StringDictionaryBuilder::<Int32Type>::new();
-    let list_field = schema
-        .field(2)
-        .data_type()
-        .clone();
+    let list_field = schema.field(2).data_type().clone();
     let mut connectivity_node_mrids_b =
         ListBuilder::new(StringBuilder::new()).with_field(match list_field {
             DataType::List(field) => field,
@@ -2446,9 +2523,7 @@ fn build_contingencies_batch(rows: &[ContingencyRow<'_>]) -> Result<RecordBatch>
     let elements_field = match schema.field(1).data_type() {
         DataType::List(field) => field.clone(),
         other => {
-            bail!(
-                "contingencies.elements field must be List<Struct>, found {other:?}"
-            )
+            bail!("contingencies.elements field must be List<Struct>, found {other:?}")
         }
     };
     let mut elements_b = ListBuilder::new(element_struct_b).with_field(elements_field);
@@ -2557,7 +2632,9 @@ fn build_dynamics_models_batch(rows: &[DynamicsModelRow<'_>]) -> Result<RecordBa
             params_b.keys().append_value(key.as_ref());
             params_b.values().append_value(*value);
         }
-        params_b.append(true).context("failed to append params map row")?;
+        params_b
+            .append(true)
+            .context("failed to append params map row")?;
     }
 
     let arrays: Vec<ArrayRef> = vec![
@@ -2582,14 +2659,14 @@ mod tests {
     use arrow::datatypes::Schema;
 
     use crate::arrow_schema::{
-        all_table_schemas, branches_schema, buses_schema, connectivity_nodes_schema,
-        contingencies_schema, dynamics_models_schema, metadata_schema,
-        node_breaker_detail_schema, switch_detail_schema, BRANDING, SCHEMA_VERSION,
+        BRANDING, SCHEMA_VERSION, all_table_schemas, branches_schema, buses_schema,
+        connectivity_nodes_schema, contingencies_schema, dynamics_models_schema, metadata_schema,
+        node_breaker_detail_schema, switch_detail_schema,
     };
 
     use super::{
-        read_rpf_tables, rpf_file_metadata, summarize_rpf, write_complete_rpf,
-        write_complete_rpf_with_options, BusResolutionMode, WriteOptions,
+        BusResolutionMode, WriteOptions, read_rpf_tables, rpf_file_metadata, summarize_rpf,
+        write_complete_rpf, write_complete_rpf_with_options,
     };
 
     fn assert_schema_shape_matches(actual: &Schema, expected: &Schema) {
@@ -2669,7 +2746,7 @@ mod tests {
         let eq_path = tmp_dir.join("minimal_eq.xml");
         fs::write(
             &eq_path,
-                r##"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#">
+            r##"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#">
         <cim:ACLineSegment rdf:ID="L1"><IdentifiedObject.name>Line 1</IdentifiedObject.name><ACLineSegment.r>0.01</ACLineSegment.r><ACLineSegment.x>0.05</ACLineSegment.x></cim:ACLineSegment>
         <cim:Terminal rdf:ID="T1"><Terminal.ConductingEquipment rdf:resource="#L1"/><Terminal.ConnectivityNode rdf:resource="#N1"/><ACDCTerminal.sequenceNumber>1</ACDCTerminal.sequenceNumber></cim:Terminal>
         <cim:Terminal rdf:ID="T2"><Terminal.ConductingEquipment rdf:resource="#L1"/><Terminal.ConnectivityNode rdf:resource="#N2"/><ACDCTerminal.sequenceNumber>2</ACDCTerminal.sequenceNumber></cim:Terminal>
@@ -2697,7 +2774,10 @@ mod tests {
         let schema_ref = tables[0].1.schema();
         let meta = schema_ref.metadata();
         assert_eq!(meta.get("raptrix.branding"), Some(&BRANDING.to_string()));
-        assert_eq!(meta.get("raptrix.version"), Some(&SCHEMA_VERSION.to_string()));
+        assert_eq!(
+            meta.get("raptrix.version"),
+            Some(&SCHEMA_VERSION.to_string())
+        );
         assert_eq!(meta.get("rpf_version"), Some(&SCHEMA_VERSION.to_string()));
 
         assert_schema_shape_matches(tables[1].1.schema().as_ref(), &buses_schema());
@@ -2705,7 +2785,11 @@ mod tests {
         assert_schema_shape_matches(tables[12].1.schema().as_ref(), &contingencies_schema());
         assert_schema_shape_matches(tables[14].1.schema().as_ref(), &dynamics_models_schema());
         let branches_batch = &tables[2].1;
-        assert_eq!(branches_batch.num_rows(), 1, "fixture should produce one branch");
+        assert_eq!(
+            branches_batch.num_rows(),
+            1,
+            "fixture should produce one branch"
+        );
 
         let branch_id = branches_batch
             .column(0)
@@ -2835,25 +2919,13 @@ mod tests {
         assert_eq!(tables.len(), all_table_schemas().len());
         assert_eq!(branches_batch.num_rows(), branch_count);
 
-        println!(
-            "RPF write: {} branches in {} ms",
-            branch_count,
-            write_ms,
-        );
-        println!(
-            "Wrote {} bytes ({:.2} MiB)",
-            file_size_bytes,
-            file_size_mib,
-        );
+        println!("RPF write: {} branches in {} ms", branch_count, write_ms,);
+        println!("Wrote {} bytes ({:.2} MiB)", file_size_bytes, file_size_mib,);
         println!(
             "Write throughput: {:.0} branches/s",
             branch_count as f64 / write_elapsed.as_secs_f64()
         );
-        println!(
-            "RPF read: {} tables in {} ms",
-            tables.len(),
-            read_ms,
-        );
+        println!("RPF read: {} tables in {} ms", tables.len(), read_ms,);
         println!(
             "Read throughput: {:.0} tables/s",
             tables.len() as f64 / read_elapsed.as_secs_f64()
@@ -2899,23 +2971,14 @@ mod tests {
 
         println!(
             "RPF 10k write: {} branches in {} ms",
-            branch_count,
-            write_ms,
+            branch_count, write_ms,
         );
-        println!(
-            "Wrote {} bytes ({:.2} MiB)",
-            file_size_bytes,
-            file_size_mib,
-        );
+        println!("Wrote {} bytes ({:.2} MiB)", file_size_bytes, file_size_mib,);
         println!(
             "Write throughput: {:.0} branches/s",
             branch_count as f64 / write_elapsed.as_secs_f64()
         );
-        println!(
-            "RPF 10k read: {} tables in {} ms",
-            tables.len(),
-            read_ms,
-        );
+        println!("RPF 10k read: {} tables in {} ms", tables.len(), read_ms,);
         println!(
             "Read throughput: {:.0} tables/s",
             tables.len() as f64 / read_elapsed.as_secs_f64()
@@ -2943,6 +3006,10 @@ mod tests {
                 bus_resolution_mode: BusResolutionMode::Topological,
                 emit_connectivity_groups: false,
                 emit_node_breaker_detail: true,
+                base_mva: 100.0,
+                frequency_hz: 60.0,
+                study_name: None,
+                timestamp_utc: None,
             },
         )?;
 
@@ -2979,8 +3046,14 @@ mod tests {
         assert_eq!(connectivity_nodes.num_rows(), 2);
 
         let metadata = rpf_file_metadata(&output_path)?;
-        assert_eq!(metadata.get("raptrix.features.node_breaker"), Some(&"true".to_string()));
-        assert_eq!(metadata.get("raptrix.version"), Some(&SCHEMA_VERSION.to_string()));
+        assert_eq!(
+            metadata.get("raptrix.features.node_breaker"),
+            Some(&"true".to_string())
+        );
+        assert_eq!(
+            metadata.get("raptrix.version"),
+            Some(&SCHEMA_VERSION.to_string())
+        );
 
         Ok(())
     }

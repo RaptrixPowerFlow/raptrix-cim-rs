@@ -64,9 +64,7 @@ impl<'a> RawTopologicalNode<'a> {
 
 fn strip_hash_cow<'a>(value: Cow<'a, str>) -> Cow<'a, str> {
     match value {
-        Cow::Borrowed(borrowed) => {
-            Cow::Borrowed(borrowed.strip_prefix('#').unwrap_or(borrowed))
-        }
+        Cow::Borrowed(borrowed) => Cow::Borrowed(borrowed.strip_prefix('#').unwrap_or(borrowed)),
         Cow::Owned(owned) => Cow::Owned(owned.trim_start_matches('#').to_string()),
     }
 }

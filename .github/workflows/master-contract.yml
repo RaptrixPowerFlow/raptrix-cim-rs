@@ -1,0 +1,60 @@
+name: Master Contract CI
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - "v*"
+      - "schema-v*"
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo fmt check
+        run: cargo fmt --all -- --check
+
+      - name: Cargo check
+        run: cargo check --workspace --all-targets
+
+      - name: Cargo test
+        run: cargo test --workspace --all-targets
+
+  publish-contract-artifact:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare contract artifact directory
+        run: |
+          mkdir -p contract-artifact
+          cp docs/schema-contract.md contract-artifact/
+          cp raptrix-cim-arrow/src/schema.rs contract-artifact/
+          cp Cargo.toml contract-artifact/
+          cp raptrix-cim-arrow/Cargo.toml contract-artifact/
+
+      - name: Upload contract artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpf-contract-master
+          path: contract-artifact
+
+      - name: Publish release assets on tags
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            docs/schema-contract.md
+            raptrix-cim-arrow/src/schema.rs
+          generate_release_notes: true
