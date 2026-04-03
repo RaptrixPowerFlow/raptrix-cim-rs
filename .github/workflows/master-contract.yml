@@ -29,6 +29,9 @@ jobs:
       - name: Cargo test
         run: cargo test --workspace --all-targets
 
+      - name: CGMES compatibility profile-detection tests
+        run: cargo test --bin raptrix-cim-rs cgmes_profile_detection
+
   publish-contract-artifact:
     needs: validate
     runs-on: ubuntu-latest
@@ -40,6 +43,7 @@ jobs:
         run: |
           mkdir -p contract-artifact
           cp docs/schema-contract.md contract-artifact/
+          cp docs/release-sync-workflow.md contract-artifact/
           cp raptrix-cim-arrow/src/schema.rs contract-artifact/
           cp Cargo.toml contract-artifact/
           cp raptrix-cim-arrow/Cargo.toml contract-artifact/
@@ -56,5 +60,6 @@ jobs:
         with:
           files: |
             docs/schema-contract.md
+            docs/release-sync-workflow.md
             raptrix-cim-arrow/src/schema.rs
           generate_release_notes: true

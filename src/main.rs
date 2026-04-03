@@ -477,8 +477,6 @@ fn filename_matches_profile(name: &str, profile: &str) -> bool {
     lowered
         .split(|ch: char| !ch.is_ascii_alphanumeric())
         .any(|token| token == needle)
-        || lowered.contains(&format!("_{needle}"))
-        || lowered.contains(&format!("-{needle}"))
 }
 
 fn normalize_existing_path(path: &Path, cwd: &Path) -> Result<PathBuf> {
@@ -527,4 +525,51 @@ fn format_profile_summary(profile_paths: &[(String, PathBuf)]) -> String {
         .map(|(profile, path)| format!("{profile}={}", path.display()))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{detect_profiles, filename_matches_profile, is_supported_profile_file};
+    use anyhow::Result;
+    use std::fs;
+
+    #[test]
+    fn cgmes_profile_detection_filename_tokens_cover_24x_and_3x() {
+        assert!(filename_matches_profile("SmallGrid_EQ.xml", "EQ"));
+        assert!(filename_matches_profile("SmallGrid-TP.rdf", "TP"));
+        assert!(filename_matches_profile("CGMES_2.4.15_case_SV.XML", "SV"));
+        assert!(filename_matches_profile("CGMES-v3.0.3-SSH.xml", "SSH"));
+        assert!(filename_matches_profile("2026_CASE_DY.rdf", "DY"));
+        assert!(!filename_matches_profile("SmallGrid_EQUIPMENT.xml", "EQ"));
+    }
+
+    #[test]
+    fn cgmes_profile_detection_accepts_xml_and_rdf_extensions() {
+        assert!(is_supported_profile_file(std::path::Path::new("a_EQ.xml")));
+        assert!(is_supported_profile_file(std::path::Path::new("a_EQ.XML")));
+        assert!(is_supported_profile_file(std::path::Path::new("a_EQ.rdf")));
+        assert!(is_supported_profile_file(std::path::Path::new("a_EQ.RDF")));
+        assert!(!is_supported_profile_file(std::path::Path::new("a_EQ.txt")));
+    }
+
+    #[test]
+    fn cgmes_profile_detection_recurses_nested_directories() -> Result<()> {
+        let temp_dir = std::env::temp_dir().join("raptrix_cgmes_detection_tests");
+        let nested = temp_dir.join("v3").join("SmallGrid-Merged");
+        fs::create_dir_all(&nested)?;
+
+        fs::write(nested.join("SmallGrid_EQ.xml"), "<rdf:RDF/>")?;
+        fs::write(nested.join("SmallGrid_TP.rdf"), "<rdf:RDF/>")?;
+        fs::write(nested.join("SmallGrid_SV.xml"), "<rdf:RDF/>")?;
+
+        let detected = detect_profiles(&temp_dir, &temp_dir)?;
+        let names: Vec<String> = detected.iter().map(|(name, _)| name.clone()).collect();
+
+        assert!(names.contains(&"EQ".to_string()));
+        assert!(names.contains(&"TP".to_string()));
+        assert!(names.contains(&"SV".to_string()));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
 }
