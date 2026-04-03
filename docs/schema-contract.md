@@ -29,6 +29,8 @@ Current locked values:
 Optional file-level metadata keys:
 
 - `raptrix.features.node_breaker = true` when optional node-breaker detail tables are emitted
+- `raptrix.features.contingencies_stub = true` when contingencies table is populated by placeholder/stub rows
+- `raptrix.features.dynamics_stub = true` when dynamics_models table is populated by placeholder/stub rows
 - `rpf.rows.<table_name> = <row_count>` for each emitted table
 
 ## File Container Layout

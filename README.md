@@ -190,7 +190,7 @@ Then inspect table counts and coverage:
 
 The `view` command prints table-by-table row counts for quick import checks in `raptrix-core` and `raptrix-cim-viewer`.
 
-Use `--verbose` when validating interoperability because it also prints the root Arrow IPC metadata entries, including `raptrix.version`, `raptrix.features.node_breaker`, and `rpf.rows.*` logical row counts used by compliant external parsers.
+Use `--verbose` when validating interoperability because it also prints the root Arrow IPC metadata entries, including `raptrix.version`, `raptrix.features.node_breaker`, `raptrix.features.contingencies_stub`, `raptrix.features.dynamics_stub`, and `rpf.rows.*` logical row counts used by compliant external parsers.
 
 ## Library Usage
 

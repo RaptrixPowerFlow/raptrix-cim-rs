@@ -60,6 +60,8 @@ pub struct WriteOptions {
     pub bus_resolution_mode: BusResolutionMode,
     pub emit_connectivity_groups: bool,
     pub emit_node_breaker_detail: bool,
+    pub contingencies_are_stub: bool,
+    pub dynamics_are_stub: bool,
     pub base_mva: f64,
     pub frequency_hz: f64,
     pub study_name: Option<String>,
@@ -72,6 +74,8 @@ impl Default for WriteOptions {
             bus_resolution_mode: BusResolutionMode::Topological,
             emit_connectivity_groups: false,
             emit_node_breaker_detail: false,
+            contingencies_are_stub: true,
+            dynamics_are_stub: true,
             base_mva: 100.0,
             frequency_hz: 60.0,
             study_name: None,
@@ -609,6 +613,8 @@ pub fn write_complete_rpf_with_options(
         &table_batches,
         &RootWriteOptions {
             include_node_breaker_detail: options.emit_node_breaker_detail,
+            contingencies_are_stub: options.contingencies_are_stub,
+            dynamics_are_stub: options.dynamics_are_stub,
         },
     )?;
 
@@ -3137,6 +3143,8 @@ mod tests {
                 bus_resolution_mode: BusResolutionMode::Topological,
                 emit_connectivity_groups: false,
                 emit_node_breaker_detail: true,
+                contingencies_are_stub: true,
+                dynamics_are_stub: true,
                 base_mva: 100.0,
                 frequency_hz: 60.0,
                 study_name: None,
@@ -3179,6 +3187,14 @@ mod tests {
         let metadata = rpf_file_metadata(&output_path)?;
         assert_eq!(
             metadata.get("raptrix.features.node_breaker"),
+            Some(&"true".to_string())
+        );
+        assert_eq!(
+            metadata.get("raptrix.features.contingencies_stub"),
+            Some(&"true".to_string())
+        );
+        assert_eq!(
+            metadata.get("raptrix.features.dynamics_stub"),
             Some(&"true".to_string())
         );
         assert_eq!(

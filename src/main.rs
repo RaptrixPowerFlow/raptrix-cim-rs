@@ -162,6 +162,12 @@ fn run_view(args: ViewArgs) -> Result<()> {
             input_path.display()
         )
     })?;
+    let metadata = rpf_file_metadata(&input_path).with_context(|| {
+        format!(
+            "failed to read Raptrix CIM-Arrow metadata from {}",
+            input_path.display()
+        )
+    })?;
 
     println!("{BRANDING}");
     println!("Input: {}", input_path.display());
@@ -188,9 +194,40 @@ fn run_view(args: ViewArgs) -> Result<()> {
         );
     }
 
+    let mut enabled_features = Vec::new();
+    if metadata
+        .get("raptrix.features.node_breaker")
+        .map(|value| value == "true")
+        .unwrap_or(false)
+    {
+        enabled_features.push("node-breaker");
+    }
+    if metadata
+        .get("raptrix.features.contingencies_stub")
+        .map(|value| value == "true")
+        .unwrap_or(false)
+    {
+        enabled_features.push("contingencies-stub");
+    }
+    if metadata
+        .get("raptrix.features.dynamics_stub")
+        .map(|value| value == "true")
+        .unwrap_or(false)
+    {
+        enabled_features.push("dynamics-stub");
+    }
+
+    println!(
+        "Feature flags: {}",
+        if enabled_features.is_empty() {
+            "none".to_string()
+        } else {
+            enabled_features.join(", ")
+        }
+    );
+
     if args.verbose {
-        let mut metadata_entries: Vec<(String, String)> =
-            rpf_file_metadata(&input_path)?.into_iter().collect();
+        let mut metadata_entries: Vec<(String, String)> = metadata.into_iter().collect();
         metadata_entries.sort_by(|left, right| left.0.cmp(&right.0));
 
         println!("Metadata:");
@@ -232,6 +269,8 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
             bus_resolution_mode: BusResolutionMode::ConnectivityDetail,
             emit_connectivity_groups: true,
             emit_node_breaker_detail: args.node_breaker,
+            contingencies_are_stub: true,
+            dynamics_are_stub: true,
             base_mva: args.base_mva,
             frequency_hz: args.frequency_hz,
             study_name: args.study_name.clone(),
@@ -243,6 +282,8 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
             bus_resolution_mode: BusResolutionMode::Topological,
             emit_connectivity_groups: false,
             emit_node_breaker_detail: args.node_breaker,
+            contingencies_are_stub: true,
+            dynamics_are_stub: true,
             base_mva: args.base_mva,
             frequency_hz: args.frequency_hz,
             study_name: args.study_name.clone(),

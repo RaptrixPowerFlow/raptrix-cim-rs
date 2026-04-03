@@ -24,9 +24,11 @@ use arrow::record_batch::RecordBatch;
 use memmap2::MmapOptions;
 
 use crate::schema::{
-    BRANDING, SCHEMA_VERSION, TABLE_BRANCHES, TABLE_BUSES, TABLE_GENERATORS, TABLE_LOADS,
-    TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, all_table_schemas, node_breaker_table_schemas,
-    schema_metadata, table_schema,
+    BRANDING, METADATA_KEY_BRANDING, METADATA_KEY_FEATURE_CONTINGENCIES_STUB,
+    METADATA_KEY_FEATURE_DYNAMICS_STUB, METADATA_KEY_FEATURE_NODE_BREAKER,
+    METADATA_KEY_RPF_VERSION, METADATA_KEY_VERSION, SCHEMA_VERSION, TABLE_BRANCHES, TABLE_BUSES,
+    TABLE_GENERATORS, TABLE_LOADS, TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W,
+    all_table_schemas, node_breaker_table_schemas, schema_metadata, table_schema,
 };
 
 /// Summary stats for a single logical table found in an `.rpf` file.
@@ -71,6 +73,10 @@ pub struct RootWriteOptions {
     /// When true, append optional node-breaker detail tables after the 15
     /// canonical required root columns.
     pub include_node_breaker_detail: bool,
+    /// When true, mark contingencies payload as stub-derived.
+    pub contingencies_are_stub: bool,
+    /// When true, mark dynamics payload as stub-derived.
+    pub dynamics_are_stub: bool,
 }
 
 /// Returns the metadata key used to store the logical row count for a table.
@@ -301,7 +307,19 @@ pub fn write_root_rpf(
     }
     if options.include_node_breaker_detail {
         root_metadata.insert(
-            "raptrix.features.node_breaker".to_string(),
+            METADATA_KEY_FEATURE_NODE_BREAKER.to_string(),
+            "true".to_string(),
+        );
+    }
+    if options.contingencies_are_stub {
+        root_metadata.insert(
+            METADATA_KEY_FEATURE_CONTINGENCIES_STUB.to_string(),
+            "true".to_string(),
+        );
+    }
+    if options.dynamics_are_stub {
+        root_metadata.insert(
+            METADATA_KEY_FEATURE_DYNAMICS_STUB.to_string(),
             "true".to_string(),
         );
     }
@@ -363,9 +381,9 @@ pub fn write_root_rpf(
     })?;
     let mut writer = FileWriter::try_new(&mut output, &root_schema)
         .context("failed to initialize root Arrow IPC FileWriter")?;
-    writer.write_metadata("raptrix.branding", BRANDING);
-    writer.write_metadata("raptrix.version", SCHEMA_VERSION);
-    writer.write_metadata("rpf_version", SCHEMA_VERSION);
+    writer.write_metadata(METADATA_KEY_BRANDING, BRANDING);
+    writer.write_metadata(METADATA_KEY_VERSION, SCHEMA_VERSION);
+    writer.write_metadata(METADATA_KEY_RPF_VERSION, SCHEMA_VERSION);
     writer
         .write(&root_batch)
         .context("failed writing root RPF record batch")?;
@@ -411,8 +429,13 @@ pub fn validate_rpf_file(path: impl AsRef<Path>, options: &RootWriteOptions) -> 
 
     let metadata = reader_schema.metadata();
     let version = metadata
-        .get("raptrix.version")
-        .context("post-write contract violation: missing metadata key 'raptrix.version'")?;
+        .get(METADATA_KEY_VERSION)
+        .with_context(|| {
+            format!(
+                "post-write contract violation: missing metadata key '{}'",
+                METADATA_KEY_VERSION
+            )
+        })?;
     if version != SCHEMA_VERSION {
         bail!(
             "post-write contract violation: raptrix.version expected '{}', found '{}'",
