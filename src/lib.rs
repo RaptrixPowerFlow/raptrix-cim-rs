@@ -21,9 +21,11 @@ pub mod rpf_writer;
 pub mod test_utils;
 
 pub use raptrix_cim_arrow as arrow_schema;
-pub use raptrix_cim_arrow::{read_rpf_tables, rpf_file_metadata, summarize_rpf, RpfSummary, TableSummary};
+pub use raptrix_cim_arrow::{
+    RpfSummary, TableSummary, read_rpf_tables, rpf_file_metadata, summarize_rpf,
+};
 
 pub use rpf_writer::{
-	write_complete_rpf, write_complete_rpf_with_options, BusResolutionMode, WriteOptions,
-	WriteSummary,
+    BusResolutionMode, WriteOptions, WriteSummary, write_complete_rpf,
+    write_complete_rpf_with_options,
 };

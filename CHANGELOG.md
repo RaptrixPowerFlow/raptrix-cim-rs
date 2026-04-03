@@ -9,6 +9,21 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Musto Technologies LL
 
 Copyright (c) 2026 Musto Technologies LLC
 
+## [Unreleased]
+
+### Changed
+
+- Migrated workspace crates to Rust 2024 edition.
+- Auto-detect profile discovery now scans recursively and accepts XML/RDF filename token patterns used across CGMES 2.4.x and 3.x datasets.
+- Writer metadata defaults are now configurable through CLI flags (`--base-mva`, `--frequency-hz`, `--study-name`, `--timestamp-utc`).
+- Metadata timestamp now defaults to current UTC instead of a fixed epoch placeholder.
+- Fallback voltage-name inference now supports broader grid voltage ranges via numeric token extraction instead of a fixed regional list.
+- Aligned `raptrix.branding` constant text with the documented schema contract value.
+
+### Documentation
+
+- Added explicit compatibility/versioning rules for forward compatibility and MAJOR/MINOR/PATCH bump criteria in `docs/schema-contract.md`.
+
 ## [Schema Contract 0.6.0] - 2026-03-22
 
 ### Converter release: Crate version 0.1.3

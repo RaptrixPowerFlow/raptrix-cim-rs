@@ -66,6 +66,7 @@ That split keeps the locked RPF contract in one reusable place so future convert
 - Current schema contract: v0.6.0
 - Canonical source: raptrix-cim-arrow/src/schema.rs
 - Contract policy and semantics: docs/schema-contract.md
+- Target ingest compatibility: CGMES 2.4.x and CGMES 3.x profile sets (auto-detect and explicit mode supported)
 
 ### Versioning Policy
 
@@ -159,6 +160,13 @@ Auto-detect mode:
 
 - `cargo run --release -- convert --input-dir cgmes_case/ --output case.rpf`
 
+Optional metadata defaults for mixed-profile or partial datasets:
+
+- `--base-mva <FLOAT>` (default `100.0`)
+- `--frequency-hz <FLOAT>` (default `60.0`)
+- `--study-name <TEXT>`
+- `--timestamp-utc <RFC3339>`
+
 Inspect an existing `.rpf` file:
 
 - `cargo run --release -- view --input case.rpf`
@@ -167,7 +175,7 @@ Inspect an existing `.rpf` file with root metadata and feature flags:
 
 - `cargo run --release -- view --input case.rpf --verbose`
 
-The CLI requires `--output` to end with `.rpf`. In auto-detect mode it scans the provided directory for filenames containing `EQ`, `TP`, `SV`, `SSH`, and `DY` case-insensitively, and `EQ` must be present.
+The CLI requires `--output` to end with `.rpf`. In auto-detect mode it recursively scans the provided directory for XML/RDF files and matches filenames to `EQ`, `TP`, `SV`, `SSH`, and `DY` profile tokens case-insensitively; `EQ` must be present.
 
 ## First Working `.rpf` (Generate + View)
 
@@ -278,6 +286,8 @@ Large model archives should stay outside the repository.
 - Branch endpoint mapping currently relies on Terminal and ConnectivityNode references present in EQ.
 - Demo writer currently exercises buses/branches only; other locked contract: v0.6.0 tables are schema-defined and ready for row-mapping implementation.
 - Some solver fields are default-filled in integration mapping until richer profile joins (TP/SV/SSH) are added.
+- BaseVoltage joins are not fully modeled yet, so voltage labels for generated fallback names are heuristic and may be `unknown` for sparse naming inputs.
+- If CGMES metadata is absent, `base_mva` and `frequency_hz` use CLI defaults; set these explicitly for non-60 Hz systems.
 
 ## How To Request New Solver Features
 

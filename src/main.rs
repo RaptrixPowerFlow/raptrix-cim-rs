@@ -15,13 +15,13 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{ArgGroup, Parser, Subcommand};
 
 use raptrix_cim_rs::arrow_schema::BRANDING;
 use raptrix_cim_rs::rpf_writer::{
-    rpf_file_metadata, summarize_rpf, write_complete_rpf_with_options, BusResolutionMode,
-    WriteOptions,
+    BusResolutionMode, WriteOptions, rpf_file_metadata, summarize_rpf,
+    write_complete_rpf_with_options,
 };
 
 const COPYRIGHT: &str = "Copyright (c) 2026 Musto Technologies LLC";
@@ -100,6 +100,22 @@ struct ConvertArgs {
     /// Emit optional node-breaker detail tables for viewer/operations workflows.
     #[arg(long)]
     node_breaker: bool,
+
+    /// Default system base MVA used when CGMES profile metadata is unavailable.
+    #[arg(long, default_value_t = 100.0)]
+    base_mva: f64,
+
+    /// Default nominal system frequency used when profile metadata is unavailable.
+    #[arg(long, default_value_t = 60.0)]
+    frequency_hz: f64,
+
+    /// Optional study name override written into metadata.
+    #[arg(long)]
+    study_name: Option<String>,
+
+    /// Optional UTC timestamp override written into metadata (RFC3339 recommended).
+    #[arg(long)]
+    timestamp_utc: Option<String>,
 }
 
 #[derive(Debug, clap::Args)]
@@ -152,7 +168,10 @@ fn run_view(args: ViewArgs) -> Result<()> {
     println!("Tables: {}", summary.tables.len());
     println!("Total record batches: {}", summary.total_batches);
     println!("Total rows: {}", summary.total_rows);
-    println!("Canonical tables expected: {}", summary.canonical_table_count);
+    println!(
+        "Canonical tables expected: {}",
+        summary.canonical_table_count
+    );
     println!(
         "Canonical coverage: {}",
         if summary.has_all_canonical_tables {
@@ -170,9 +189,8 @@ fn run_view(args: ViewArgs) -> Result<()> {
     }
 
     if args.verbose {
-        let mut metadata_entries: Vec<(String, String)> = rpf_file_metadata(&input_path)?
-            .into_iter()
-            .collect();
+        let mut metadata_entries: Vec<(String, String)> =
+            rpf_file_metadata(&input_path)?.into_iter().collect();
         metadata_entries.sort_by(|left, right| left.0.cmp(&right.0));
 
         println!("Metadata:");
@@ -214,6 +232,10 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
             bus_resolution_mode: BusResolutionMode::ConnectivityDetail,
             emit_connectivity_groups: true,
             emit_node_breaker_detail: args.node_breaker,
+            base_mva: args.base_mva,
+            frequency_hz: args.frequency_hz,
+            study_name: args.study_name.clone(),
+            timestamp_utc: args.timestamp_utc.clone(),
         }
     } else {
         WriteOptions {
@@ -221,6 +243,10 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
             bus_resolution_mode: BusResolutionMode::Topological,
             emit_connectivity_groups: false,
             emit_node_breaker_detail: args.node_breaker,
+            base_mva: args.base_mva,
+            frequency_hz: args.frequency_hz,
+            study_name: args.study_name.clone(),
+            timestamp_utc: args.timestamp_utc.clone(),
         }
     };
 
@@ -228,7 +254,12 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
         .with_context(|| format!("failed to write Raptrix CIM-Arrow output to {output}"))?;
 
     let file_size = fs::metadata(&output_path)
-        .with_context(|| format!("failed to read output metadata for {}", output_path.display()))?
+        .with_context(|| {
+            format!(
+                "failed to read output metadata for {}",
+                output_path.display()
+            )
+        })?
         .len();
 
     println!("{BRANDING}");
@@ -247,7 +278,11 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
         CANONICAL_TABLE_COUNT + 1
     } else {
         CANONICAL_TABLE_COUNT
-    } + if write_options.emit_node_breaker_detail { 3 } else { 0 };
+    } + if write_options.emit_node_breaker_detail {
+        3
+    } else {
+        0
+    };
     println!("Tables emitted: {emitted_tables}");
     if summary.tp_merged {
         println!(
@@ -255,7 +290,9 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
             summary.connectivity_bus_count,
             summary.final_bus_count,
             100.0
-                * (summary.connectivity_bus_count.saturating_sub(summary.final_bus_count)) as f64
+                * (summary
+                    .connectivity_bus_count
+                    .saturating_sub(summary.final_bus_count)) as f64
                 / summary.connectivity_bus_count as f64
         );
     }
@@ -268,7 +305,10 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
     if write_options.emit_node_breaker_detail {
         println!("Node-breaker detail rows: {}", summary.node_breaker_rows);
         println!("Switch detail rows: {}", summary.switch_detail_rows);
-        println!("Connectivity nodes emitted: {}", summary.connectivity_node_rows);
+        println!(
+            "Connectivity nodes emitted: {}",
+            summary.connectivity_node_rows
+        );
     }
 
     Ok(())
@@ -321,7 +361,11 @@ fn collect_profile_paths(
 }
 
 fn has_explicit_profiles(args: &ConvertArgs) -> bool {
-    args.eq.is_some() || args.tp.is_some() || args.sv.is_some() || args.ssh.is_some() || args.dy.is_some()
+    args.eq.is_some()
+        || args.tp.is_some()
+        || args.sv.is_some()
+        || args.ssh.is_some()
+        || args.dy.is_some()
 }
 
 fn explicit_profiles(args: &ConvertArgs, cwd: &Path) -> Result<Vec<(String, PathBuf)>> {
@@ -372,29 +416,69 @@ fn detect_profiles(input_dir: &Path, cwd: &Path) -> Result<Vec<(String, PathBuf)
 }
 
 fn find_profile_file(input_dir: &Path, profile: &str) -> Result<Option<PathBuf>> {
-    let mut entries = fs::read_dir(input_dir)
-        .with_context(|| format!("failed to read input directory {}", input_dir.display()))?
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .with_context(|| format!("failed to enumerate input directory {}", input_dir.display()))?;
-    entries.sort_by_key(|entry| entry.file_name());
-
-    let needle = profile.to_ascii_lowercase();
-    for entry in entries {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-
+    let candidate_files = collect_profile_candidate_files(input_dir)?;
+    for path in candidate_files {
         let Some(name) = path.file_name().and_then(OsStr::to_str) else {
             continue;
         };
-        let lower_name = name.to_ascii_lowercase();
-        if lower_name.contains(&needle) && lower_name.ends_with(".xml") {
+        if filename_matches_profile(name, profile) {
             return Ok(Some(canonicalize_or_original(&path)));
         }
     }
 
     Ok(None)
+}
+
+fn collect_profile_candidate_files(input_dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    let mut stack = vec![input_dir.to_path_buf()];
+
+    while let Some(directory) = stack.pop() {
+        let entries = fs::read_dir(&directory)
+            .with_context(|| format!("failed to read input directory {}", directory.display()))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .with_context(|| {
+                format!(
+                    "failed to enumerate input directory {}",
+                    directory.display()
+                )
+            })?;
+
+        for entry in entries {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.is_file() && is_supported_profile_file(&path) {
+                files.push(path);
+            }
+        }
+    }
+
+    files.sort();
+    Ok(files)
+}
+
+fn is_supported_profile_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(OsStr::to_str)
+        .map(|ext| {
+            let lowered = ext.to_ascii_lowercase();
+            lowered == "xml" || lowered == "rdf"
+        })
+        .unwrap_or(false)
+}
+
+fn filename_matches_profile(name: &str, profile: &str) -> bool {
+    let needle = profile.to_ascii_lowercase();
+    let lowered = name.to_ascii_lowercase();
+
+    lowered
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .any(|token| token == needle)
+        || lowered.contains(&format!("_{needle}"))
+        || lowered.contains(&format!("-{needle}"))
 }
 
 fn normalize_existing_path(path: &Path, cwd: &Path) -> Result<PathBuf> {
@@ -440,7 +524,7 @@ fn mode_label(mode: DetectionMode) -> &'static str {
 fn format_profile_summary(profile_paths: &[(String, PathBuf)]) -> String {
     profile_paths
         .iter()
-    .map(|(profile, path)| format!("{profile}={}", path.display()))
+        .map(|(profile, path)| format!("{profile}={}", path.display()))
         .collect::<Vec<_>>()
         .join(", ")
 }

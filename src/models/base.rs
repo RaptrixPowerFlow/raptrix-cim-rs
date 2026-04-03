@@ -162,11 +162,8 @@ mod tests {
 
     #[test]
     fn base_attributes_new_owned() {
-        let attrs = BaseAttributes::new(
-            "uuid-001",
-            Some("Bus A"),
-            Some("HV busbar in substation 1"),
-        );
+        let attrs =
+            BaseAttributes::new("uuid-001", Some("Bus A"), Some("HV busbar in substation 1"));
         assert_eq!(attrs.mrid(), "uuid-001");
         assert_eq!(attrs.name(), Some("Bus A"));
         assert_eq!(attrs.description(), Some("HV busbar in substation 1"));
@@ -174,8 +171,7 @@ mod tests {
 
     #[test]
     fn base_attributes_new_no_optional_fields() {
-        let attrs: BaseAttributes<'_> =
-            BaseAttributes::new("uuid-002", None::<&str>, None::<&str>);
+        let attrs: BaseAttributes<'_> = BaseAttributes::new("uuid-002", None::<&str>, None::<&str>);
         assert_eq!(attrs.mrid(), "uuid-002");
         assert!(attrs.name().is_none());
         assert!(attrs.description().is_none());

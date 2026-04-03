@@ -13,8 +13,8 @@ use std::io::Cursor;
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{bail, Context, Result};
-use arrow::array::{new_null_array, Array, ArrayRef, StructArray};
+use anyhow::{Context, Result, bail};
+use arrow::array::{Array, ArrayRef, StructArray, new_null_array};
 use arrow::buffer::NullBuffer;
 use arrow::compute::concat;
 use arrow::datatypes::{DataType, Field, Schema};
@@ -24,9 +24,9 @@ use arrow::record_batch::RecordBatch;
 use memmap2::MmapOptions;
 
 use crate::schema::{
-    all_table_schemas, node_breaker_table_schemas, schema_metadata, table_schema, BRANDING,
-    SCHEMA_VERSION, TABLE_BRANCHES, TABLE_BUSES, TABLE_GENERATORS, TABLE_LOADS,
-    TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W,
+    BRANDING, SCHEMA_VERSION, TABLE_BRANCHES, TABLE_BUSES, TABLE_GENERATORS, TABLE_LOADS,
+    TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, all_table_schemas, node_breaker_table_schemas,
+    schema_metadata, table_schema,
 };
 
 /// Summary stats for a single logical table found in an `.rpf` file.
@@ -100,10 +100,9 @@ fn require_non_null_count_equals_len(
     batch: &RecordBatch,
     column_name: &str,
 ) -> Result<()> {
-    let index = batch
-        .schema()
-        .index_of(column_name)
-        .with_context(|| format!("missing required column '{column_name}' in table '{table_name}'"))?;
+    let index = batch.schema().index_of(column_name).with_context(|| {
+        format!("missing required column '{column_name}' in table '{table_name}'")
+    })?;
     let column = batch.column(index);
     let non_null_count = batch.num_rows().saturating_sub(column.null_count());
     if non_null_count != batch.num_rows() {
@@ -123,8 +122,12 @@ pub fn read_rpf_tables(path: impl AsRef<Path>) -> Result<Vec<(String, RecordBatc
     let mmap = unsafe { MmapOptions::new().map(&file) }
         .with_context(|| format!("failed to memory-map .rpf file at {}", path.display()))?;
 
-    let mut reader = FileReader::try_new(Cursor::new(&mmap[..]), None)
-        .with_context(|| format!("failed to open Arrow IPC file reader for {}", path.display()))?;
+    let mut reader = FileReader::try_new(Cursor::new(&mmap[..]), None).with_context(|| {
+        format!(
+            "failed to open Arrow IPC file reader for {}",
+            path.display()
+        )
+    })?;
 
     let reader_schema = reader.schema();
     let canonical_count = all_table_schemas().len();
@@ -191,10 +194,11 @@ pub fn read_rpf_tables(path: impl AsRef<Path>) -> Result<Vec<(String, RecordBatc
                 .map(|column| column.slice(0, expected_rows))
                 .collect();
 
-            let table_batch = RecordBatch::try_new(Arc::new(expected_schema.clone()), trimmed_columns)
-                .with_context(|| {
-                    format!("failed reconstructing table '{table_name}' from root record batch")
-                })?;
+            let table_batch =
+                RecordBatch::try_new(Arc::new(expected_schema.clone()), trimmed_columns)
+                    .with_context(|| {
+                        format!("failed reconstructing table '{table_name}' from root record batch")
+                    })?;
             out.push((table_name.to_string(), table_batch));
         }
     }
@@ -252,8 +256,12 @@ pub fn rpf_file_metadata(path: impl AsRef<Path>) -> Result<HashMap<String, Strin
     let mmap = unsafe { MmapOptions::new().map(&file) }
         .with_context(|| format!("failed to memory-map .rpf file at {}", path.display()))?;
 
-    let reader = FileReader::try_new(Cursor::new(&mmap[..]), None)
-        .with_context(|| format!("failed to open Arrow IPC file reader for {}", path.display()))?;
+    let reader = FileReader::try_new(Cursor::new(&mmap[..]), None).with_context(|| {
+        format!(
+            "failed to open Arrow IPC file reader for {}",
+            path.display()
+        )
+    })?;
 
     Ok(reader.schema().metadata().clone())
 }
@@ -273,7 +281,12 @@ pub fn write_root_rpf(
 
     let max_rows = table_specs
         .iter()
-        .map(|(name, _)| table_batches.get(name).map(RecordBatch::num_rows).unwrap_or(0))
+        .map(|(name, _)| {
+            table_batches
+                .get(name)
+                .map(RecordBatch::num_rows)
+                .unwrap_or(0)
+        })
         .max()
         .unwrap_or(0);
 
@@ -287,7 +300,10 @@ pub fn write_root_rpf(
         root_metadata.insert(row_count_metadata_key(table_name), row_count.to_string());
     }
     if options.include_node_breaker_detail {
-        root_metadata.insert("raptrix.features.node_breaker".to_string(), "true".to_string());
+        root_metadata.insert(
+            "raptrix.features.node_breaker".to_string(),
+            "true".to_string(),
+        );
     }
     root_schema = root_schema.with_metadata(root_metadata);
     let root_schema = Arc::new(root_schema);
@@ -306,10 +322,12 @@ pub fn write_root_rpf(
         let mut padded_columns: Vec<ArrayRef> = Vec::with_capacity(table_batch.num_columns());
         for column in table_batch.columns() {
             if table_batch.num_rows() < max_rows {
-                let null_tail = new_null_array(column.data_type(), max_rows - table_batch.num_rows());
-                let concatenated = concat(&[column.as_ref(), null_tail.as_ref()]).with_context(|| {
-                    format!("failed to pad table '{table_name}' to root row length")
-                })?;
+                let null_tail =
+                    new_null_array(column.data_type(), max_rows - table_batch.num_rows());
+                let concatenated =
+                    concat(&[column.as_ref(), null_tail.as_ref()]).with_context(|| {
+                        format!("failed to pad table '{table_name}' to root row length")
+                    })?;
                 padded_columns.push(concatenated);
             } else {
                 padded_columns.push(column.clone());
@@ -337,8 +355,12 @@ pub fn write_root_rpf(
     let root_batch = RecordBatch::try_new(root_schema.clone(), root_columns)
         .context("failed to build root RPF record batch")?;
 
-    let mut output = File::create(output_path)
-        .with_context(|| format!("failed to create output .rpf file at {}", output_path.display()))?;
+    let mut output = File::create(output_path).with_context(|| {
+        format!(
+            "failed to create output .rpf file at {}",
+            output_path.display()
+        )
+    })?;
     let mut writer = FileWriter::try_new(&mut output, &root_schema)
         .context("failed to initialize root Arrow IPC FileWriter")?;
     writer.write_metadata("raptrix.branding", BRANDING);

@@ -31,8 +31,7 @@ mod io;
 mod schema;
 
 pub use io::{
-    read_rpf_tables, root_rpf_schema, row_count_metadata_key, rpf_file_metadata,
-    summarize_rpf, validate_rpf_file, write_root_rpf, RootWriteOptions, RpfSummary,
-    TableSummary,
+    RootWriteOptions, RpfSummary, TableSummary, read_rpf_tables, root_rpf_schema,
+    row_count_metadata_key, rpf_file_metadata, summarize_rpf, validate_rpf_file, write_root_rpf,
 };
 pub use schema::*;

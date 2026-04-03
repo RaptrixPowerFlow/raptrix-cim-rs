@@ -6,6 +6,14 @@
 - Column order is stable and treated as part of the contract.
 - Column type and nullability changes require a version bump and migration note.
 
+## Compatibility Policy
+
+- CGMES ingest target is dual-track: the converter should accept common CGMES 2.4.x and 3.x profile naming/layout conventions.
+- The `.rpf` contract is forward compatible for additive changes only. Readers must ignore unknown trailing root columns and unknown file metadata keys.
+- Breaking file-format changes (required column rename/removal/reorder, required table rename/removal/reorder, type change for required fields) require a MAJOR contract bump.
+- Additive changes (new optional columns, new optional tables, new optional metadata keys) require at least a MINOR bump.
+- PATCH bumps are reserved for non-structural fixes: bug fixes, metadata text fixes, and documentation clarifications without wire-shape changes.
+
 ## File Metadata Keys
 
 Every `.rpf` file must include:
