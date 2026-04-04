@@ -12,3 +12,6 @@ Cargo.lock
 /tests/data/large/
 /tests/data/external/*
 !/tests/data/external/.gitkeep
+
+# Internal-only marketing guide must never be committed.
+INTERNAL-MARKETING-GUIDE.md

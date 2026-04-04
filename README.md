@@ -1,9 +1,25 @@
 # raptrix-cim-rs
-High-performance Rust implementation of the IEC 61970 Common Information Model (CIM), focused on a zero-copy-friendly pipeline from CGMES RDF/XML into the locked Raptrix PowerFlow Interchange (`.rpf`) Arrow IPC format for power-flow and SCED workflows.
+raptrix-cim-rs - the world's first high-performance zero-copy Rust implementation of IEC 61970 CIM optimized for real-time power flow and SCED.
 
-This project is MPL-2.0 licensed and branded for Musto Technologies LLC.
+Part of the Raptrix Powerflow ecosystem.
 
-Raptrix CIM-Arrow — High-performance open CIM profile by Musto Technologies LLC
+Related repositories:
+- [raptrix-psse-rs](https://github.com/MustoTechnologies/raptrix-psse-rs) - Unlimited-size PSS/E to RPF converter
+- [raptrix-studio](https://github.com/MustoTechnologies/raptrix-studio) - Free unlimited RPF viewer/editor
+- [MustoTechnologies organization](https://github.com/MustoTechnologies/) - Full open converter suite
+
+Quick start:
+
+```bash
+cargo run --release -- convert --input-dir cgmes_case/ --output case.rpf
+```
+
+![License: MPL-2.0](https://img.shields.io/badge/License-MPL%202.0-brightgreen.svg)
+MPL 2.0 - free to use, modify, and distribute.
+
+Production-grid usage is supported through the commercial Raptrix core platform: [raptrix-core](https://github.com/MustoTechnologies/raptrix-core).
+
+Enterprise and academic options: Flexible commercial licensing - contact us for seats, enterprise, or cloud options via [Raptrix website](https://www.raptrix.ai/) or [Musto Technologies](https://github.com/MustoTechnologies/).
 
 Copyright (c) 2026 Musto Technologies LLC
 

@@ -2,6 +2,10 @@
 
 Raptrix CIM-Arrow — High-performance open CIM profile by Musto Technologies LLC
 
+Part of the Raptrix Powerflow ecosystem.
+
+This crate supports the shared open converter suite published at [MustoTechnologies](https://github.com/MustoTechnologies/).
+
 Copyright (c) 2026 Musto Technologies LLC
 
 `raptrix-cim-arrow` is the shared crate for the locked Raptrix PowerFlow Interchange (`.rpf`) contract.
