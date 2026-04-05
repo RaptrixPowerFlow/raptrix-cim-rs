@@ -22,8 +22,8 @@ except ImportError:  # pragma: no cover - handled by skip branch below
     ipc = None
 
 
-BRANDING = "Raptrix CIM-Arrow / PowerFlow Interchange v0.8.0 - High-performance open CIM profile (CGMES 3.0+) by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC."
-SCHEMA_VERSION = "0.8.0"
+BRANDING = "Raptrix CIM-Arrow / PowerFlow Interchange v0.8.1 - High-performance open CIM profile (CGMES 3.0+) by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC."
+SCHEMA_VERSION = "0.8.1"
 CANONICAL_TABLE_ORDER = [
     "metadata",
     "buses",
@@ -69,6 +69,7 @@ def _read_rpf_tables(path: Path) -> list[tuple[str, pa.RecordBatch]]:
             table_batch = pa.RecordBatch.from_arrays(child_arrays, names=child_names)
             tables.append((table_name, table_batch))
 
+    del reader  # release memory map to avoid Windows file lock
     return tables
 
 
@@ -229,6 +230,7 @@ def _write_memory_snapshot(source_path: Path, snapshot_path: Path) -> None:
     with ipc.RecordBatchFileWriter(sink, reader.schema) as writer:
         for batch_idx in range(reader.num_record_batches):
             writer.write_batch(reader.get_batch(batch_idx))
+    del reader  # release memory map to avoid Windows file lock
     snapshot_path.write_bytes(sink.getvalue().to_pybytes())
 
 
@@ -300,6 +302,8 @@ def _run_profile_validation(
             "cargo",
             "run",
             "--release",
+            "--bin",
+            "raptrix-cim-rs",
             "--",
             "convert",
             "--eq",
@@ -358,6 +362,7 @@ def _run_profile_validation(
 
         file_reader = ipc.RecordBatchFileReader(pa.memory_map(str(output_path), "r"))
         file_schema_metadata = file_reader.schema.metadata or {}
+        del file_reader  # release memory map to avoid Windows file lock during cleanup
         assert b"raptrix.branding" in file_schema_metadata
         assert b"raptrix.version" in file_schema_metadata
         assert b"rpf_version" in file_schema_metadata
@@ -450,18 +455,21 @@ def _run_profile_validation(
             f"First branch x mismatch: expected {expected_first_x}, got {first_branch_x}"
         )
 
+        metadata_batch = table_map["metadata"]
+        base_mva_value = float(metadata_batch.column("base_mva")[0].as_py())
+
         if expected_first_generator_p is not None and generators_batch.num_rows > 0:
             generator_table = pa.Table.from_batches([generators_batch])
-            first_generator_p = float(generator_table.column("p_sched_mw")[0].as_py())
-            assert first_generator_p == pytest.approx(expected_first_generator_p), (
-                f"First generator p_sched_mw mismatch: expected {expected_first_generator_p}, got {first_generator_p}"
+            first_generator_p = float(generator_table.column("p_sched_pu")[0].as_py())
+            assert first_generator_p == pytest.approx(expected_first_generator_p / base_mva_value), (
+                f"First generator p_sched_pu mismatch: expected {expected_first_generator_p / base_mva_value}, got {first_generator_p}"
             )
 
         if expected_first_load_p is not None and loads_batch.num_rows > 0:
             load_table = pa.Table.from_batches([loads_batch])
-            first_load_p = float(load_table.column("p_mw")[0].as_py())
-            assert first_load_p == pytest.approx(expected_first_load_p), (
-                f"First load p_mw mismatch: expected {expected_first_load_p}, got {first_load_p}"
+            first_load_p = float(load_table.column("p_pu")[0].as_py())
+            assert first_load_p == pytest.approx(expected_first_load_p / base_mva_value), (
+                f"First load p_pu mismatch: expected {expected_first_load_p / base_mva_value}, got {first_load_p}"
             )
 
         snapshot_path = repo_root / "tests" / "data" / "fixtures" / "memory_snapshot.rpf"
