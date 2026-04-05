@@ -22,8 +22,8 @@ except ImportError:  # pragma: no cover - handled by skip branch below
     ipc = None
 
 
-BRANDING = "Raptrix CIM-Arrow / PowerFlow Interchange v0.8.1 - High-performance open CIM profile (CGMES 3.0+) by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC."
-SCHEMA_VERSION = "0.8.1"
+BRANDING = "Raptrix CIM-Arrow / PowerFlow Interchange v0.8.2 - High-performance open CIM profile (CGMES 3.0+) by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC."
+SCHEMA_VERSION = "0.8.2"
 CANONICAL_TABLE_ORDER = [
     "metadata",
     "buses",
@@ -366,9 +366,16 @@ def _run_profile_validation(
         assert b"raptrix.branding" in file_schema_metadata
         assert b"raptrix.version" in file_schema_metadata
         assert b"rpf_version" in file_schema_metadata
+        assert b"rpf.case_fingerprint" in file_schema_metadata
+        assert b"rpf.validation_mode" in file_schema_metadata
         assert file_schema_metadata[b"raptrix.branding"].decode("utf-8") == BRANDING
         assert file_schema_metadata[b"raptrix.version"].decode("utf-8") == SCHEMA_VERSION
         assert file_schema_metadata[b"rpf_version"].decode("utf-8") == SCHEMA_VERSION
+        assert file_schema_metadata[b"rpf.case_fingerprint"].decode("utf-8")
+        assert file_schema_metadata[b"rpf.validation_mode"].decode("utf-8") in {
+            "topology_only",
+            "solved_ready",
+        }
 
         table_map = {name: batch for name, batch in tables}
         buses_batch = table_map["buses"]
@@ -457,6 +464,16 @@ def _run_profile_validation(
 
         metadata_batch = table_map["metadata"]
         base_mva_value = float(metadata_batch.column("base_mva")[0].as_py())
+        assert metadata_batch.column("source_case_id")[0].as_py()
+        assert metadata_batch.column("snapshot_timestamp_utc")[0].as_py()
+        assert metadata_batch.column("case_fingerprint")[0].as_py()
+        assert metadata_batch.column("validation_mode")[0].as_py() in {
+            "topology_only",
+            "solved_ready",
+        }
+
+        buses_table = pa.Table.from_batches([buses_batch])
+        assert buses_table.column("bus_uuid").null_count == 0
 
         if expected_first_generator_p is not None and generators_batch.num_rows > 0:
             generator_table = pa.Table.from_batches([generators_batch])
