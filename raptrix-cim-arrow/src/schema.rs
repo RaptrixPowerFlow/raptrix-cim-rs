@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.8.0 profile.
+//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.8.1 profile.
 //!
 //! **CGMES 3.0+ Only**: This module targets CGMES v3.0 and later (v17+ CIM) merged profiles.
 //! Support for legacy CGMES 2.4.x was dropped in this release for simplicity and performance.
@@ -17,14 +17,15 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, Schema};
 
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.8.0 - High-performance open CIM profile (CGMES 3.0+) by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.8.1 - High-performance open CIM profile (CGMES 3.0+) by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.";
 
 /// Canonical RPF format version tag embedded as file-level metadata.
-pub const RPF_VERSION: &str = "0.8.0";
+pub const RPF_VERSION: &str = "0.8.1";
 
 /// Supported RPF versions accepted by generic Arrow IPC readers.
-/// v0.8.0 introduces diagram layout support and drops CGMES 2.4.x compatibility.
-pub const SUPPORTED_RPF_VERSIONS: &[&str] = &["0.8.0", "0.7.1", "0.7.0"];
+/// v0.8.1 normalizes all power/admittance fields to per-unit on base_mva.
+/// v0.8.0 introduced diagram layout support and dropped CGMES 2.4.x compatibility.
+pub const SUPPORTED_RPF_VERSIONS: &[&str] = &["0.8.1", "0.8.0", "0.7.1", "0.7.0"];
 
 /// Backward-compatible alias retained for older call sites.
 pub const SCHEMA_VERSION: &str = RPF_VERSION;
@@ -270,11 +271,11 @@ pub fn generators_schema() -> Schema {
         vec![
             Field::new("bus_id", DataType::Int32, false),
             Field::new("id", dict_utf8(), false),
-            Field::new("p_sched_mw", DataType::Float64, false),
-            Field::new("p_min_mw", DataType::Float64, false),
-            Field::new("p_max_mw", DataType::Float64, false),
-            Field::new("q_min_mvar", DataType::Float64, false),
-            Field::new("q_max_mvar", DataType::Float64, false),
+            Field::new("p_sched_pu", DataType::Float64, false),
+            Field::new("p_min_pu", DataType::Float64, false),
+            Field::new("p_max_pu", DataType::Float64, false),
+            Field::new("q_min_pu", DataType::Float64, false),
+            Field::new("q_max_pu", DataType::Float64, false),
             Field::new("status", DataType::Boolean, false),
             Field::new("mbase_mva", DataType::Float64, false),
             Field::new("H", DataType::Float64, false),
@@ -293,8 +294,8 @@ pub fn loads_schema() -> Schema {
             Field::new("bus_id", DataType::Int32, false),
             Field::new("id", dict_utf8(), false),
             Field::new("status", DataType::Boolean, false),
-            Field::new("p_mw", DataType::Float64, false),
-            Field::new("q_mvar", DataType::Float64, false),
+            Field::new("p_pu", DataType::Float64, false),
+            Field::new("q_pu", DataType::Float64, false),
             Field::new("name", dict_utf8_u32(), true),
         ],
         schema_metadata(),
@@ -308,8 +309,8 @@ pub fn fixed_shunts_schema() -> Schema {
             Field::new("bus_id", DataType::Int32, false),
             Field::new("id", dict_utf8(), false),
             Field::new("status", DataType::Boolean, false),
-            Field::new("g_mw", DataType::Float64, false),
-            Field::new("b_mvar", DataType::Float64, false),
+            Field::new("g_pu", DataType::Float64, false),
+            Field::new("b_pu", DataType::Float64, false),
         ],
         schema_metadata(),
     )

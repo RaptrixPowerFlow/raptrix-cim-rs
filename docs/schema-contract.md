@@ -1,4 +1,4 @@
-# Schema Contract (Locked contract: v0.8.0 — CGMES 3.0+ Only)
+# Schema Contract (Locked contract: v0.8.1 — CGMES 3.0+ Only)
 
 ## Contract Policy
 
@@ -32,7 +32,7 @@ Every `.rpf` file must include:
 Current locked values:
 
 - `raptrix.version = 0.8.0`
-- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.8.0 - High-performance open profile by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.`
+- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.8.1 - High-performance open profile by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.`
 
 Optional file-level metadata keys:
 
@@ -201,11 +201,11 @@ This section is normative for external parser authors.
 
 - `bus_id`: Int32, required
 - `id`: Dictionary<Int32, Utf8>, required
-- `p_sched_mw`: Float64, required
-- `p_min_mw`: Float64, required
-- `p_max_mw`: Float64, required
-- `q_min_mvar`: Float64, required
-- `q_max_mvar`: Float64, required
+- `p_sched_pu`: Float64, required
+- `p_min_pu`: Float64, required
+- `p_max_pu`: Float64, required
+- `q_min_pu`: Float64, required
+- `q_max_pu`: Float64, required
 - `status`: Boolean, required
 - `mbase_mva`: Float64, required
 - `H`: Float64, required
@@ -218,8 +218,8 @@ This section is normative for external parser authors.
 - `bus_id`: Int32, required
 - `id`: Dictionary<Int32, Utf8>, required
 - `status`: Boolean, required
-- `p_mw`: Float64, required
-- `q_mvar`: Float64, required
+- `p_pu`: Float64, required
+- `q_pu`: Float64, required
 - `name`: Dictionary<UInt32, Utf8>, nullable
 
 ### fixed_shunts
@@ -227,8 +227,8 @@ This section is normative for external parser authors.
 - `bus_id`: Int32, required
 - `id`: Dictionary<Int32, Utf8>, required
 - `status`: Boolean, required
-- `g_mw`: Float64, required
-- `b_mvar`: Float64, required
+- `g_pu`: Float64, required
+- `b_pu`: Float64, required
 
 ### switched_shunts
 

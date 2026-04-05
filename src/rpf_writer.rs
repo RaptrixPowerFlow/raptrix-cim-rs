@@ -821,7 +821,7 @@ fn is_topology_only_zero_injection_case(
     buses_zero && loads_zero && gens_zero
 }
 
-/// Writes a complete Raptrix v0.8.0 `.rpf` Arrow IPC file.
+/// Writes a complete Raptrix v0.8.1 `.rpf` Arrow IPC file.
 ///
 /// The writer materializes all required canonical tables (empty tables
 /// allowed) as struct columns in one root record batch.
@@ -930,14 +930,14 @@ pub fn write_complete_rpf_with_options(
     let metadata_batch = build_metadata_batch(&metadata_row)?;
     let buses_batch = build_buses_batch(&bus_rows)?;
     let branches_batch = build_branches_batch(&branch_rows)?;
-    let generators_batch = build_generators_batch(&gen_rows)?;
-    let loads_batch = build_loads_batch(&load_rows)?;
+    let generators_batch = build_generators_batch(&gen_rows, options.base_mva)?;
+    let loads_batch = build_loads_batch(&load_rows, options.base_mva)?;
     let transformers_2w_batch = build_transformers_2w_batch(&transformer_2w_rows)?;
     let transformers_3w_batch = build_transformers_3w_batch(&transformer_3w_rows)?;
     let areas_batch = build_areas_batch(&area_rows)?;
     let zones_batch = build_zones_batch(&zone_rows)?;
     let owners_batch = build_owners_batch(&owner_rows)?;
-    let fixed_shunts_batch = build_fixed_shunts_batch(&fixed_shunt_rows)?;
+    let fixed_shunts_batch = build_fixed_shunts_batch(&fixed_shunt_rows, options.base_mva)?;
     let switched_shunts_batch = build_switched_shunts_batch(&switched_shunt_rows)?;
     let (contingencies_rows, contingencies_are_stub) =
         contingency_rows_from_switches_and_stubs(&node_breaker_rows, split_bus_stub_elements);
@@ -3009,16 +3009,16 @@ fn build_branches_batch(rows: &[BranchRow<'_>]) -> Result<RecordBatch> {
     RecordBatch::try_new(schema, arrays).context("failed to build branches record batch")
 }
 
-fn build_generators_batch(rows: &[GenRow<'_>]) -> Result<RecordBatch> {
+fn build_generators_batch(rows: &[GenRow<'_>], base_mva: f64) -> Result<RecordBatch> {
     let schema = Arc::new(generators_schema());
 
     let mut bus_id_b = Int32Builder::new();
     let mut id_b = StringDictionaryBuilder::<Int32Type>::new();
-    let mut p_sched_mw_b = Float64Builder::new();
-    let mut p_min_mw_b = Float64Builder::new();
-    let mut p_max_mw_b = Float64Builder::new();
-    let mut q_min_mvar_b = Float64Builder::new();
-    let mut q_max_mvar_b = Float64Builder::new();
+    let mut p_sched_pu_b = Float64Builder::new();
+    let mut p_min_pu_b = Float64Builder::new();
+    let mut p_max_pu_b = Float64Builder::new();
+    let mut q_min_pu_b = Float64Builder::new();
+    let mut q_max_pu_b = Float64Builder::new();
     let mut status_b = BooleanBuilder::new();
     let mut mbase_mva_b = Float64Builder::new();
     let mut h_b = Float64Builder::new();
@@ -3029,11 +3029,11 @@ fn build_generators_batch(rows: &[GenRow<'_>]) -> Result<RecordBatch> {
     for row in rows {
         bus_id_b.append_value(row.bus_id);
         id_b.append(row.id.as_ref())?;
-        p_sched_mw_b.append_value(row.p_sched_mw);
-        p_min_mw_b.append_value(row.p_min_mw);
-        p_max_mw_b.append_value(row.p_max_mw);
-        q_min_mvar_b.append_value(row.q_min_mvar);
-        q_max_mvar_b.append_value(row.q_max_mvar);
+        p_sched_pu_b.append_value(row.p_sched_mw / base_mva);
+        p_min_pu_b.append_value(row.p_min_mw / base_mva);
+        p_max_pu_b.append_value(row.p_max_mw / base_mva);
+        q_min_pu_b.append_value(row.q_min_mvar / base_mva);
+        q_max_pu_b.append_value(row.q_max_mvar / base_mva);
         status_b.append_value(row.status);
         mbase_mva_b.append_value(row.mbase_mva);
         h_b.append_value(row.h);
@@ -3045,11 +3045,11 @@ fn build_generators_batch(rows: &[GenRow<'_>]) -> Result<RecordBatch> {
     let arrays: Vec<ArrayRef> = vec![
         Arc::new(bus_id_b.finish()) as ArrayRef,
         Arc::new(id_b.finish()) as ArrayRef,
-        Arc::new(p_sched_mw_b.finish()) as ArrayRef,
-        Arc::new(p_min_mw_b.finish()) as ArrayRef,
-        Arc::new(p_max_mw_b.finish()) as ArrayRef,
-        Arc::new(q_min_mvar_b.finish()) as ArrayRef,
-        Arc::new(q_max_mvar_b.finish()) as ArrayRef,
+        Arc::new(p_sched_pu_b.finish()) as ArrayRef,
+        Arc::new(p_min_pu_b.finish()) as ArrayRef,
+        Arc::new(p_max_pu_b.finish()) as ArrayRef,
+        Arc::new(q_min_pu_b.finish()) as ArrayRef,
+        Arc::new(q_max_pu_b.finish()) as ArrayRef,
         Arc::new(status_b.finish()) as ArrayRef,
         Arc::new(mbase_mva_b.finish()) as ArrayRef,
         Arc::new(h_b.finish()) as ArrayRef,
@@ -3065,22 +3065,22 @@ fn build_generators_batch(rows: &[GenRow<'_>]) -> Result<RecordBatch> {
 ///
 /// Tenet 1: preserves borrowed IDs until Arrow append points.
 /// Tenet 2: writes exact locked v0.5 `loads` schema ordering.
-fn build_loads_batch(rows: &[LoadRow<'_>]) -> Result<RecordBatch> {
+fn build_loads_batch(rows: &[LoadRow<'_>], base_mva: f64) -> Result<RecordBatch> {
     let schema = Arc::new(loads_schema());
 
     let mut bus_id_b = Int32Builder::new();
     let mut id_b = StringDictionaryBuilder::<Int32Type>::new();
     let mut status_b = BooleanBuilder::new();
-    let mut p_mw_b = Float64Builder::new();
-    let mut q_mvar_b = Float64Builder::new();
+    let mut p_pu_b = Float64Builder::new();
+    let mut q_pu_b = Float64Builder::new();
     let mut name_b = StringDictionaryBuilder::<UInt32Type>::new();
 
     for row in rows {
         bus_id_b.append_value(row.bus_id);
         id_b.append(row.id.as_ref())?;
         status_b.append_value(row.status);
-        p_mw_b.append_value(row.p_mw);
-        q_mvar_b.append_value(row.q_mvar);
+        p_pu_b.append_value(row.p_mw / base_mva);
+        q_pu_b.append_value(row.q_mvar / base_mva);
         name_b.append(row.name.as_ref())?;
     }
 
@@ -3088,8 +3088,8 @@ fn build_loads_batch(rows: &[LoadRow<'_>]) -> Result<RecordBatch> {
         Arc::new(bus_id_b.finish()) as ArrayRef,
         Arc::new(id_b.finish()) as ArrayRef,
         Arc::new(status_b.finish()) as ArrayRef,
-        Arc::new(p_mw_b.finish()) as ArrayRef,
-        Arc::new(q_mvar_b.finish()) as ArrayRef,
+        Arc::new(p_pu_b.finish()) as ArrayRef,
+        Arc::new(q_pu_b.finish()) as ArrayRef,
         Arc::new(name_b.finish()) as ArrayRef,
     ];
 
@@ -3350,29 +3350,29 @@ fn build_owners_batch(rows: &[OwnerRow<'_>]) -> Result<RecordBatch> {
     RecordBatch::try_new(schema, arrays).context("failed to build owners record batch")
 }
 
-fn build_fixed_shunts_batch(rows: &[FixedShuntRow<'_>]) -> Result<RecordBatch> {
+fn build_fixed_shunts_batch(rows: &[FixedShuntRow<'_>], base_mva: f64) -> Result<RecordBatch> {
     let schema = Arc::new(fixed_shunts_schema());
 
     let mut bus_id_b = Int32Builder::new();
     let mut id_b = StringDictionaryBuilder::<Int32Type>::new();
     let mut status_b = BooleanBuilder::new();
-    let mut g_mw_b = Float64Builder::new();
-    let mut b_mvar_b = Float64Builder::new();
+    let mut g_pu_b = Float64Builder::new();
+    let mut b_pu_b = Float64Builder::new();
 
     for row in rows {
         bus_id_b.append_value(row.bus_id);
         id_b.append(row.id.as_ref())?;
         status_b.append_value(row.status);
-        g_mw_b.append_value(row.g_mw);
-        b_mvar_b.append_value(row.b_mvar);
+        g_pu_b.append_value(row.g_mw / base_mva);
+        b_pu_b.append_value(row.b_mvar / base_mva);
     }
 
     let arrays: Vec<ArrayRef> = vec![
         Arc::new(bus_id_b.finish()) as ArrayRef,
         Arc::new(id_b.finish()) as ArrayRef,
         Arc::new(status_b.finish()) as ArrayRef,
-        Arc::new(g_mw_b.finish()) as ArrayRef,
-        Arc::new(b_mvar_b.finish()) as ArrayRef,
+        Arc::new(g_pu_b.finish()) as ArrayRef,
+        Arc::new(b_pu_b.finish()) as ArrayRef,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build fixed_shunts record batch")
