@@ -1,4 +1,4 @@
-# Schema Contract (Locked contract: v0.8.1 — CGMES 3.0+ Only)
+# Schema Contract (Locked contract: v0.8.2 — CGMES 3.0+ Only)
 
 ## Contract Policy
 
@@ -31,8 +31,10 @@ Every `.rpf` file must include:
 
 Current locked values:
 
-- `raptrix.version = 0.8.0`
-- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.8.1 - High-performance open profile by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.`
+- `raptrix.version = 0.8.2`
+- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.8.2 - High-performance open profile by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.`
+- `rpf.case_fingerprint = <required deterministic case identity fingerprint>`
+- `rpf.validation_mode = topology_only | solved_ready`
 
 Optional file-level metadata keys:
 
@@ -154,6 +156,10 @@ This section is normative for external parser authors.
 - `timestamp_utc`: Utf8, required
 - `raptrix_version`: Utf8, required
 - `is_planning_case`: Boolean, required
+- `source_case_id`: Dictionary<Int32, Utf8>, required
+- `snapshot_timestamp_utc`: Utf8, required
+- `case_fingerprint`: Utf8, required
+- `validation_mode`: Dictionary<Int32, Utf8>, required
 - `custom_metadata`: Map<String, String>, nullable
 
 ### buses
@@ -177,6 +183,7 @@ This section is normative for external parser authors.
 - `p_min_agg`: Float64, required
 - `p_max_agg`: Float64, required
 - `nominal_kv`: Float64, nullable
+- `bus_uuid`: Dictionary<Int32, Utf8>, required
 
 ### branches
 

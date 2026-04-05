@@ -9,6 +9,32 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Musto Technologies LL
 
 Copyright (c) 2026 Musto Technologies LLC
 
+## [Schema Contract 0.8.2] - 2026-04-05
+
+### Converter release: Crate version 0.2.1 | Arrow schema v0.8.2
+
+### ⚠️ BREAKING CHANGE
+
+- `buses.bus_uuid` is now required (non-null).
+- `metadata` now includes required case identity and validation fields:
+  - `source_case_id`
+  - `snapshot_timestamp_utc`
+  - `case_fingerprint`
+  - `validation_mode`
+
+### Added
+
+- Required root metadata keys:
+  - `rpf.case_fingerprint`
+  - `rpf.validation_mode`
+- Deterministic case fingerprint generation from source paths + file metadata + snapshot timestamp.
+
+### Changed
+
+- Branding and version constants bumped to v0.8.2.
+- `SUPPORTED_RPF_VERSIONS` now includes v0.8.2 as current.
+- Test validation now enforces required metadata columns and non-null `buses.bus_uuid`.
+
 ## [Schema Contract 0.8.0] - 2026-04-05
 
 ### Converter release: Crate version 0.2.1 | Arrow schema v0.8.0

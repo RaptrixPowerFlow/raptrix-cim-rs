@@ -57,7 +57,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 | Connectivity detail | `--connectivity-detail` | Granular ConnectivityNode bus mapping; emits optional `connectivity_groups` table |
 | Node-breaker | `--connectivity-detail --node-breaker` | Adds switch-topology detail tables for operational and viewer workflows |
 
-### Output tables (schema contract v0.8.0)
+### Output tables (schema contract v0.8.2)
 
 **15 canonical tables (always emitted):** `metadata`, `buses`, `branches`, `generators`, `loads`, `fixed_shunts`, `switched_shunts`, `transformers_2w`, `transformers_3w`, `areas`, `zones`, `owners`, `contingencies`, `interfaces`, `dynamics_models`
 
@@ -90,7 +90,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 
 ## Data Contract (Locked)
 
-- Current schema contract: v0.8.0 (CGMES 3.0+ only)
+- Current schema contract: v0.8.2 (CGMES 3.0+ only)
 - Canonical source: raptrix-cim-arrow/src/schema.rs
 - Contract policy and semantics: docs/schema-contract.md
 - Cross-repo propagation workflow: docs/release-sync-workflow.md
@@ -98,7 +98,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 
 ### Versioning Policy
 
-Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is now locked at schema `v0.8.0` for interoperability and deterministic CGMES 3.0+ ingest behavior, while the converter crate release tracks implementation maturity and is currently `0.2.1`.
+Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is now locked at schema `v0.8.2` for interoperability and deterministic CGMES 3.0+ ingest behavior, while the converter crate release tracks implementation maturity and is currently `0.2.1`.
 
 This split preserves compatibility guarantees for downstream tools: existing `v0.5.2` Parquet artifacts remain valid to read on the core path, and new `v0.8.0` optional features (diagram layout via DL profile) are additive only. **Breaking change in v0.8.0**: CGMES 2.4.x support was removed. All ingest is now CGMES 3.0+ only.
 
@@ -166,13 +166,20 @@ All conversions are zero-copy headless — no readback or post-write validation 
 
 ## Project Layout
 
-- raptrix-cim-arrow/src/schema.rs: v0.8.0 table schemas, metadata constants, and schema registry helpers
+- raptrix-cim-arrow/src/schema.rs: v0.8.2 table schemas, metadata constants, and schema registry helpers
 - raptrix-cim-arrow/src/io.rs: generic root `.rpf` assembly, validation, readback, and summary helpers
 - src/models: CIM data structures and traits
 - src/parser.rs: parse helpers and EQ-to-branch mapping
 - src/rpf_writer.rs: CIM-specific mapping from parsed CGMES content into canonical table batches
 
-### Locked contract: v0.8.0 additive fields
+### Locked contract: v0.8.x notable fields
+
+- v0.8.2 required additions:
+	- `buses.bus_uuid` is required (non-null)
+	- `metadata.source_case_id` required
+	- `metadata.snapshot_timestamp_utc` required
+	- `metadata.case_fingerprint` required
+	- `metadata.validation_mode` required (`topology_only` or `solved_ready`)
 
 - Added optional dictionary-encoded `name` columns to:
 	- branches

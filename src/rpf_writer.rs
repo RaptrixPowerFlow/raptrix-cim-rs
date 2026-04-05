@@ -28,17 +28,20 @@ use arrow::datatypes::{DataType, Field, Int32Type, UInt32Type};
 use arrow::record_batch::RecordBatch;
 use chrono::Utc;
 use raptrix_cim_arrow::{RootWriteOptions, write_root_rpf_with_metadata};
+use sha2::{Digest, Sha256};
 pub use raptrix_cim_arrow::{
     RpfSummary, TableSummary, read_rpf_tables, rpf_file_metadata, summarize_rpf,
 };
 
 use crate::arrow_schema::{
-    METADATA_KEY_FEATURE_TOPOLOGY_ONLY, METADATA_KEY_FEATURE_ZERO_INJECTION_STUB,
+    METADATA_KEY_CASE_FINGERPRINT, METADATA_KEY_FEATURE_TOPOLOGY_ONLY,
+    METADATA_KEY_FEATURE_ZERO_INJECTION_STUB,
     METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_GENERATION_ISLAND_COUNT,
     METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_LOAD_ISLAND_COUNT,
     METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_NETWORK_ISLAND_COUNT,
     METADATA_KEY_TOPOLOGY_DETACHED_ISLANDS_PRESENT, METADATA_KEY_TOPOLOGY_ISLAND_COUNT,
     METADATA_KEY_TOPOLOGY_MAIN_ISLAND_BUS_COUNT,
+    METADATA_KEY_VALIDATION_MODE,
     SCHEMA_VERSION, TABLE_AREAS, TABLE_BRANCHES, TABLE_BUSES, TABLE_CONNECTIVITY_NODES,
     TABLE_CONTINGENCIES, TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_DYNAMICS_MODELS,
     TABLE_FIXED_SHUNTS, TABLE_GENERATORS, TABLE_INTERFACES, TABLE_LOADS, TABLE_METADATA,
@@ -132,6 +135,10 @@ struct MetadataRow<'a> {
     timestamp_utc: Cow<'a, str>,
     raptrix_version: Cow<'a, str>,
     is_planning_case: bool,
+    source_case_id: Cow<'a, str>,
+    snapshot_timestamp_utc: Cow<'a, str>,
+    case_fingerprint: Cow<'a, str>,
+    validation_mode: Cow<'a, str>,
 }
 
 #[derive(Debug, Clone)]
@@ -155,8 +162,11 @@ struct BusRow<'a> {
     p_min_agg: f64,
     p_max_agg: f64,
     nominal_kv: Option<f64>,
-    bus_uuid: Option<Cow<'a, str>>,
+    bus_uuid: Cow<'a, str>,
 }
+
+const VALIDATION_MODE_TOPOLOGY_ONLY: &str = "topology_only";
+const VALIDATION_MODE_SOLVED_READY: &str = "solved_ready";
 
 #[derive(Debug, Clone)]
 struct BranchRow<'a> {
@@ -496,6 +506,49 @@ fn infer_study_name(cgmes_paths: &[&str]) -> String {
 
 fn current_timestamp_utc() -> String {
     Utc::now().to_rfc3339()
+}
+
+fn compute_case_fingerprint(
+    cgmes_paths: &[&str],
+    source_case_id: &str,
+    snapshot_timestamp_utc: &str,
+) -> Result<String> {
+    let mut normalized_paths: Vec<&str> = cgmes_paths.to_vec();
+    normalized_paths.sort_unstable();
+
+    let mut hasher = Sha256::new();
+    hasher.update(b"rpf_case_fingerprint_v1\n");
+    hasher.update(source_case_id.as_bytes());
+    hasher.update(b"\n");
+    hasher.update(snapshot_timestamp_utc.as_bytes());
+    hasher.update(b"\n");
+
+    for path in normalized_paths {
+        let path_obj = Path::new(path);
+        let metadata = std::fs::metadata(path_obj)
+            .with_context(|| format!("failed to read metadata for fingerprint input: {path}"))?;
+        let modified_epoch_ns = metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let canonical_path = path_obj
+            .canonicalize()
+            .unwrap_or_else(|_| path_obj.to_path_buf())
+            .to_string_lossy()
+            .into_owned();
+
+        hasher.update(canonical_path.as_bytes());
+        hasher.update(b"|");
+        hasher.update(metadata.len().to_string().as_bytes());
+        hasher.update(b"|");
+        hasher.update(modified_epoch_ns.to_string().as_bytes());
+        hasher.update(b"\n");
+    }
+
+    let digest = hasher.finalize();
+    Ok(format!("{:x}", digest))
 }
 
 fn validate_pre_write_contract(
@@ -907,24 +960,36 @@ pub fn write_complete_rpf_with_options(
         &transformer_3w_rows,
     )?;
 
+    let study_name = options
+        .study_name
+        .clone()
+        .unwrap_or_else(|| infer_study_name(cgmes_paths));
+    let snapshot_timestamp_utc = options
+        .timestamp_utc
+        .clone()
+        .unwrap_or_else(current_timestamp_utc);
+    let case_fingerprint =
+        compute_case_fingerprint(cgmes_paths, &study_name, &snapshot_timestamp_utc)?;
+    let topology_only_zero_injection =
+        is_topology_only_zero_injection_case(&bus_rows, &load_rows, &gen_rows);
+    let validation_mode = if topology_only_zero_injection {
+        VALIDATION_MODE_TOPOLOGY_ONLY
+    } else {
+        VALIDATION_MODE_SOLVED_READY
+    };
+
     let metadata_row = MetadataRow {
         base_mva: options.base_mva,
         frequency_hz: options.frequency_hz,
         psse_version: 35,
-        study_name: Cow::Owned(
-            options
-                .study_name
-                .clone()
-                .unwrap_or_else(|| infer_study_name(cgmes_paths)),
-        ),
-        timestamp_utc: Cow::Owned(
-            options
-                .timestamp_utc
-                .clone()
-                .unwrap_or_else(current_timestamp_utc),
-        ),
+        study_name: Cow::Owned(study_name.clone()),
+        timestamp_utc: Cow::Owned(snapshot_timestamp_utc.clone()),
         raptrix_version: Cow::Borrowed(SCHEMA_VERSION),
         is_planning_case: true,
+        source_case_id: Cow::Owned(study_name),
+        snapshot_timestamp_utc: Cow::Owned(snapshot_timestamp_utc),
+        case_fingerprint: Cow::Owned(case_fingerprint.clone()),
+        validation_mode: Cow::Borrowed(validation_mode),
     };
 
     let metadata_batch = build_metadata_batch(&metadata_row)?;
@@ -994,9 +1059,6 @@ pub fn write_complete_rpf_with_options(
         &load_rows,
         &gen_rows,
     );
-    let topology_only_zero_injection =
-        is_topology_only_zero_injection_case(&bus_rows, &load_rows, &gen_rows);
-
     let mut additional_root_metadata: HashMap<String, String> = HashMap::new();
     additional_root_metadata.insert(
         METADATA_KEY_TOPOLOGY_ISLAND_COUNT.to_string(),
@@ -1033,6 +1095,11 @@ pub fn write_complete_rpf_with_options(
     additional_root_metadata.insert(
         METADATA_KEY_FEATURE_ZERO_INJECTION_STUB.to_string(),
         topology_only_zero_injection.to_string(),
+    );
+    additional_root_metadata.insert(METADATA_KEY_CASE_FINGERPRINT.to_string(), case_fingerprint);
+    additional_root_metadata.insert(
+        METADATA_KEY_VALIDATION_MODE.to_string(),
+        validation_mode.to_string(),
     );
 
     write_root_rpf_with_metadata(
@@ -1870,7 +1937,7 @@ fn parse_eq_topology_rows(
             p_min_agg: 0.0,
             p_max_agg: 0.0,
             nominal_kv: bus_nominal_kv_by_key.get(*bus_key).copied(),
-            bus_uuid: Some(Cow::Owned((*bus_key).to_owned())),
+            bus_uuid: Cow::Owned((*bus_key).to_owned()),
         })
         .collect();
 
@@ -2830,6 +2897,10 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
     let mut timestamp_b = StringBuilder::new();
     let mut raptrix_version_b = StringBuilder::new();
     let mut planning_b = BooleanBuilder::new();
+    let mut source_case_id_b = StringDictionaryBuilder::<Int32Type>::new();
+    let mut snapshot_timestamp_utc_b = StringBuilder::new();
+    let mut case_fingerprint_b = StringBuilder::new();
+    let mut validation_mode_b = StringDictionaryBuilder::<Int32Type>::new();
 
     base_mva_b.append_value(row.base_mva);
     frequency_b.append_value(row.frequency_hz);
@@ -2839,8 +2910,12 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
     timestamp_b.append_value(row.timestamp_utc.as_ref());
     raptrix_version_b.append_value(row.raptrix_version.as_ref());
     planning_b.append_value(row.is_planning_case);
+    source_case_id_b.append(row.source_case_id.as_ref())?;
+    snapshot_timestamp_utc_b.append_value(row.snapshot_timestamp_utc.as_ref());
+    case_fingerprint_b.append_value(row.case_fingerprint.as_ref());
+    validation_mode_b.append(row.validation_mode.as_ref())?;
 
-    let custom_metadata_type = schema.field(7).data_type().clone();
+    let custom_metadata_type = schema.field(11).data_type().clone();
     let custom_metadata_array = new_null_array(&custom_metadata_type, 1);
 
     let arrays: Vec<ArrayRef> = vec![
@@ -2851,6 +2926,10 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
         Arc::new(timestamp_b.finish()) as ArrayRef,
         Arc::new(raptrix_version_b.finish()) as ArrayRef,
         Arc::new(planning_b.finish()) as ArrayRef,
+        Arc::new(source_case_id_b.finish()) as ArrayRef,
+        Arc::new(snapshot_timestamp_utc_b.finish()) as ArrayRef,
+        Arc::new(case_fingerprint_b.finish()) as ArrayRef,
+        Arc::new(validation_mode_b.finish()) as ArrayRef,
         custom_metadata_array,
     ];
 
@@ -2907,11 +2986,7 @@ fn build_buses_batch(rows: &[BusRow<'_>]) -> Result<RecordBatch> {
         } else {
             nominal_kv_b.append_null();
         }
-        if let Some(bus_uuid) = row.bus_uuid.as_deref() {
-            bus_uuid_b.append(bus_uuid)?;
-        } else {
-            bus_uuid_b.append_null();
-        }
+        bus_uuid_b.append(row.bus_uuid.as_ref())?;
     }
 
     let arrays: Vec<ArrayRef> = vec![
