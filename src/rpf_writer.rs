@@ -99,6 +99,9 @@ pub struct WriteSummary {
     pub connectivity_node_rows: usize,
     pub diagram_object_rows: usize,
     pub diagram_point_rows: usize,
+    pub dynamics_rows_total: usize,
+    pub dynamics_rows_dy_linked: usize,
+    pub dynamics_rows_eq_fallback: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -521,22 +524,22 @@ fn validate_pre_write_contract(
     Ok(())
 }
 
-/// Writes a complete Raptrix v0.5.2 `.rpf` Arrow IPC file.
+/// Writes a complete Raptrix v0.8.0 `.rpf` Arrow IPC file.
 ///
-/// The writer currently supports EQ-driven topology ingestion and materializes
-/// all required canonical tables (empty tables allowed) as struct columns in
-/// one root record batch.
+/// The writer materializes all required canonical tables (empty tables
+/// allowed) as struct columns in one root record batch.
 ///
 /// Notes:
-/// - Multi-profile merges (TP/SV/SSH/DY) are intentionally incremental and
-///   will be added in future revisions.
+/// - Multi-profile merges are profile-aware by filename token (`_EQ`, `_TP`,
+///   `_SV`, `_SSH`, `_DY`, `_DL`) and safely ignore unsupported payload
+///   classes per profile.
 /// - Output path must end in `.rpf`.
 pub fn write_complete_rpf(cgmes_paths: &[&str], output_path: &str) -> Result<()> {
     write_complete_rpf_with_options(cgmes_paths, output_path, &WriteOptions::default())?;
     Ok(())
 }
 
-/// Writes a complete Raptrix v0.5.2 `.rpf` IPC file with merge options.
+/// Writes a complete Raptrix v0.8.0 `.rpf` IPC file with merge options.
 pub fn write_complete_rpf_with_options(
     cgmes_paths: &[&str],
     output_path: &str,
@@ -557,7 +560,7 @@ pub fn write_complete_rpf_with_options(
         )
         .with_context(|| {
             format!(
-                "failed while parsing EQ/TP profile content from {} input path(s)",
+                "failed while parsing profile-aware CGMES content from {} input path(s)",
                 cgmes_paths.len()
             )
         })?;
@@ -580,6 +583,7 @@ pub fn write_complete_rpf_with_options(
         diagram_object_rows,
         diagram_point_rows,
         split_bus_stub_elements,
+        dy_model_specs,
     ) = topology;
 
     validate_pre_write_contract(
@@ -625,7 +629,12 @@ pub fn write_complete_rpf_with_options(
     let switched_shunts_batch = build_switched_shunts_batch(&switched_shunt_rows)?;
     let (contingencies_rows, contingencies_are_stub) =
         contingency_rows_from_switches_and_stubs(&node_breaker_rows, split_bus_stub_elements);
-    let (dynamics_models_rows, dynamics_are_stub) = dynamics_rows_from_generators(&gen_rows);
+    let (
+        dynamics_models_rows,
+        dynamics_are_stub,
+        dynamics_rows_dy_linked,
+        dynamics_rows_eq_fallback,
+    ) = dynamics_rows_from_generators_and_dy(&gen_rows, &dy_model_specs);
     let contingencies_batch = build_contingencies_batch(&contingencies_rows)?;
     let dynamics_models_batch = build_dynamics_models_batch(&dynamics_models_rows)?;
     let _connectivity_groups_batch = build_connectivity_groups_batch(&connectivity_group_rows)?;
@@ -697,6 +706,9 @@ pub fn write_complete_rpf_with_options(
         connectivity_node_rows: connectivity_node_rows.len(),
         diagram_object_rows: diagram_object_rows.len(),
         diagram_point_rows: diagram_point_rows.len(),
+        dynamics_rows_total: dynamics_models_rows.len(),
+        dynamics_rows_dy_linked,
+        dynamics_rows_eq_fallback,
     })
 }
 
@@ -782,15 +794,92 @@ fn stub_dynamics_model_rows() -> Vec<DynamicsModelRow<'static>> {
         bus_id: 1,
         gen_id: Cow::Borrowed("G1"),
         model_type: Cow::Borrowed("GENROU"),
-        params: vec![(Cow::Borrowed("H"), 5.0), (Cow::Borrowed("xd_prime"), 0.3)],
+        params: vec![
+            (Cow::Borrowed("H"), 5.0),
+            (Cow::Borrowed("xd_prime"), 0.3),
+            (Cow::Borrowed("source_stub"), 1.0),
+        ],
     }]
 }
 
-fn dynamics_rows_from_generators(
+fn dynamics_rows_from_generators_and_dy(
     gen_rows: &[GenRow<'_>],
-) -> (Vec<DynamicsModelRow<'static>>, bool) {
+    dy_specs: &[parser::DyModelSpec],
+) -> (Vec<DynamicsModelRow<'static>>, bool, usize, usize) {
+    let mut dy_linked_rows = 0_usize;
+    let mut eq_fallback_rows = 0_usize;
+
+    if !dy_specs.is_empty() && !gen_rows.is_empty() {
+        let mut bus_by_gen_id: HashMap<&str, i32> = HashMap::new();
+        for generator in gen_rows {
+            bus_by_gen_id.insert(generator.id.as_ref(), generator.bus_id);
+        }
+
+        let mut rows = Vec::new();
+        let mut matched_generators: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for spec in dy_specs {
+            let Some(bus_id) = bus_by_gen_id.get(spec.equipment_mrid.as_str()).copied() else {
+                continue;
+            };
+            matched_generators.insert(spec.equipment_mrid.as_str());
+
+            let params = if spec.params.is_empty() {
+                vec![(Cow::Borrowed("dy_present"), 1.0)]
+            } else {
+                spec.params
+                    .iter()
+                    .map(|(key, value)| (Cow::Owned(key.clone()), *value))
+                    .collect()
+            };
+
+            rows.push(DynamicsModelRow {
+                bus_id,
+                gen_id: Cow::Owned(spec.equipment_mrid.clone()),
+                model_type: Cow::Owned(spec.model_type.clone()),
+                params: {
+                    let mut with_source = params;
+                    with_source.push((Cow::Borrowed("source_dy"), 1.0));
+                    with_source
+                },
+            });
+            dy_linked_rows += 1;
+        }
+
+        // Keep generator coverage complete even when DY is partial by filling
+        // unmatched machines from EQ-derived parameters.
+        for generator in gen_rows {
+            if matched_generators.contains(generator.id.as_ref()) {
+                continue;
+            }
+            rows.push(DynamicsModelRow {
+                bus_id: generator.bus_id,
+                gen_id: Cow::Owned(generator.id.as_ref().to_owned()),
+                model_type: Cow::Borrowed(infer_dynamics_model_type(generator)),
+                params: vec![
+                    (Cow::Borrowed("H"), generator.h),
+                    (Cow::Borrowed("xd_prime"), generator.xd_prime),
+                    (Cow::Borrowed("D"), generator.d),
+                    (Cow::Borrowed("mbase_mva"), generator.mbase_mva),
+                    (Cow::Borrowed("source_eq_fallback"), 1.0),
+                ],
+            });
+            eq_fallback_rows += 1;
+        }
+
+        rows.sort_unstable_by(|left, right| {
+            left.bus_id
+                .cmp(&right.bus_id)
+                .then_with(|| left.gen_id.as_ref().cmp(right.gen_id.as_ref()))
+                .then_with(|| left.model_type.as_ref().cmp(right.model_type.as_ref()))
+        });
+
+        if !rows.is_empty() {
+            return (rows, false, dy_linked_rows, eq_fallback_rows);
+        }
+    }
+
     if gen_rows.is_empty() {
-        return (stub_dynamics_model_rows(), true);
+        return (stub_dynamics_model_rows(), true, 0, 0);
     }
 
     let rows = gen_rows
@@ -804,11 +893,12 @@ fn dynamics_rows_from_generators(
                 (Cow::Borrowed("xd_prime"), generator.xd_prime),
                 (Cow::Borrowed("D"), generator.d),
                 (Cow::Borrowed("mbase_mva"), generator.mbase_mva),
+                (Cow::Borrowed("source_eq_fallback"), 1.0),
             ],
         })
         .collect();
 
-    (rows, false)
+    (rows, false, 0, gen_rows.len())
 }
 
 fn infer_dynamics_model_type(generator: &GenRow<'_>) -> &'static str {
@@ -820,6 +910,40 @@ fn infer_dynamics_model_type(generator: &GenRow<'_>) -> &'static str {
         // Conservative fallback: preserve that this row came from EQ-side machine data,
         // not a fully parsed DY dynamic model exchange payload.
         "SYNC_MACHINE_EQ"
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CgmesProfileKind {
+    Eq,
+    Tp,
+    Sv,
+    Ssh,
+    Dy,
+    Dl,
+    Unknown,
+}
+
+fn infer_profile_kind_from_path(path: &str) -> CgmesProfileKind {
+    let Some(file_name) = Path::new(path).file_name().and_then(|value| value.to_str()) else {
+        return CgmesProfileKind::Unknown;
+    };
+    let upper = file_name.to_ascii_uppercase();
+
+    if upper.contains("_EQ") {
+        CgmesProfileKind::Eq
+    } else if upper.contains("_TP") {
+        CgmesProfileKind::Tp
+    } else if upper.contains("_SV") {
+        CgmesProfileKind::Sv
+    } else if upper.contains("_SSH") {
+        CgmesProfileKind::Ssh
+    } else if upper.contains("_DY") {
+        CgmesProfileKind::Dy
+    } else if upper.contains("_DL") {
+        CgmesProfileKind::Dl
+    } else {
+        CgmesProfileKind::Unknown
     }
 }
 
@@ -845,89 +969,155 @@ fn parse_eq_components_for_path(
     Vec<parser::DiagramRecord>,
     Vec<parser::DiagramObjectRecord>,
     Vec<parser::DiagramPointRecord>,
+    Vec<parser::DyModelSpec>,
 )> {
     let bytes = std::fs::read(path)
         .with_context(|| format!("failed to open CGMES input file at {path}"))?;
 
-    let (lines, machines, terminals) = parser::eq_lines_machines_and_terminals_from_reader(Cursor::new(&bytes))
-        .with_context(|| {
-            format!(
-                "failed to extract ACLineSegment/SynchronousMachine/Terminal elements from CGMES input file at {path}"
+    let profile_kind = infer_profile_kind_from_path(path);
+
+    let mut lines = Vec::new();
+    let mut machines = Vec::new();
+    let mut loads = Vec::new();
+    let mut transformers = Vec::new();
+    let mut areas = Vec::new();
+    let mut zones = Vec::new();
+    let mut owners = Vec::new();
+    let mut fixed_shunts = Vec::new();
+    let mut switched_shunts = Vec::new();
+    let mut terminals = Vec::new();
+    let mut topological_nodes = Vec::new();
+    let mut connectivity_groups = Vec::new();
+    let mut switches = Vec::new();
+    let mut connectivity_nodes = Vec::new();
+    let mut base_voltages = Vec::new();
+    let mut equipment_base_voltage_refs = Vec::new();
+    let mut diagrams = Vec::new();
+    let mut diagram_objects = Vec::new();
+    let mut diagram_points = Vec::new();
+    let mut dy_model_specs = Vec::new();
+
+    // Route parsing by profile so strict multi-profile runs can include SSH/DY
+    // inputs without forcing EQ extractors over incompatible payloads.
+    match profile_kind {
+        CgmesProfileKind::Eq | CgmesProfileKind::Unknown => {
+            let (parsed_lines, parsed_machines, parsed_terminals) =
+                parser::eq_lines_machines_and_terminals_from_reader(Cursor::new(&bytes))
+                    .with_context(|| {
+                        format!(
+                            "failed to extract ACLineSegment/SynchronousMachine/Terminal elements from CGMES input file at {path}"
+                        )
+                    })?;
+            lines = parsed_lines;
+            machines = parsed_machines;
+            terminals = parsed_terminals;
+
+            loads = parser::energy_consumers_from_reader(Cursor::new(&bytes)).with_context(|| {
+                format!("failed to extract EnergyConsumer elements from CGMES input file at {path}")
+            })?;
+
+            transformers =
+                parser::power_transformers_from_reader(Cursor::new(&bytes)).with_context(|| {
+                    format!("failed to extract PowerTransformer elements from CGMES input file at {path}")
+                })?;
+
+            areas = parser::areas_from_reader(Cursor::new(&bytes)).with_context(|| {
+                format!("failed to extract ControlArea elements from CGMES input file at {path}")
+            })?;
+
+            zones = parser::zones_from_reader(Cursor::new(&bytes)).with_context(|| {
+                format!(
+                    "failed to extract SubGeographicalRegion elements from CGMES input file at {path}"
+                )
+            })?;
+
+            owners = parser::owners_from_reader(Cursor::new(&bytes)).with_context(|| {
+                format!("failed to extract Organisation elements from CGMES input file at {path}")
+            })?;
+
+            fixed_shunts =
+                parser::fixed_shunts_from_reader(Cursor::new(&bytes)).with_context(|| {
+                    format!(
+                        "failed to extract LinearShuntCompensator elements from CGMES input file at {path}"
+                    )
+                })?;
+
+            switches = parser::switch_specs_from_reader(Cursor::new(&bytes)).with_context(|| {
+                format!("failed to extract switch elements from CGMES input file at {path}")
+            })?;
+
+            connectivity_nodes =
+                parser::connectivity_nodes_from_reader(Cursor::new(&bytes)).with_context(|| {
+                    format!(
+                        "failed to extract ConnectivityNode elements from CGMES input file at {path}"
+                    )
+                })?;
+
+            base_voltages =
+                parser::base_voltage_specs_from_reader(Cursor::new(&bytes)).with_context(|| {
+                    format!("failed to extract BaseVoltage elements from CGMES input file at {path}")
+                })?;
+
+            equipment_base_voltage_refs = parser::equipment_base_voltage_refs_from_reader(
+                Cursor::new(&bytes),
             )
-        })?;
+            .with_context(|| {
+                format!(
+                    "failed to extract ConductingEquipment.BaseVoltage links from CGMES input file at {path}"
+                )
+            })?;
+        }
+        CgmesProfileKind::Tp => {
+            connectivity_groups =
+                parser::connectivity_node_groups_from_reader(Cursor::new(&bytes)).with_context(|| {
+                    format!(
+                        "failed to extract TopologicalNode/ConnectivityNode group links from CGMES input file at {path}"
+                    )
+                })?;
 
-    let loads = parser::energy_consumers_from_reader(Cursor::new(&bytes)).with_context(|| {
-        format!("failed to extract EnergyConsumer elements from CGMES input file at {path}")
-    })?;
-
-    let transformers =
-        parser::power_transformers_from_reader(Cursor::new(&bytes)).with_context(|| {
-            format!("failed to extract PowerTransformer elements from CGMES input file at {path}")
-        })?;
-
-    let areas = parser::areas_from_reader(Cursor::new(&bytes)).with_context(|| {
-        format!("failed to extract ControlArea elements from CGMES input file at {path}")
-    })?;
-
-    let zones = parser::zones_from_reader(Cursor::new(&bytes)).with_context(|| {
-        format!("failed to extract SubGeographicalRegion elements from CGMES input file at {path}")
-    })?;
-
-    let owners = parser::owners_from_reader(Cursor::new(&bytes)).with_context(|| {
-        format!("failed to extract Organisation elements from CGMES input file at {path}")
-    })?;
-
-    let fixed_shunts =
-        parser::fixed_shunts_from_reader(Cursor::new(&bytes)).with_context(|| {
-            format!(
-                "failed to extract LinearShuntCompensator elements from CGMES input file at {path}"
-            )
-        })?;
-
-    let switched_shunts = parser::sv_shunt_compensators_from_reader(Cursor::new(&bytes))
-        .with_context(|| {
-            format!("failed to extract SvShuntCompensator elements from CGMES input file at {path}")
-        })?;
-
-    let topological_nodes = parser::topological_nodes_from_reader(Cursor::new(&bytes))
-        .with_context(|| {
-            format!("failed to extract TopologicalNode elements from CGMES input file at {path}")
-        })?;
-
-    let connectivity_groups = parser::connectivity_node_groups_from_reader(Cursor::new(&bytes))
-        .with_context(|| {
-            format!(
-                "failed to extract TopologicalNode/ConnectivityNode group links from CGMES input file at {path}"
-            )
-        })?;
-
-    let switches = parser::switch_specs_from_reader(Cursor::new(&bytes)).with_context(|| {
-        format!("failed to extract switch elements from CGMES input file at {path}")
-    })?;
-
-    let connectivity_nodes = parser::connectivity_nodes_from_reader(Cursor::new(&bytes))
-        .with_context(|| {
-            format!("failed to extract ConnectivityNode elements from CGMES input file at {path}")
-        })?;
-
-    let base_voltages =
-        parser::base_voltage_specs_from_reader(Cursor::new(&bytes)).with_context(|| {
-            format!("failed to extract BaseVoltage elements from CGMES input file at {path}")
-        })?;
-
-    let equipment_base_voltage_refs =
-        parser::equipment_base_voltage_refs_from_reader(Cursor::new(&bytes)).with_context(|| {
-            format!(
-                "failed to extract ConductingEquipment.BaseVoltage links from CGMES input file at {path}"
-            )
-        })?;
-
-    let (diagrams, diagram_objects, diagram_points) =
-        parser::diagram_layout_from_reader(Cursor::new(&bytes)).with_context(|| {
-            format!(
-                "failed to extract DiagramLayout elements from CGMES input file at {path}"
-            )
-        })?;
+            topological_nodes =
+                parser::topological_nodes_from_reader(Cursor::new(&bytes)).with_context(|| {
+                    format!("failed to extract TopologicalNode elements from CGMES input file at {path}")
+                })?;
+        }
+        CgmesProfileKind::Sv => {
+            switched_shunts =
+                parser::sv_shunt_compensators_from_reader(Cursor::new(&bytes)).with_context(|| {
+                    format!(
+                        "failed to extract SvShuntCompensator elements from CGMES input file at {path}"
+                    )
+                })?;
+        }
+        CgmesProfileKind::Dl => {
+            let (parsed_diagrams, parsed_diagram_objects, parsed_diagram_points) =
+                parser::diagram_layout_from_reader(Cursor::new(&bytes)).with_context(|| {
+                    format!(
+                        "failed to extract DiagramLayout elements from CGMES input file at {path}"
+                    )
+                })?;
+            diagrams = parsed_diagrams;
+            diagram_objects = parsed_diagram_objects;
+            diagram_points = parsed_diagram_points;
+        }
+        CgmesProfileKind::Ssh => {
+            fixed_shunts = parser::fixed_shunts_from_reader(Cursor::new(&bytes)).with_context(|| {
+                format!(
+                    "failed to extract LinearShuntCompensator elements from CGMES input file at {path}"
+                )
+            })?;
+            switches = parser::switch_specs_from_reader(Cursor::new(&bytes)).with_context(|| {
+                format!("failed to extract switch elements from CGMES input file at {path}")
+            })?;
+        }
+        CgmesProfileKind::Dy => {
+            dy_model_specs = parser::dy_model_specs_from_reader(Cursor::new(&bytes))
+                .with_context(|| {
+                    format!(
+                        "failed to extract dynamic model payload from CGMES input file at {path}"
+                    )
+                })?;
+        }
+    }
 
     Ok((
         lines,
@@ -949,6 +1139,7 @@ fn parse_eq_components_for_path(
         diagrams,
         diagram_objects,
         diagram_points,
+        dy_model_specs,
     ))
 }
 
@@ -984,6 +1175,7 @@ fn parse_eq_topology_rows(
     Vec<DiagramObjectRow<'static>>,
     Vec<DiagramPointRow<'static>>,
     Vec<ContingencyElement<'static>>,
+    Vec<parser::DyModelSpec>,
 )> {
     let mut lines = Vec::new();
     let mut machines = Vec::new();
@@ -1004,6 +1196,7 @@ fn parse_eq_topology_rows(
     let mut diagrams = Vec::new();
     let mut diagram_objects = Vec::new();
     let mut diagram_points = Vec::new();
+    let mut dy_model_specs = Vec::new();
 
     for path in cgmes_paths {
         let (
@@ -1026,6 +1219,7 @@ fn parse_eq_topology_rows(
             mut parsed_diagrams,
             mut parsed_diagram_objects,
             mut parsed_diagram_points,
+            mut parsed_dy_model_specs,
         ) = parse_eq_components_for_path(path)?;
         if !parsed_lines.is_empty() {
             lines.append(&mut parsed_lines);
@@ -1084,6 +1278,9 @@ fn parse_eq_topology_rows(
         if !parsed_diagram_points.is_empty() {
             diagram_points.append(&mut parsed_diagram_points);
         }
+        if !parsed_dy_model_specs.is_empty() {
+            dy_model_specs.append(&mut parsed_dy_model_specs);
+        }
     }
 
     if lines.is_empty() {
@@ -1092,6 +1289,34 @@ fn parse_eq_topology_rows(
     if terminals.is_empty() {
         bail!("no Terminal elements found across supplied CGMES paths")
     }
+
+    // Merge duplicate equipment payloads across EQ/SSH paths with last-wins
+    // semantics based on input path order.
+    let mut machine_by_mrid: HashMap<String, crate::models::SynchronousMachine<'static>> =
+        HashMap::new();
+    for machine in machines {
+        machine_by_mrid.insert(machine.base.m_rid.as_ref().to_owned(), machine);
+    }
+    let mut machines: Vec<crate::models::SynchronousMachine<'static>> =
+        machine_by_mrid.into_values().collect();
+
+    let mut load_by_mrid: HashMap<String, crate::models::EnergyConsumer<'static>> = HashMap::new();
+    for load in loads {
+        load_by_mrid.insert(load.base.m_rid.as_ref().to_owned(), load);
+    }
+    let mut loads: Vec<crate::models::EnergyConsumer<'static>> = load_by_mrid.into_values().collect();
+
+    let mut fixed_shunt_by_mrid: HashMap<String, parser::FixedShuntSpec> = HashMap::new();
+    for shunt in fixed_shunts {
+        fixed_shunt_by_mrid.insert(shunt.equipment_mrid.clone(), shunt);
+    }
+    let mut fixed_shunts: Vec<parser::FixedShuntSpec> = fixed_shunt_by_mrid.into_values().collect();
+
+    let mut switch_by_mrid: HashMap<String, parser::SwitchSpec> = HashMap::new();
+    for switch in switches {
+        switch_by_mrid.insert(switch.switch_mrid.clone(), switch);
+    }
+    let mut switches: Vec<parser::SwitchSpec> = switch_by_mrid.into_values().collect();
 
     let mut conn_to_topo: HashMap<&str, &str> = HashMap::new();
     for group in &connectivity_groups {
@@ -2001,6 +2226,7 @@ fn parse_eq_topology_rows(
     }
 
     if !switches.is_empty() {
+        switches.sort_unstable_by(|left, right| left.switch_mrid.cmp(&right.switch_mrid));
         for switch in switches {
             let switch_terminals = terminals_by_equipment
                 .get(switch.switch_mrid.as_str())
@@ -2203,6 +2429,7 @@ fn parse_eq_topology_rows(
         diagram_object_rows,
         diagram_point_rows,
         split_bus_stub_elements,
+        dy_model_specs,
     ))
 }
 

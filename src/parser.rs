@@ -48,6 +48,8 @@ use std::sync::OnceLock;
 
 use anyhow::{Result, bail};
 use quick_xml::de::from_str;
+use quick_xml::events::Event;
+use quick_xml::Reader;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
@@ -205,6 +207,14 @@ pub struct SwitchSpec {
 pub struct ConnectivityNodeSpec {
     pub connectivity_node_mrid: String,
     pub topological_node_mrid: Option<String>,
+}
+
+/// Parsed dynamic-model payload used for DY-profile-driven dynamics rows.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DyModelSpec {
+    pub equipment_mrid: String,
+    pub model_type: String,
+    pub params: Vec<(String, f64)>,
 }
 
 /// Parsed `Diagram` payload used for optional layout emission.
@@ -884,6 +894,166 @@ pub fn diagram_layout_from_reader<R: Read>(
     Ok((diagrams, objects, points))
 }
 
+/// Parses selected DY profile model blocks and resolves attached equipment mRID.
+///
+/// This first-pass parser extracts dynamic model identity and the equipment link
+/// reference so writer logic can map DY rows onto generator dynamics output.
+pub fn dy_model_specs_from_reader<R: Read>(mut reader: R) -> Result<Vec<DyModelSpec>> {
+    let mut xml = String::new();
+    reader.read_to_string(&mut xml)?;
+
+    let mut rows = Vec::new();
+    for (tag, model_type) in [
+        (
+            "cim:SynchronousMachineDynamics",
+            "SynchronousMachineDynamics",
+        ),
+        (
+            "cim:AsynchronousMachineDynamics",
+            "AsynchronousMachineDynamics",
+        ),
+        ("cim:ExcitationSystemDynamics", "ExcitationSystemDynamics"),
+        ("cim:TurbineGovernorDynamics", "TurbineGovernorDynamics"),
+        ("cim:PowerSystemStabilizerDynamics", "PowerSystemStabilizerDynamics"),
+        // Extension example: Studio-originated custom dynamic model family.
+        ("cim:RaptrixSmartValveDynamics", "raptrix.smart_valve.v1"),
+    ] {
+        if !contains_exact_element_tag(&xml, tag) {
+            continue;
+        }
+
+        for fragment in extract_elements(&xml, tag)? {
+            let raw: RawDyModel<'_> = from_str(fragment)?;
+            let Some(equipment_mrid) = raw.resolved_equipment_mrid() else {
+                continue;
+            };
+            let mut params = extract_numeric_dy_params(fragment, model_type);
+            if params.is_empty() {
+                // Keep a deterministic numeric marker so params map is non-empty.
+                params.push(("dy_present".to_string(), 1.0));
+            }
+
+            rows.push(DyModelSpec {
+                equipment_mrid,
+                model_type: model_type.to_string(),
+                params,
+            });
+        }
+    }
+
+    rows.sort_unstable_by(|left, right| {
+        left.equipment_mrid
+            .cmp(&right.equipment_mrid)
+            .then_with(|| left.model_type.cmp(&right.model_type))
+    });
+    rows.dedup_by(|left, right| {
+        left.equipment_mrid == right.equipment_mrid && left.model_type == right.model_type
+    });
+
+    Ok(rows)
+}
+
+fn extract_numeric_dy_params(fragment: &str, model_type: &str) -> Vec<(String, f64)> {
+    let mut reader = Reader::from_str(fragment);
+    reader.config_mut().trim_text(true);
+
+    let mut buf = Vec::new();
+    let mut current_tag: Option<String> = None;
+    let mut params: BTreeMap<String, f64> = BTreeMap::new();
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(tag)) => {
+                let name = String::from_utf8_lossy(tag.name().as_ref()).into_owned();
+                current_tag = Some(name);
+            }
+            Ok(Event::Text(text)) => {
+                let Some(tag_name) = current_tag.as_deref() else {
+                    buf.clear();
+                    continue;
+                };
+
+                let Ok(raw_value) = text.xml10_content() else {
+                    buf.clear();
+                    continue;
+                };
+                let Ok(value) = raw_value.trim().parse::<f64>() else {
+                    buf.clear();
+                    continue;
+                };
+
+                let key = canonicalize_dy_param_name(model_type, tag_name);
+                if !key.is_empty() {
+                    // Last-wins keeps deterministic merge behavior for repeated keys.
+                    params.insert(key, value);
+                }
+            }
+            Ok(Event::End(_)) => {
+                current_tag = None;
+            }
+            Ok(Event::Eof) => break,
+            Ok(_) => {}
+            Err(_) => break,
+        }
+        buf.clear();
+    }
+
+    params.into_iter().collect()
+}
+
+fn canonicalize_dy_param_name(model_type: &str, tag_name: &str) -> String {
+    let local = tag_name.rsplit(':').next().unwrap_or(tag_name);
+    let leaf = local.rsplit('.').next().unwrap_or(local);
+
+    let snake = to_snake_case(leaf);
+    if snake.is_empty() {
+        return snake;
+    }
+
+    canonical_alias_for_model(model_type, &snake)
+}
+
+fn to_snake_case(name: &str) -> String {
+    let mut normalized = String::with_capacity(name.len());
+    let mut prev_lower_or_digit = false;
+    let mut prev_underscore = false;
+
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            if ch.is_ascii_uppercase() && prev_lower_or_digit && !prev_underscore {
+                normalized.push('_');
+            }
+            normalized.push(ch.to_ascii_lowercase());
+            prev_lower_or_digit = ch.is_ascii_lowercase() || ch.is_ascii_digit();
+            prev_underscore = false;
+        } else {
+            if !prev_underscore && !normalized.is_empty() {
+                normalized.push('_');
+            }
+            prev_lower_or_digit = false;
+            prev_underscore = true;
+        }
+    }
+
+    normalized.trim_matches('_').to_string()
+}
+
+fn canonical_alias_for_model(model_type: &str, key: &str) -> String {
+    match model_type {
+        // Keep common synchronous-machine keys stable for downstream consumers.
+        "SynchronousMachineDynamics" => match key {
+            "xdprime" => "xd_prime".to_string(),
+            "xqprime" => "xq_prime".to_string(),
+            "xdpp" | "xdoubleprime" | "xdouble_prime" => "xd_double_prime".to_string(),
+            "xqpp" | "xdoubleprime_q" | "xqdoubleprime" | "xq_double_prime" => {
+                "xq_double_prime".to_string()
+            }
+            _ => key.to_string(),
+        },
+        _ => key.to_string(),
+    }
+}
+
 /// Parsed terminal endpoint linkage used for EQ topology joins.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TerminalLink {
@@ -1217,6 +1387,22 @@ struct RawDiagramObjectPoint {
     y: Option<f64>,
 }
 
+#[derive(Debug, Deserialize)]
+struct RawDyModel<'a> {
+    #[serde(rename = "DynamicsFunctionBlock.PowerSystemResource", default)]
+    power_system_resource: Option<RdfResourceRef>,
+    #[serde(rename = "RotatingMachineDynamics.RotatingMachine", default)]
+    rotating_machine: Option<RdfResourceRef>,
+    #[serde(rename = "SynchronousMachineDynamics.SynchronousMachine", default)]
+    synchronous_machine: Option<RdfResourceRef>,
+    #[serde(rename = "AsynchronousMachineDynamics.AsynchronousMachine", default)]
+    asynchronous_machine: Option<RdfResourceRef>,
+    #[serde(rename = "@ID", default, borrow)]
+    m_rid: Option<Cow<'a, str>>,
+    #[serde(rename = "@about", default, borrow)]
+    about: Option<Cow<'a, str>>,
+}
+
 impl RawPowerTransformer<'_> {
     fn resolved_mrid(&self) -> Option<String> {
         if let Some(mrid) = &self.m_rid {
@@ -1262,6 +1448,19 @@ impl RawDiagramObject<'_> {
             return Some(normalize_cgmes_ref(about));
         }
         None
+    }
+}
+
+impl RawDyModel<'_> {
+    fn resolved_equipment_mrid(&self) -> Option<String> {
+        self.power_system_resource
+            .as_ref()
+            .or(self.rotating_machine.as_ref())
+            .or(self.synchronous_machine.as_ref())
+            .or(self.asynchronous_machine.as_ref())
+            .map(|reference| normalize_cgmes_ref(&reference.resource))
+            .or_else(|| self.m_rid.as_ref().map(|value| normalize_cgmes_ref(value)))
+            .or_else(|| self.about.as_ref().map(|value| normalize_cgmes_ref(value)))
     }
 }
 
@@ -1628,5 +1827,47 @@ mod tests {
         assert_eq!(refs[1].base_voltage_mrid, "BV_115");
         assert_eq!(refs[2].equipment_mrid, "Tx1");
         assert_eq!(refs[2].base_voltage_mrid, "BV_345");
+    }
+
+    #[test]
+    fn parse_dy_model_specs_extracts_numeric_params() {
+        let xml = r##"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#">
+    <cim:SynchronousMachineDynamics rdf:ID="SMD1">
+        <SynchronousMachineDynamics.SynchronousMachine rdf:resource="#GEN_A"/>
+        <SynchronousMachineDynamics.H>3.2</SynchronousMachineDynamics.H>
+        <SynchronousMachineDynamics.D>0.15</SynchronousMachineDynamics.D>
+        <SynchronousMachineDynamics.xdPrime>0.27</SynchronousMachineDynamics.xdPrime>
+    </cim:SynchronousMachineDynamics>
+</rdf:RDF>"##;
+
+        let rows = dy_model_specs_from_reader(xml.as_bytes()).expect("parse should succeed");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].equipment_mrid, "GEN_A");
+        assert_eq!(rows[0].model_type, "SynchronousMachineDynamics");
+
+        let params: BTreeMap<_, _> = rows[0].params.iter().cloned().collect();
+        assert_eq!(params.get("h"), Some(&3.2));
+        assert_eq!(params.get("d"), Some(&0.15));
+        assert_eq!(params.get("xd_prime"), Some(&0.27));
+    }
+
+    #[test]
+    fn parse_custom_dy_model_type_for_smart_valve() {
+        let xml = r##"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#">
+    <cim:RaptrixSmartValveDynamics rdf:ID="SV1">
+        <DynamicsFunctionBlock.PowerSystemResource rdf:resource="#GEN_SMART"/>
+        <RaptrixSmartValveDynamics.kGain>2.5</RaptrixSmartValveDynamics.kGain>
+        <RaptrixSmartValveDynamics.tOpenS>0.3</RaptrixSmartValveDynamics.tOpenS>
+    </cim:RaptrixSmartValveDynamics>
+</rdf:RDF>"##;
+
+        let rows = dy_model_specs_from_reader(xml.as_bytes()).expect("parse should succeed");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].equipment_mrid, "GEN_SMART");
+        assert_eq!(rows[0].model_type, "raptrix.smart_valve.v1");
+
+        let params: BTreeMap<_, _> = rows[0].params.iter().cloned().collect();
+        assert_eq!(params.get("k_gain"), Some(&2.5));
+        assert_eq!(params.get("t_open_s"), Some(&0.3));
     }
 }

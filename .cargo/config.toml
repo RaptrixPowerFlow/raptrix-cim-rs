@@ -1,0 +1,2 @@
+[alias]
+rpf-regression = "run --release --bin regression_matrix"

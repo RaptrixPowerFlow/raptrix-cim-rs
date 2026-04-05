@@ -50,6 +50,9 @@ raptrix-cim-rs now targets **CGMES v3.0 and later only**. Support for CGMES 2.4.
 - `raptrix-cim-arrow/src/schema.rs`: v0.8.0 constants, CGMES 3.0+ documentation.
 - `tests/inspect_rpf.py`: Schema validator updated to v0.8.0.
 - `docs/schema-contract.md`: Removed dual-track language, added v3.0+ clarity.
+- `src/parser.rs`: DY profile parser now extracts numeric model parameters and normalizes keys.
+- `src/rpf_writer.rs`: `dynamics_models` now records DY-linked rows plus EQ fallback coverage counters.
+- `tests/generate_rpf_matrix.py`: Regression reports now aggregate dynamics row provenance (DY-linked vs EQ fallback).
 - `docs/roadmap.md`: Removed v2.4.x dual-compatibility goal.
 - `CHANGELOG.md`: Added v0.8.0 release notes with breaking change summary.
 
@@ -114,6 +117,33 @@ cargo test
 ---
 
 ## v0.8.0 Feature Additions
+
+### DY Semantics and Provenance (Top Priority)
+
+`dynamics_models` now supports richer provenance for strict SSH/DY regression workflows:
+
+- DY-linked rows include numeric parameters parsed from DY profile payload.
+- Partial DY coverage keeps generator completeness by falling back to EQ-derived rows for unmatched generators.
+- `params` may include provenance keys:
+  - `source_dy = 1.0`
+  - `source_eq_fallback = 1.0`
+  - `source_stub = 1.0`
+
+This keeps topology-first Studio workflows stable while enabling incremental dynamics fidelity upgrades.
+
+### Studio Extensibility Beyond CIM
+
+Studio can add new model families not currently represented in CIM without breaking the v0.8.0 contract:
+
+- `dynamics_models.model_type` is an open string vocabulary.
+- For custom models, use namespaced identifiers, for example:
+  - `raptrix.smart_valve.v1`
+- Store model parameters as numeric entries in `dynamics_models.params`, for example:
+  - `raptrix.smart_valve.k_gain`
+  - `raptrix.smart_valve.t_open_s`
+  - `raptrix.smart_valve.t_close_s`
+
+Downstream tools should treat unknown `model_type` values as extension payloads rather than errors.
 
 ### Diagram Layout Support (Continued from v0.7.1)
 

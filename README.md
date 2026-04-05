@@ -53,7 +53,7 @@ That split keeps the locked RPF contract in one reusable place so future convert
 
 ### Output capabilities
 
-- Build Arrow schema objects for the locked Raptrix PowerFlow Interchange v0.7.1 contract:
+- Build Arrow schema objects for the locked Raptrix PowerFlow Interchange v0.8.0 contract:
 	- metadata
 	- buses
 	- branches
@@ -125,7 +125,8 @@ High-level pipeline:
 - Voltage provenance: bus and branch-side nominal kV columns are now emitted when CGMES `BaseVoltage` joins are available, so downstream tools can reason about base voltage without reverse-parsing names.
 - Contingency identity: contingency elements now carry generic `equipment_kind` and `equipment_id` fields for switch and split-bus workflows that do not map cleanly to branch/gen/load IDs.
 - Nullability policy: the new 0.7 voltage and contingency identity fields are nullable by design when the source CIM payload cannot support an honest value; the writer should emit null rather than fabricate semantics.
-- Dynamics derivation: when generator rows are present, `dynamics_models` is derived from `SynchronousMachine` parameters (`H`, `xd_prime`, `D`, `mbase_mva`); `model_type` is conservatively inferred as `GENROU`, `GENCLS`, or `SYNC_MACHINE_EQ` based only on available parsed parameters. If generator-derived rows are unavailable, a placeholder row is emitted and marked via metadata.
+- Dynamics derivation: when DY profile models are present, `dynamics_models` is populated from DY-linked equipment references and numeric model parameters; when DY is partial, unmatched generators fall back to EQ `SynchronousMachine` parameters (`H`, `xd_prime`, `D`, `mbase_mva`) with inferred `model_type` (`GENROU`, `GENCLS`, or `SYNC_MACHINE_EQ`). If no generator-linked dynamics can be built, a placeholder row is emitted and marked via metadata.
+- Dynamics extensibility for Studio: `dynamics_models.model_type` is intentionally open-string so Studio can add new non-CIM models. Use a namespaced identifier such as `raptrix.smart_valve.v1` and keep parameters in `dynamics_models.params` as stable numeric key/value pairs.
 - Benchmark note: on SmallGrid-scale datasets this merge substantially reduces bus count versus raw ConnectivityNode granularity and improves solve-stage matrix dimensions.
 
 Contribution guidance:
@@ -148,13 +149,13 @@ Use these as baseline indicators, not final production benchmarks.
 
 ## Project Layout
 
-- raptrix-cim-arrow/src/schema.rs: v0.7.1 table schemas, metadata constants, and schema registry helpers
+- raptrix-cim-arrow/src/schema.rs: v0.8.0 table schemas, metadata constants, and schema registry helpers
 - raptrix-cim-arrow/src/io.rs: generic root `.rpf` assembly, validation, readback, and summary helpers
 - src/models: CIM data structures and traits
 - src/parser.rs: parse helpers and EQ-to-branch mapping
 - src/rpf_writer.rs: CIM-specific mapping from parsed CGMES content into canonical table batches
 
-### Locked contract: v0.7.1 additive fields
+### Locked contract: v0.8.0 additive fields
 
 - Added optional dictionary-encoded `name` columns to:
 	- branches
@@ -286,6 +287,38 @@ Run:
 - `python -m pytest tests/inspect_rpf.py -q`
 
 If external data is unavailable, the test is marked/treated as ignored and skipped.
+
+## Required Regression Gate
+
+Every non-trivial parser, mapper, schema, and writer change must run the full
+RPF matrix regression before merge.
+
+One-line Cargo command:
+
+- `cargo rpf-regression -- --data-root C:\raptrix-cim-tests\CGMES_ConformityAssessmentScheme_TestConfigurations_v3-0-3\CGMES_ConformityAssessmentScheme_TestConfigurations_v3-0-3\v3.0 --profiles both --clean`
+
+If `RAPTRIX_TEST_DATA_ROOT` is already set, `--data-root` can be omitted:
+
+- `cargo rpf-regression -- --profiles both --clean`
+
+Outputs are written to:
+
+- `tests/data/external/results/debug`
+- `tests/data/external/results/release`
+- `tests/data/external/results/report.md`
+- `tests/data/external/results/report.json`
+
+Strict multi-profile check (includes SSH and DY inputs):
+
+- `cargo rpf-regression -- --data-root C:\raptrix-cim-tests\CGMES_ConformityAssessmentScheme_TestConfigurations_v3-0-3\CGMES_ConformityAssessmentScheme_TestConfigurations_v3-0-3\v3.0 --profiles both --clean --include-ssh-dy`
+
+Interpretation of failures:
+
+- If conversion fails, no `.rpf` is emitted for that run (fail-fast behavior).
+- This does **not** indicate a corrupted `.rpf`; it indicates conversion aborted.
+- In strict mode, SSH/DY failures indicate profile-ingest coverage gaps and can
+	imply missing operational/dynamic context in outputs if those profiles are
+	excluded.
 
 ## External CGMES Setup
 

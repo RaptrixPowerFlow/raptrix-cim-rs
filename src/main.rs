@@ -379,6 +379,15 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
         println!("Diagram objects emitted: {}", summary.diagram_object_rows);
         println!("Diagram points emitted: {}", summary.diagram_point_rows);
     }
+    println!("Dynamics rows emitted: {}", summary.dynamics_rows_total);
+    println!(
+        "Dynamics DY-linked rows: {}",
+        summary.dynamics_rows_dy_linked
+    );
+    println!(
+        "Dynamics EQ-fallback rows: {}",
+        summary.dynamics_rows_eq_fallback
+    );
 
     Ok(())
 }
