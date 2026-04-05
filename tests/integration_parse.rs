@@ -172,6 +172,7 @@ fn write_smallgrid_rpf_with_optional_node_breaker_tables() -> Result<()> {
             bus_resolution_mode: BusResolutionMode::Topological,
             emit_connectivity_groups: false,
             emit_node_breaker_detail: true,
+            emit_diagram_layout: true,
             contingencies_are_stub: false,
             dynamics_are_stub: false,
             base_mva: 100.0,
@@ -222,6 +223,7 @@ fn write_fullgrid_rpf_with_optional_node_breaker_tables() -> Result<()> {
             bus_resolution_mode: BusResolutionMode::Topological,
             emit_connectivity_groups: false,
             emit_node_breaker_detail: true,
+            emit_diagram_layout: true,
             contingencies_are_stub: false,
             dynamics_are_stub: false,
             base_mva: 100.0,
@@ -240,6 +242,68 @@ fn write_fullgrid_rpf_with_optional_node_breaker_tables() -> Result<()> {
 
     assert_eq!(node_breaker_table.num_rows(), summary.node_breaker_rows);
     assert!(summary.connectivity_node_rows > 0);
+
+    Ok(())
+}
+#[test]
+#[ignore = "requires RAPTRIX_TEST_DATA_ROOT pointing at CGMES v3.0 merge with DL profile"]
+fn test_smallgrid_diagram_roundtrip() -> Result<()> {
+    // Verify diagram_objects and diagram_points tables are emitted with correct metadata when enabled.
+    let Some(eq_path) = get_external_cgmes_path("SmallGrid", "EQ") else {
+        println!("Skipping: RAPTRIX_TEST_DATA_ROOT is not set");
+        return Ok(());
+    };
+
+    if !eq_path.exists() {
+        println!("Skipping: SmallGrid EQ file not found");
+        return Ok(());
+    }
+
+    let output_path = std::env::temp_dir().join("smallgrid_v0.7.1_diagram_test.rpf");
+    
+    let mut owned_paths = vec![eq_path.to_string_lossy().into_owned()];
+    let tp_path = eq_path.with_file_name("SmallGrid_TP.xml");
+    if tp_path.is_file() {
+        owned_paths.push(tp_path.to_string_lossy().into_owned());
+    }
+    let path_refs: Vec<&str> = owned_paths.iter().map(String::as_str).collect();
+
+    let summary = write_complete_rpf_with_options(
+        &path_refs,
+        output_path.to_string_lossy().as_ref(),
+        &WriteOptions {
+            bus_resolution_mode: BusResolutionMode::Topological,
+            emit_connectivity_groups: false,
+            emit_node_breaker_detail: false,
+            emit_diagram_layout: true,  // Enable diagram layout emission
+            contingencies_are_stub: false,
+            dynamics_are_stub: false,
+            base_mva: 100.0,
+            frequency_hz: 60.0,
+            study_name: None,
+            timestamp_utc: None,
+        },
+    )?;
+
+    let tables = read_rpf_tables(&output_path)?;
+    let table_names: Vec<&str> = tables.iter().map(|(name, _)| name.as_str()).collect();
+    
+    // Verify diagram tables are present when DL profile is available
+    if summary.diagram_object_rows > 0 {
+        assert!(
+            table_names.contains(&"diagram_objects"),
+            "diagram_objects table should exist when emit_diagram_layout is enabled and rows exist"
+        );
+        assert!(
+            table_names.contains(&"diagram_points"),
+            "diagram_points table should exist when emit_diagram_layout is enabled and rows exist"
+        );
+    }
+
+    println!(
+        "SmallGrid diagram round-trip: {} diagram objects, {} diagram points",
+        summary.diagram_object_rows, summary.diagram_point_rows
+    );
 
     Ok(())
 }

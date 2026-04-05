@@ -2,7 +2,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.7.0 profile.
+//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.8.0 profile.
+//!
+//! **CGMES 3.0+ Only**: This module targets CGMES v3.0 and later (v17+ CIM) merged profiles.
+//! Support for legacy CGMES 2.4.x was dropped in this release for simplicity and performance.
 //!
 //! This module exposes one exact Arrow schema per required table in the locked
 //! `.rpf` contract, plus deterministic schema registry helpers used by both
@@ -14,10 +17,17 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, Schema};
 
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.7.0 - High-performance open profile by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.8.0 - High-performance open CIM profile (CGMES 3.0+) by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.";
 
-/// Schema version tag embedded as file-level metadata.
-pub const SCHEMA_VERSION: &str = "0.7.0";
+/// Canonical RPF format version tag embedded as file-level metadata.
+pub const RPF_VERSION: &str = "0.8.0";
+
+/// Supported RPF versions accepted by generic Arrow IPC readers.
+/// v0.8.0 introduces diagram layout support and drops CGMES 2.4.x compatibility.
+pub const SUPPORTED_RPF_VERSIONS: &[&str] = &["0.8.0", "0.7.1", "0.7.0"];
+
+/// Backward-compatible alias retained for older call sites.
+pub const SCHEMA_VERSION: &str = RPF_VERSION;
 
 /// File-level metadata key for branding string.
 pub const METADATA_KEY_BRANDING: &str = "raptrix.branding";
@@ -27,6 +37,8 @@ pub const METADATA_KEY_VERSION: &str = "raptrix.version";
 pub const METADATA_KEY_RPF_VERSION: &str = "rpf_version";
 /// Optional metadata key indicating node-breaker optional tables are emitted.
 pub const METADATA_KEY_FEATURE_NODE_BREAKER: &str = "raptrix.features.node_breaker";
+/// Optional metadata key indicating diagram layout optional tables are emitted.
+pub const METADATA_KEY_FEATURE_DIAGRAM_LAYOUT: &str = "raptrix.features.diagram_layout";
 /// Optional metadata key indicating contingencies table uses placeholder rows.
 pub const METADATA_KEY_FEATURE_CONTINGENCIES_STUB: &str = "raptrix.features.contingencies_stub";
 /// Optional metadata key indicating dynamics_models table uses placeholder rows.
@@ -70,6 +82,10 @@ pub const TABLE_NODE_BREAKER_DETAIL: &str = "node_breaker_detail";
 pub const TABLE_SWITCH_DETAIL: &str = "switch_detail";
 /// Optional detail table emitted only when node-breaker detail mode is enabled.
 pub const TABLE_CONNECTIVITY_NODES: &str = "connectivity_nodes";
+/// Optional diagram layout table emitted only when CIM DiagramObject rows resolve.
+pub const TABLE_DIAGRAM_OBJECTS: &str = "diagram_objects";
+/// Optional diagram layout table emitted only when CIM DiagramObjectPoint rows resolve.
+pub const TABLE_DIAGRAM_POINTS: &str = "diagram_points";
 /// Backward-compatible alias for older callers.
 pub const TABLE_DYNAMICS: &str = "dynamics";
 
@@ -497,6 +513,35 @@ pub fn connectivity_nodes_schema() -> Schema {
     )
 }
 
+/// Optional `diagram_objects` table schema.
+pub fn diagram_objects_schema() -> Schema {
+    Schema::new_with_metadata(
+        vec![
+            Field::new("element_id", DataType::Utf8, false),
+            Field::new("element_type", DataType::Utf8, false),
+            Field::new("diagram_id", DataType::Utf8, false),
+            Field::new("rotation", DataType::Float32, true),
+            Field::new("visible", DataType::Boolean, false),
+            Field::new("draw_order", DataType::Int32, true),
+        ],
+        schema_metadata(),
+    )
+}
+
+/// Optional `diagram_points` table schema.
+pub fn diagram_points_schema() -> Schema {
+    Schema::new_with_metadata(
+        vec![
+            Field::new("element_id", DataType::Utf8, false),
+            Field::new("diagram_id", DataType::Utf8, false),
+            Field::new("seq", DataType::Int32, false),
+            Field::new("x", DataType::Float64, false),
+            Field::new("y", DataType::Float64, false),
+        ],
+        schema_metadata(),
+    )
+}
+
 /// Returns optional node-breaker detail table schemas in deterministic order.
 pub fn node_breaker_table_schemas() -> Vec<(&'static str, Schema)> {
     vec![
@@ -506,7 +551,15 @@ pub fn node_breaker_table_schemas() -> Vec<(&'static str, Schema)> {
     ]
 }
 
-/// Returns all required table schemas in canonical v0.7.0 order.
+/// Returns optional diagram layout table schemas in deterministic order.
+pub fn diagram_layout_table_schemas() -> Vec<(&'static str, Schema)> {
+    vec![
+        (TABLE_DIAGRAM_OBJECTS, diagram_objects_schema()),
+        (TABLE_DIAGRAM_POINTS, diagram_points_schema()),
+    ]
+}
+
+/// Returns all required table schemas in canonical v0.7.1 order.
 pub fn all_table_schemas() -> Vec<(&'static str, Schema)> {
     vec![
         (TABLE_METADATA, metadata_schema()),
@@ -549,6 +602,8 @@ pub fn table_schema(table_name: &str) -> Option<Schema> {
         TABLE_NODE_BREAKER_DETAIL => Some(node_breaker_detail_schema()),
         TABLE_SWITCH_DETAIL => Some(switch_detail_schema()),
         TABLE_CONNECTIVITY_NODES => Some(connectivity_nodes_schema()),
+        TABLE_DIAGRAM_OBJECTS => Some(diagram_objects_schema()),
+        TABLE_DIAGRAM_POINTS => Some(diagram_points_schema()),
         TABLE_DYNAMICS => Some(dynamics_models_schema()),
         _ => None,
     }
@@ -567,4 +622,52 @@ pub fn powerflow_schema() -> Schema {
 /// Backward-compatible alias retained for older call sites.
 pub fn branch_schema() -> Schema {
     branches_schema()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{diagram_objects_schema, diagram_points_schema};
+    use arrow::datatypes::DataType;
+
+    #[test]
+    fn diagram_object_and_point_schemas_match_contract() {
+        let objects = diagram_objects_schema();
+        assert_eq!(objects.fields().len(), 6);
+        assert_eq!(objects.field(0).name(), "element_id");
+        assert_eq!(objects.field(0).data_type(), &DataType::Utf8);
+        assert!(!objects.field(0).is_nullable());
+        assert_eq!(objects.field(1).name(), "element_type");
+        assert_eq!(objects.field(1).data_type(), &DataType::Utf8);
+        assert!(!objects.field(1).is_nullable());
+        assert_eq!(objects.field(2).name(), "diagram_id");
+        assert_eq!(objects.field(2).data_type(), &DataType::Utf8);
+        assert!(!objects.field(2).is_nullable());
+        assert_eq!(objects.field(3).name(), "rotation");
+        assert_eq!(objects.field(3).data_type(), &DataType::Float32);
+        assert!(objects.field(3).is_nullable());
+        assert_eq!(objects.field(4).name(), "visible");
+        assert_eq!(objects.field(4).data_type(), &DataType::Boolean);
+        assert!(!objects.field(4).is_nullable());
+        assert_eq!(objects.field(5).name(), "draw_order");
+        assert_eq!(objects.field(5).data_type(), &DataType::Int32);
+        assert!(objects.field(5).is_nullable());
+
+        let points = diagram_points_schema();
+        assert_eq!(points.fields().len(), 5);
+        assert_eq!(points.field(0).name(), "element_id");
+        assert_eq!(points.field(0).data_type(), &DataType::Utf8);
+        assert!(!points.field(0).is_nullable());
+        assert_eq!(points.field(1).name(), "diagram_id");
+        assert_eq!(points.field(1).data_type(), &DataType::Utf8);
+        assert!(!points.field(1).is_nullable());
+        assert_eq!(points.field(2).name(), "seq");
+        assert_eq!(points.field(2).data_type(), &DataType::Int32);
+        assert!(!points.field(2).is_nullable());
+        assert_eq!(points.field(3).name(), "x");
+        assert_eq!(points.field(3).data_type(), &DataType::Float64);
+        assert!(!points.field(3).is_nullable());
+        assert_eq!(points.field(4).name(), "y");
+        assert_eq!(points.field(4).data_type(), &DataType::Float64);
+        assert!(!points.field(4).is_nullable());
+    }
 }

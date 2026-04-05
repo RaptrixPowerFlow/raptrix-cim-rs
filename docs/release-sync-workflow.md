@@ -38,7 +38,7 @@ Run this workflow on any of the following changes:
 3. Ensure GitHub action `Master Contract CI` publishes the contract artifact.
 4. Publish release notes with:
    - schema/contract impact summary
-   - compatibility statement (CGMES 2.4.x and 3.x)
+   - **CGMES ingest compatibility**: v3.0+ only (breaking change in v0.8.0)
    - migration notes for downstream repos
 
 ## Downstream Sync Checklist

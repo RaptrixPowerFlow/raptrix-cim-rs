@@ -9,6 +9,44 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Musto Technologies LL
 
 Copyright (c) 2026 Musto Technologies LLC
 
+## [Schema Contract 0.8.0] - 2026-04-05
+
+### Converter release: Crate version 0.2.1 | Arrow schema v0.8.0
+
+### ⚠️ BREAKING CHANGE
+
+- **Dropped CGMES 2.4.x support** — raptrix-cim-rs now targets **CGMES v3.0+ only** (v17+ CIM standard).
+  - Rationale: CGMES 2.4.x remains in legacy use; CGMES 3.0+ (v3.0, v3.0.1, v3.0.2, v3.0.3) is the current, production-grade ENTSO-E standard as of 2025–2026.
+  - Benefit: Eliminates dual-track parsing logic, complex difference-file assembly, and fallback heuristics. Parser is now 100% aligned with modern ENTSO-E XSD/UML for cleaner, faster ingestion.
+  - Migration: Upstream any legacy CGMES 2.4 datasets to v3.0+ before using raptrix-cim-rs. Most vendor tools (PowerFactory, PSS/ODMS, CIMdesk, CIMbion, etc.) provide automated converters.
+
+### Changed
+
+- Updated schema contract branding to v0.8.0 with CGMES 3.0+ positioning.
+- Clarified compatibility policy in `docs/schema-contract.md`: single-track CGMES 3.0+ ingest target (removed dual-track language).
+- Updated README, roadmap, and release-sync workflow to reflect v3.0+ compatibility only.
+- `SUPPORTED_RPF_VERSIONS` now includes v0.8.0 as the current version; v0.7.1, v0.7.0 remain readable for backward compatibility.
+
+### Added
+
+- Diagram layout support (v0.8.0 continues additive v0.7.1 diagram_objects and diagram_points tables when DL profile present).
+- Additional test artifacts in v3.0 format with new diagram layout features.
+
+### Removed
+
+- Conditional CGMES 2.4.x profile auto-detection logic from parser and writer.
+- Fallback multi-pattern heuristics for v2.4 vs v3.0 naming conventions.
+
+## [Schema Contract 0.7.1] - 2026-04-04
+
+### Converter release: Crate version 0.2.1
+
+### Added
+
+- Diagram layout optional tables (`diagram_objects`, `diagram_points`) for CGMES DL profile support.
+- Metadata flag `raptrix.features.diagram_layout` to indicate presence of diagram tables.
+- CLI flags `--dl` and `--no-diagram` for diagram profile control.
+
 ## [Unreleased]
 
 ### Converter release: Crate version 0.2.0

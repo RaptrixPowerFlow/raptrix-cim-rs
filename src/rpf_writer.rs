@@ -20,9 +20,9 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use arrow::array::{
-    ArrayBuilder, ArrayRef, BooleanBuilder, Float64Builder, Int8Builder, Int32Builder, ListBuilder,
-    MapBuilder, MapFieldNames, StringBuilder, StringDictionaryBuilder, StructBuilder,
-    new_null_array,
+    ArrayBuilder, ArrayRef, BooleanBuilder, Float32Builder, Float64Builder, Int8Builder,
+    Int32Builder, ListBuilder, MapBuilder, MapFieldNames, StringBuilder,
+    StringDictionaryBuilder, StructBuilder, new_null_array,
 };
 use arrow::datatypes::{DataType, Field, Int32Type, UInt32Type};
 use arrow::record_batch::RecordBatch;
@@ -34,11 +34,12 @@ pub use raptrix_cim_arrow::{
 
 use crate::arrow_schema::{
     SCHEMA_VERSION, TABLE_AREAS, TABLE_BRANCHES, TABLE_BUSES, TABLE_CONNECTIVITY_NODES,
-    TABLE_CONTINGENCIES, TABLE_DYNAMICS_MODELS, TABLE_FIXED_SHUNTS, TABLE_GENERATORS,
-    TABLE_INTERFACES, TABLE_LOADS, TABLE_METADATA, TABLE_NODE_BREAKER_DETAIL, TABLE_OWNERS,
-    TABLE_SWITCH_DETAIL, TABLE_SWITCHED_SHUNTS, TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W,
-    TABLE_ZONES, areas_schema, branches_schema, buses_schema, connectivity_groups_schema,
-    connectivity_nodes_schema, contingencies_schema, dynamics_models_schema, fixed_shunts_schema,
+    TABLE_CONTINGENCIES, TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_DYNAMICS_MODELS,
+    TABLE_FIXED_SHUNTS, TABLE_GENERATORS, TABLE_INTERFACES, TABLE_LOADS, TABLE_METADATA,
+    TABLE_NODE_BREAKER_DETAIL, TABLE_OWNERS, TABLE_SWITCH_DETAIL, TABLE_SWITCHED_SHUNTS,
+    TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, TABLE_ZONES, areas_schema, branches_schema,
+    buses_schema, connectivity_groups_schema, connectivity_nodes_schema, contingencies_schema,
+    diagram_objects_schema, diagram_points_schema, dynamics_models_schema, fixed_shunts_schema,
     generators_schema, interfaces_schema, loads_schema, metadata_schema,
     node_breaker_detail_schema, owners_schema, switch_detail_schema, switched_shunts_schema,
     transformers_2w_schema, transformers_3w_schema, zones_schema,
@@ -60,6 +61,7 @@ pub struct WriteOptions {
     pub bus_resolution_mode: BusResolutionMode,
     pub emit_connectivity_groups: bool,
     pub emit_node_breaker_detail: bool,
+    pub emit_diagram_layout: bool,
     pub contingencies_are_stub: bool,
     pub dynamics_are_stub: bool,
     pub base_mva: f64,
@@ -74,6 +76,7 @@ impl Default for WriteOptions {
             bus_resolution_mode: BusResolutionMode::Topological,
             emit_connectivity_groups: false,
             emit_node_breaker_detail: false,
+            emit_diagram_layout: true,
             contingencies_are_stub: false,
             dynamics_are_stub: false,
             base_mva: 100.0,
@@ -94,6 +97,8 @@ pub struct WriteSummary {
     pub node_breaker_rows: usize,
     pub switch_detail_rows: usize,
     pub connectivity_node_rows: usize,
+    pub diagram_object_rows: usize,
+    pub diagram_point_rows: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -307,6 +312,31 @@ struct ConnectivityNodeDetailRow<'a> {
 }
 
 #[derive(Debug, Clone)]
+struct DiagramObjectRow<'a> {
+    element_id: Cow<'a, str>,
+    element_type: Cow<'a, str>,
+    diagram_id: Cow<'a, str>,
+    rotation: Option<f32>,
+    visible: bool,
+    draw_order: Option<i32>,
+}
+
+#[derive(Debug, Clone)]
+struct DiagramPointRow<'a> {
+    element_id: Cow<'a, str>,
+    diagram_id: Cow<'a, str>,
+    seq: i32,
+    x: f64,
+    y: f64,
+}
+
+#[derive(Debug, Clone)]
+struct DiagramElementResolution {
+    element_type: &'static str,
+    element_id: String,
+}
+
+#[derive(Debug, Clone)]
 struct ContingencyRow<'a> {
     contingency_id: Cow<'a, str>,
     elements: Vec<ContingencyElement<'a>>,
@@ -356,6 +386,10 @@ fn format_kv_label(nominal_kv: f64) -> String {
     } else {
         format!("{nominal_kv:.1}")
     }
+}
+
+fn make_diagram_element_id(element_type: &str, table_key: &str) -> String {
+    format!("{element_type}:{table_key}")
 }
 
 fn bus_fallback_name(bus_key: &str, voltage_label: Option<&str>) -> String {
@@ -516,7 +550,12 @@ pub fn write_complete_rpf_with_options(
     }
 
     let topology =
-        parse_eq_topology_rows(cgmes_paths, options.bus_resolution_mode).with_context(|| {
+        parse_eq_topology_rows(
+            cgmes_paths,
+            options.bus_resolution_mode,
+            options.emit_node_breaker_detail,
+        )
+        .with_context(|| {
             format!(
                 "failed while parsing EQ/TP profile content from {} input path(s)",
                 cgmes_paths.len()
@@ -538,6 +577,8 @@ pub fn write_complete_rpf_with_options(
         node_breaker_rows,
         switch_detail_rows,
         connectivity_node_rows,
+        diagram_object_rows,
+        diagram_point_rows,
         split_bus_stub_elements,
     ) = topology;
 
@@ -591,6 +632,8 @@ pub fn write_complete_rpf_with_options(
     let node_breaker_detail_batch = build_node_breaker_detail_batch(&node_breaker_rows)?;
     let switch_detail_batch = build_switch_detail_batch(&switch_detail_rows)?;
     let connectivity_nodes_batch = build_connectivity_nodes_batch(&connectivity_node_rows)?;
+    let diagram_objects_batch = build_diagram_objects_batch(&diagram_object_rows)?;
+    let diagram_points_batch = build_diagram_points_batch(&diagram_point_rows)?;
 
     let mut table_batches: HashMap<&'static str, RecordBatch> = HashMap::new();
     table_batches.insert(TABLE_METADATA, metadata_batch.clone());
@@ -617,12 +660,17 @@ pub fn write_complete_rpf_with_options(
         table_batches.insert(TABLE_SWITCH_DETAIL, switch_detail_batch.clone());
         table_batches.insert(TABLE_CONNECTIVITY_NODES, connectivity_nodes_batch.clone());
     }
+    if options.emit_diagram_layout && !diagram_object_rows.is_empty() {
+        table_batches.insert(TABLE_DIAGRAM_OBJECTS, diagram_objects_batch.clone());
+        table_batches.insert(TABLE_DIAGRAM_POINTS, diagram_points_batch.clone());
+    }
 
     write_root_rpf(
         output_path,
         &table_batches,
         &RootWriteOptions {
             include_node_breaker_detail: options.emit_node_breaker_detail,
+            include_diagram_layout: options.emit_diagram_layout && !diagram_object_rows.is_empty(),
             contingencies_are_stub: options.contingencies_are_stub || contingencies_are_stub,
             dynamics_are_stub: options.dynamics_are_stub || dynamics_are_stub,
         },
@@ -647,6 +695,8 @@ pub fn write_complete_rpf_with_options(
         node_breaker_rows: node_breaker_rows.len(),
         switch_detail_rows: switch_detail_rows.len(),
         connectivity_node_rows: connectivity_node_rows.len(),
+        diagram_object_rows: diagram_object_rows.len(),
+        diagram_point_rows: diagram_point_rows.len(),
     })
 }
 
@@ -792,6 +842,9 @@ fn parse_eq_components_for_path(
     Vec<parser::ConnectivityNodeSpec>,
     Vec<parser::BaseVoltageSpec>,
     Vec<parser::EquipmentBaseVoltageRef>,
+    Vec<parser::DiagramRecord>,
+    Vec<parser::DiagramObjectRecord>,
+    Vec<parser::DiagramPointRecord>,
 )> {
     let bytes = std::fs::read(path)
         .with_context(|| format!("failed to open CGMES input file at {path}"))?;
@@ -869,6 +922,13 @@ fn parse_eq_components_for_path(
             )
         })?;
 
+    let (diagrams, diagram_objects, diagram_points) =
+        parser::diagram_layout_from_reader(Cursor::new(&bytes)).with_context(|| {
+            format!(
+                "failed to extract DiagramLayout elements from CGMES input file at {path}"
+            )
+        })?;
+
     Ok((
         lines,
         machines,
@@ -886,6 +946,9 @@ fn parse_eq_components_for_path(
         connectivity_nodes,
         base_voltages,
         equipment_base_voltage_refs,
+        diagrams,
+        diagram_objects,
+        diagram_points,
     ))
 }
 
@@ -901,6 +964,7 @@ fn parse_eq_components_for_path(
 fn parse_eq_topology_rows(
     cgmes_paths: &[&str],
     bus_resolution_mode: BusResolutionMode,
+    emit_node_breaker_detail: bool,
 ) -> Result<(
     Vec<BusRow<'static>>,
     Vec<BranchRow<'static>>,
@@ -917,6 +981,8 @@ fn parse_eq_topology_rows(
     Vec<NodeBreakerDetailRow<'static>>,
     Vec<SwitchDetailRow<'static>>,
     Vec<ConnectivityNodeDetailRow<'static>>,
+    Vec<DiagramObjectRow<'static>>,
+    Vec<DiagramPointRow<'static>>,
     Vec<ContingencyElement<'static>>,
 )> {
     let mut lines = Vec::new();
@@ -935,6 +1001,9 @@ fn parse_eq_topology_rows(
     let mut connectivity_nodes = Vec::new();
     let mut base_voltages = Vec::new();
     let mut equipment_base_voltage_refs = Vec::new();
+    let mut diagrams = Vec::new();
+    let mut diagram_objects = Vec::new();
+    let mut diagram_points = Vec::new();
 
     for path in cgmes_paths {
         let (
@@ -954,6 +1023,9 @@ fn parse_eq_topology_rows(
             mut parsed_connectivity_nodes,
             mut parsed_base_voltages,
             mut parsed_equipment_base_voltage_refs,
+            mut parsed_diagrams,
+            mut parsed_diagram_objects,
+            mut parsed_diagram_points,
         ) = parse_eq_components_for_path(path)?;
         if !parsed_lines.is_empty() {
             lines.append(&mut parsed_lines);
@@ -1002,6 +1074,15 @@ fn parse_eq_topology_rows(
         }
         if !parsed_equipment_base_voltage_refs.is_empty() {
             equipment_base_voltage_refs.append(&mut parsed_equipment_base_voltage_refs);
+        }
+        if !parsed_diagrams.is_empty() {
+            diagrams.append(&mut parsed_diagrams);
+        }
+        if !parsed_diagram_objects.is_empty() {
+            diagram_objects.append(&mut parsed_diagram_objects);
+        }
+        if !parsed_diagram_points.is_empty() {
+            diagram_points.append(&mut parsed_diagram_points);
         }
     }
 
@@ -1109,6 +1190,20 @@ fn parse_eq_topology_rows(
         bus_key_to_bus_id.insert(*bus_key, (idx as i32) + 1);
     }
 
+    let mut diagram_element_by_cim_mrid: HashMap<String, DiagramElementResolution> =
+        HashMap::new();
+    if use_topological {
+        for (bus_key, bus_id) in &bus_key_to_bus_id {
+            diagram_element_by_cim_mrid.insert(
+                (*bus_key).to_owned(),
+                DiagramElementResolution {
+                    element_type: "bus",
+                    element_id: make_diagram_element_id("bus", &bus_id.to_string()),
+                },
+            );
+        }
+    }
+
     let mut topology_name_by_mrid: HashMap<&str, &str> = HashMap::new();
     for node in &topological_nodes {
         if let Some(name) = node.base.name.as_deref().and_then(non_empty_name) {
@@ -1181,6 +1276,17 @@ fn parse_eq_topology_rows(
     }
 
     lines.sort_unstable_by(|left, right| left.base.m_rid.cmp(&right.base.m_rid));
+
+    for (idx, line) in lines.iter().enumerate() {
+        let branch_id = (idx as i32) + 1;
+        diagram_element_by_cim_mrid.insert(
+            line.base.m_rid.as_ref().to_owned(),
+            DiagramElementResolution {
+                element_type: "branch",
+                element_id: make_diagram_element_id("branch", &branch_id.to_string()),
+            },
+        );
+    }
 
     let mut branch_rows = Vec::with_capacity(lines.len());
     for (idx, line) in lines.iter().enumerate() {
@@ -1328,6 +1434,13 @@ fn parse_eq_topology_rows(
 
         let machine_id = machine.base.m_rid;
         let machine_id_text = machine_id.as_ref().to_owned();
+        diagram_element_by_cim_mrid.insert(
+            machine_id_text.clone(),
+            DiagramElementResolution {
+                element_type: "generator",
+                element_id: make_diagram_element_id("generator", &machine_id_text),
+            },
+        );
         gen_rows.push(GenRow {
             bus_id,
             id: machine_id,
@@ -1414,6 +1527,13 @@ fn parse_eq_topology_rows(
 
         let load_id = load.base.m_rid;
         let load_id_text = load_id.as_ref().to_owned();
+        diagram_element_by_cim_mrid.insert(
+            load_id_text.clone(),
+            DiagramElementResolution {
+                element_type: "load",
+                element_id: make_diagram_element_id("load", &load_id_text),
+            },
+        );
         load_rows.push(LoadRow {
             bus_id,
             id: load_id,
@@ -1745,6 +1865,19 @@ fn parse_eq_topology_rows(
             g_mw: shunt.g_mw.unwrap_or(0.0),
             b_mvar: shunt.b_mvar.unwrap_or(0.0),
         });
+        let shunt_key = fixed_shunt_rows
+            .last()
+            .map(|row| row.id.as_ref().to_owned())
+            .unwrap_or_default();
+        if !shunt_key.is_empty() {
+            diagram_element_by_cim_mrid.insert(
+                shunt_key.clone(),
+                DiagramElementResolution {
+                    element_type: "fixed_shunt",
+                    element_id: make_diagram_element_id("fixed_shunt", &shunt_key),
+                },
+            );
+        }
     }
 
     switched_shunts.sort_unstable_by(|left, right| left.base.m_rid.cmp(&right.base.m_rid));
@@ -1914,6 +2047,16 @@ fn parse_eq_topology_rows(
                 retained: switch.retained,
             });
 
+            if emit_node_breaker_detail {
+                diagram_element_by_cim_mrid.insert(
+                    switch.switch_mrid.clone(),
+                    DiagramElementResolution {
+                        element_type: "breaker",
+                        element_id: make_diagram_element_id("breaker", &switch.switch_mrid),
+                    },
+                );
+            }
+
             node_breaker_rows.push(NodeBreakerDetailRow {
                 switch_id: Cow::Owned(switch.switch_mrid),
                 switch_type: Cow::Owned(switch.switch_type),
@@ -1946,8 +2089,100 @@ fn parse_eq_topology_rows(
                 topological_node_mrid: node.topological_node_mrid.map(Cow::Owned),
                 bus_id,
             });
+            let connectivity_key = connectivity_node_rows
+                .last()
+                .map(|row| row.connectivity_node_mrid.as_ref().to_owned())
+                .unwrap_or_default();
+            if emit_node_breaker_detail && !connectivity_key.is_empty() {
+                diagram_element_by_cim_mrid.insert(
+                    connectivity_key.clone(),
+                    DiagramElementResolution {
+                        element_type: "connectivity_node",
+                        element_id: make_diagram_element_id(
+                            "connectivity_node",
+                            &connectivity_key,
+                        ),
+                    },
+                );
+            }
         }
     }
+
+    let diagram_name_by_rdf_id: HashMap<String, String> = diagrams
+        .into_iter()
+        .map(|diagram| {
+            let diagram_id = diagram
+                .name
+                .as_deref()
+                .and_then(non_empty_name)
+                .unwrap_or(diagram.diagram_rdf_id.as_str())
+                .to_owned();
+            (diagram.diagram_rdf_id, diagram_id)
+        })
+        .collect();
+
+    let mut points_by_object_id: HashMap<&str, Vec<&parser::DiagramPointRecord>> = HashMap::new();
+    for point in &diagram_points {
+        points_by_object_id
+            .entry(point.obj_rdf_id.as_str())
+            .or_default()
+            .push(point);
+    }
+
+    let mut diagram_object_rows: Vec<DiagramObjectRow<'static>> = Vec::new();
+    let mut diagram_point_rows: Vec<DiagramPointRow<'static>> = Vec::new();
+    for object in diagram_objects {
+        let Some(diagram_id) = diagram_name_by_rdf_id.get(&object.diagram_rdf_id) else {
+            continue;
+        };
+        let Some(resolution) = diagram_element_by_cim_mrid.get(object.identified_object_rdf_id.as_str())
+        else {
+            continue;
+        };
+
+        let element_id = resolution.element_id.clone();
+        let diagram_id_text = diagram_id.clone();
+        diagram_object_rows.push(DiagramObjectRow {
+            element_id: Cow::Owned(element_id.clone()),
+            element_type: Cow::Borrowed(resolution.element_type),
+            diagram_id: Cow::Owned(diagram_id_text.clone()),
+            rotation: object.rotation,
+            visible: true,
+            draw_order: object.drawing_order,
+        });
+
+        if let Some(points) = points_by_object_id.get(object.obj_rdf_id.as_str()) {
+            let mut ordered_points = points.clone();
+            ordered_points.sort_unstable_by(|left, right| left.seq.cmp(&right.seq));
+            for point in ordered_points {
+                diagram_point_rows.push(DiagramPointRow {
+                    element_id: Cow::Owned(element_id.clone()),
+                    diagram_id: Cow::Owned(diagram_id_text.clone()),
+                    seq: point.seq,
+                    x: point.x,
+                    y: point.y,
+                });
+            }
+        }
+    }
+
+    diagram_object_rows.sort_unstable_by(|left, right| {
+        left.diagram_id
+            .cmp(&right.diagram_id)
+            .then_with(|| left.element_type.cmp(&right.element_type))
+            .then_with(|| left.element_id.cmp(&right.element_id))
+    });
+    diagram_object_rows.dedup_by(|left, right| {
+        left.diagram_id == right.diagram_id
+            && left.element_type == right.element_type
+            && left.element_id == right.element_id
+    });
+    diagram_point_rows.sort_unstable_by(|left, right| {
+        left.diagram_id
+            .cmp(&right.diagram_id)
+            .then_with(|| left.element_id.cmp(&right.element_id))
+            .then_with(|| left.seq.cmp(&right.seq))
+    });
 
     Ok((
         bus_rows,
@@ -1965,6 +2200,8 @@ fn parse_eq_topology_rows(
         node_breaker_rows,
         switch_detail_rows,
         connectivity_node_rows,
+        diagram_object_rows,
+        diagram_point_rows,
         split_bus_stub_elements,
     ))
 }
@@ -2752,6 +2989,76 @@ fn build_connectivity_nodes_batch(rows: &[ConnectivityNodeDetailRow<'_>]) -> Res
     RecordBatch::try_new(schema, arrays).context("failed to build connectivity_nodes record batch")
 }
 
+fn build_diagram_objects_batch(rows: &[DiagramObjectRow<'_>]) -> Result<RecordBatch> {
+    let schema = Arc::new(diagram_objects_schema());
+
+    let mut element_id_b = StringBuilder::new();
+    let mut element_type_b = StringBuilder::new();
+    let mut diagram_id_b = StringBuilder::new();
+    let mut rotation_b = Float32Builder::new();
+    let mut visible_b = BooleanBuilder::new();
+    let mut draw_order_b = Int32Builder::new();
+
+    for row in rows {
+        element_id_b.append_value(row.element_id.as_ref());
+        element_type_b.append_value(row.element_type.as_ref());
+        diagram_id_b.append_value(row.diagram_id.as_ref());
+
+        if let Some(rotation) = row.rotation {
+            rotation_b.append_value(rotation);
+        } else {
+            rotation_b.append_null();
+        }
+
+        visible_b.append_value(row.visible);
+
+        if let Some(draw_order) = row.draw_order {
+            draw_order_b.append_value(draw_order);
+        } else {
+            draw_order_b.append_null();
+        }
+    }
+
+    let arrays: Vec<ArrayRef> = vec![
+        Arc::new(element_id_b.finish()) as ArrayRef,
+        Arc::new(element_type_b.finish()) as ArrayRef,
+        Arc::new(diagram_id_b.finish()) as ArrayRef,
+        Arc::new(rotation_b.finish()) as ArrayRef,
+        Arc::new(visible_b.finish()) as ArrayRef,
+        Arc::new(draw_order_b.finish()) as ArrayRef,
+    ];
+
+    RecordBatch::try_new(schema, arrays).context("failed to build diagram_objects record batch")
+}
+
+fn build_diagram_points_batch(rows: &[DiagramPointRow<'_>]) -> Result<RecordBatch> {
+    let schema = Arc::new(diagram_points_schema());
+
+    let mut element_id_b = StringBuilder::new();
+    let mut diagram_id_b = StringBuilder::new();
+    let mut seq_b = Int32Builder::new();
+    let mut x_b = Float64Builder::new();
+    let mut y_b = Float64Builder::new();
+
+    for row in rows {
+        element_id_b.append_value(row.element_id.as_ref());
+        diagram_id_b.append_value(row.diagram_id.as_ref());
+        seq_b.append_value(row.seq);
+        x_b.append_value(row.x);
+        y_b.append_value(row.y);
+    }
+
+    let arrays: Vec<ArrayRef> = vec![
+        Arc::new(element_id_b.finish()) as ArrayRef,
+        Arc::new(diagram_id_b.finish()) as ArrayRef,
+        Arc::new(seq_b.finish()) as ArrayRef,
+        Arc::new(x_b.finish()) as ArrayRef,
+        Arc::new(y_b.finish()) as ArrayRef,
+    ];
+
+    RecordBatch::try_new(schema, arrays).context("failed to build diagram_points record batch")
+}
+
 /// Builds the `contingencies` table batch with list-of-struct payloads.
 ///
 /// Tenet 2: this uses the exact locked `contingencies_schema()` ordering and
@@ -2963,7 +3270,8 @@ mod tests {
 
     use crate::arrow_schema::{
         BRANDING, SCHEMA_VERSION, all_table_schemas, branches_schema, buses_schema,
-        connectivity_nodes_schema, contingencies_schema, dynamics_models_schema, metadata_schema,
+        connectivity_nodes_schema, contingencies_schema, diagram_objects_schema,
+        diagram_points_schema, dynamics_models_schema, metadata_schema,
         node_breaker_detail_schema, switch_detail_schema,
     };
 
@@ -3035,6 +3343,28 @@ mod tests {
 <cim:Terminal rdf:ID="LT2"><Terminal.ConductingEquipment rdf:resource="#L1"/><Terminal.ConnectivityNode rdf:resource="#N2"/><ACDCTerminal.sequenceNumber>2</ACDCTerminal.sequenceNumber></cim:Terminal>
 <cim:SynchronousMachine rdf:ID="G1"><RotatingMachine.ratedS>150.0</RotatingMachine.ratedS><SynchronousMachine.H>4.5</SynchronousMachine.H><SynchronousMachine.xdPrime>0.25</SynchronousMachine.xdPrime><SynchronousMachine.D>1.2</SynchronousMachine.D></cim:SynchronousMachine>
 <cim:Terminal rdf:ID="GT1"><Terminal.ConductingEquipment rdf:resource="#G1"/><Terminal.ConnectivityNode rdf:resource="#N1"/><ACDCTerminal.sequenceNumber>1</ACDCTerminal.sequenceNumber></cim:Terminal>
+</rdf:RDF>"##,
+        )
+    }
+
+    fn generate_eq_fixture_with_diagram_layout() -> String {
+        String::from(
+            r##"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#">
+<cim:ConnectivityNode rdf:ID="N1" />
+<cim:ConnectivityNode rdf:ID="N2" />
+<cim:ACLineSegment rdf:ID="L1"><IdentifiedObject.name>Line 1</IdentifiedObject.name><ACLineSegment.r>0.01</ACLineSegment.r><ACLineSegment.x>0.05</ACLineSegment.x><ACLineSegment.bch>0.001</ACLineSegment.bch></cim:ACLineSegment>
+<cim:Terminal rdf:ID="LT1"><Terminal.ConductingEquipment rdf:resource="#L1"/><Terminal.ConnectivityNode rdf:resource="#N1"/><ACDCTerminal.sequenceNumber>1</ACDCTerminal.sequenceNumber></cim:Terminal>
+<cim:Terminal rdf:ID="LT2"><Terminal.ConductingEquipment rdf:resource="#L1"/><Terminal.ConnectivityNode rdf:resource="#N2"/><ACDCTerminal.sequenceNumber>2</ACDCTerminal.sequenceNumber></cim:Terminal>
+<cim:Breaker rdf:ID="BR1"><IdentifiedObject.name>Breaker 1</IdentifiedObject.name><Switch.open>false</Switch.open><Switch.normalOpen>false</Switch.normalOpen><Switch.retained>true</Switch.retained></cim:Breaker>
+<cim:Terminal rdf:ID="BT1"><Terminal.ConductingEquipment rdf:resource="#BR1"/><Terminal.ConnectivityNode rdf:resource="#N1"/><ACDCTerminal.sequenceNumber>1</ACDCTerminal.sequenceNumber></cim:Terminal>
+<cim:Terminal rdf:ID="BT2"><Terminal.ConductingEquipment rdf:resource="#BR1"/><Terminal.ConnectivityNode rdf:resource="#N2"/><ACDCTerminal.sequenceNumber>2</ACDCTerminal.sequenceNumber></cim:Terminal>
+<cim:Diagram rdf:ID="D1"><IdentifiedObject.name>overview</IdentifiedObject.name></cim:Diagram>
+<cim:DiagramObject rdf:ID="DO1"><DiagramObject.Diagram rdf:resource="#D1"/><DiagramObject.IdentifiedObject rdf:resource="#L1"/><DiagramObject.rotation>0.0</DiagramObject.rotation><DiagramObject.drawingOrder>1</DiagramObject.drawingOrder></cim:DiagramObject>
+<cim:DiagramObject rdf:ID="DO2"><DiagramObject.Diagram rdf:resource="#D1"/><DiagramObject.IdentifiedObject rdf:resource="#BR1"/><DiagramObject.rotation>90.0</DiagramObject.rotation><DiagramObject.drawingOrder>2</DiagramObject.drawingOrder></cim:DiagramObject>
+<cim:DiagramObjectPoint rdf:ID="P1"><DiagramObjectPoint.DiagramObject rdf:resource="#DO1"/><DiagramObjectPoint.sequenceNumber>0</DiagramObjectPoint.sequenceNumber><DiagramObjectPoint.xPosition>10.0</DiagramObjectPoint.xPosition><DiagramObjectPoint.yPosition>20.0</DiagramObjectPoint.yPosition></cim:DiagramObjectPoint>
+<cim:DiagramObjectPoint rdf:ID="P2"><DiagramObjectPoint.DiagramObject rdf:resource="#DO1"/><DiagramObjectPoint.sequenceNumber>1</DiagramObjectPoint.sequenceNumber><DiagramObjectPoint.xPosition>40.0</DiagramObjectPoint.xPosition><DiagramObjectPoint.yPosition>20.0</DiagramObjectPoint.yPosition></cim:DiagramObjectPoint>
+<cim:DiagramObjectPoint rdf:ID="P3"><DiagramObjectPoint.DiagramObject rdf:resource="#DO2"/><DiagramObjectPoint.sequenceNumber>0</DiagramObjectPoint.sequenceNumber><DiagramObjectPoint.xPosition>22.0</DiagramObjectPoint.xPosition><DiagramObjectPoint.yPosition>18.0</DiagramObjectPoint.yPosition></cim:DiagramObjectPoint>
+<cim:DiagramObjectPoint rdf:ID="P4"><DiagramObjectPoint.DiagramObject rdf:resource="#DO2"/><DiagramObjectPoint.sequenceNumber>1</DiagramObjectPoint.sequenceNumber><DiagramObjectPoint.xPosition>28.0</DiagramObjectPoint.xPosition><DiagramObjectPoint.yPosition>18.0</DiagramObjectPoint.yPosition></cim:DiagramObjectPoint>
 </rdf:RDF>"##,
         )
     }
@@ -3332,6 +3662,7 @@ mod tests {
                 bus_resolution_mode: BusResolutionMode::Topological,
                 emit_connectivity_groups: false,
                 emit_node_breaker_detail: true,
+                emit_diagram_layout: true,
                 contingencies_are_stub: false,
                 dynamics_are_stub: false,
                 base_mva: 100.0,
@@ -3386,6 +3717,86 @@ mod tests {
         assert_eq!(
             metadata.get("raptrix.version"),
             Some(&SCHEMA_VERSION.to_string())
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn write_complete_rpf_emits_diagram_layout_tables_from_cim() -> Result<()> {
+        let tmp_dir = std::env::temp_dir().join("raptrix_rpf_diagram_layout_tests");
+        fs::create_dir_all(&tmp_dir)?;
+
+        let eq_path = tmp_dir.join("diagram_layout_eq.xml");
+        fs::write(&eq_path, generate_eq_fixture_with_diagram_layout())?;
+
+        let output_path = tmp_dir.join("diagram_layout_case.rpf");
+        let eq_path_str = eq_path.to_string_lossy().into_owned();
+        let output_path_str = output_path.to_string_lossy().into_owned();
+
+        let summary = write_complete_rpf_with_options(
+            &[&eq_path_str],
+            &output_path_str,
+            &WriteOptions {
+                bus_resolution_mode: BusResolutionMode::Topological,
+                emit_connectivity_groups: false,
+                emit_node_breaker_detail: true,
+                emit_diagram_layout: true,
+                contingencies_are_stub: false,
+                dynamics_are_stub: false,
+                base_mva: 100.0,
+                frequency_hz: 60.0,
+                study_name: None,
+                timestamp_utc: None,
+            },
+        )?;
+
+        assert_eq!(summary.diagram_object_rows, 2);
+        assert_eq!(summary.diagram_point_rows, 4);
+
+        let tables = read_rpf_tables(&output_path)?;
+        let diagram_objects = tables
+            .iter()
+            .find(|(name, _)| name == "diagram_objects")
+            .map(|(_, batch)| batch)
+            .context("expected diagram_objects table")?;
+        let diagram_points = tables
+            .iter()
+            .find(|(name, _)| name == "diagram_points")
+            .map(|(_, batch)| batch)
+            .context("expected diagram_points table")?;
+
+        assert_schema_shape_matches(diagram_objects.schema().as_ref(), &diagram_objects_schema());
+        assert_schema_shape_matches(diagram_points.schema().as_ref(), &diagram_points_schema());
+        assert_eq!(diagram_objects.num_rows(), 2);
+        assert_eq!(diagram_points.num_rows(), 4);
+
+        let object_ids = diagram_objects
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .context("diagram_objects.element_id should be Utf8")?;
+        let element_types = diagram_objects
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .context("diagram_objects.element_type should be Utf8")?;
+        let diagram_ids = diagram_objects
+            .column(2)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .context("diagram_objects.diagram_id should be Utf8")?;
+
+        assert_eq!(object_ids.value(0), "branch:1");
+        assert_eq!(element_types.value(0), "branch");
+        assert_eq!(diagram_ids.value(0), "overview");
+        assert_eq!(object_ids.value(1), "breaker:BR1");
+        assert_eq!(element_types.value(1), "breaker");
+
+        let metadata = rpf_file_metadata(&output_path)?;
+        assert_eq!(
+            metadata.get("raptrix.features.diagram_layout"),
+            Some(&"true".to_string())
         );
 
         Ok(())
