@@ -1,4 +1,4 @@
-# Schema Contract (Locked contract: v0.7.0)
+# Schema Contract (Locked contract: v0.8.0 — CGMES 3.0+ Only)
 
 ## Contract Policy
 
@@ -8,7 +8,8 @@
 
 ## Compatibility Policy
 
-- CGMES ingest target is dual-track: the converter should accept common CGMES 2.4.x and 3.x profile naming/layout conventions.
+- **CGMES Ingest Target**: v3.0 and later only (complete merged profiles with EQ, TP, SV, DL, GL, SSH, etc.).
+- **Legacy Support Dropped**: CGMES 2.4.x support was removed in v0.8.0. All ingest is now CGMES 3.0+ only. This enables cleaner parsing logic, better performance, and full alignment with ENTSO-E Conformity Assessment Scheme (v3.0.3 current).
 - The `.rpf` contract is forward compatible for additive changes only. Readers must ignore unknown trailing root columns and unknown file metadata keys.
 - Breaking file-format changes (required column rename/removal/reorder, required table rename/removal/reorder, type change for required fields) require a MAJOR contract bump.
 - Additive changes (new optional columns, new optional tables, new optional metadata keys) require at least a MINOR bump.
@@ -30,12 +31,13 @@ Every `.rpf` file must include:
 
 Current locked values:
 
-- `raptrix.version = 0.7.0`
-- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.7.0 - High-performance open profile by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.`
+- `raptrix.version = 0.7.1`
+- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.7.1 - High-performance open profile by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.`
 
 Optional file-level metadata keys:
 
 - `raptrix.features.node_breaker = true` when optional node-breaker detail tables are emitted
+- `raptrix.features.diagram_layout = true` when optional IEC 61970-453 diagram layout tables are emitted
 - `raptrix.features.contingencies_stub = true` when contingencies table is populated by placeholder/stub rows
 - `raptrix.features.dynamics_stub = true` when dynamics_models table is populated by placeholder/stub rows
 - `rpf.rows.<table_name> = <row_count>` for each emitted table
@@ -76,6 +78,8 @@ Optional root columns, when present, are appended after the required columns in 
 16. `node_breaker_detail`
 17. `switch_detail`
 18. `connectivity_nodes`
+19. `diagram_objects`
+20. `diagram_points`
 
 `connectivity_groups` is an optional detail table emitted only in connectivity-detail mode and is appended after the required root columns when that mode is active.
 
@@ -131,6 +135,11 @@ Optional detail tables (emitted only when `raptrix.features.node_breaker = true`
 - `node_breaker_detail`
 - `switch_detail`
 - `connectivity_nodes`
+
+Optional diagram layout tables (emitted only when `raptrix.features.diagram_layout = true`):
+
+- `diagram_objects`
+- `diagram_points`
 
 ## Column Reference
 
@@ -363,7 +372,49 @@ This section is normative for external parser authors.
 - `topological_node_mrid`: Dictionary<Int32, Utf8>, nullable
 - `bus_id`: Int32, nullable
 
-## Blocker Fixes Incorporated in Locked contract: v0.7.0
+## Optional Tables: diagram_objects and diagram_points
+
+RPF v0.7.1 adds two optional Arrow tables for persisted one-line layout, aligned with IEC 61970-453 `DiagramObject` and `DiagramObjectPoint`. These tables are intended for viewer/editor workflows and are additive only: when absent, downstream tools may synthesize layout at runtime; when present, tools should restore the saved layout exactly. The payload is carried inside the standard Apache Arrow IPC `.rpf` root container and may be derived from CGMES RDF/XML diagram layout content commonly exchanged under IEC 61970-501 CGMES profile sets.
+
+The two tables must be present together or both absent. A file with `diagram_objects` but no `diagram_points`, or vice versa, is malformed.
+
+### diagram_objects
+
+- `element_id`: Utf8, required. RPF-resolved layout key in namespaced form such as `bus:1`, `branch:1`, `generator:G1`, `fixed_shunt:SH1`, `breaker:BR1`, or `connectivity_node:CN1`.
+- `element_type`: Utf8, required. Allowed values currently emitted by this writer include `bus`, `branch`, `generator`, `load`, `fixed_shunt`, `breaker`, and `connectivity_node`.
+- `diagram_id`: Utf8, required. Named diagram view aligned with `cim:Diagram.name`; writers should prefer `overview` for the full-system one-line and use area/substation names for detail views.
+- `rotation`: Float32, nullable. Clockwise rotation in degrees; null should be interpreted as zero.
+- `visible`: Boolean, required. Whether the element is visible in the named diagram.
+- `draw_order`: Int32, nullable. Z-order / drawing order; null should be interpreted as zero.
+
+### diagram_points
+
+- `element_id`: Utf8, required. Foreign key to `diagram_objects.element_id`.
+- `diagram_id`: Utf8, required. Foreign key to `diagram_objects.diagram_id`.
+- `seq`: Int32, required. Point ordering key aligned with IEC 61970-453 `DiagramObjectPoint.sequenceNumber`.
+- `x`: Float64, required. Viewer-space X coordinate.
+- `y`: Float64, required. Viewer-space Y coordinate.
+
+### seq conventions by element_type
+
+- `bus`: `seq=0` left endpoint of the bus bar, `seq=1` right endpoint.
+- `branch`: `seq=0` from-end terminal, `seq=N` to-end terminal, intermediate values are bend vertices.
+- `generator`, `load`, `fixed_shunt`: `seq=0` symbol center or connection point.
+- `breaker`: `seq=0` terminal-1 side, `seq=1` terminal-2 side.
+- `connectivity_node`: `seq=0` connection point.
+
+### Coordinate convention
+
+IEC 61970-453 uses an inverted-Y convention where larger Y values are lower on screen. Writers store the raw CIM values unchanged in `diagram_points.y`; renderers using a standard screen-space coordinate system should invert Y during display.
+
+### Standard alignment and version
+
+- Standard alignment: IEC 61970-453 `Diagram`, `DiagramObject`, and `DiagramObjectPoint`
+- Exchange context: IEC 61970-501 CGMES RDF/XML profile sets, including merged datasets that carry diagram layout payloads
+- Container format: Apache Arrow columnar IPC file layout already used by `.rpf`
+- Introduced in: RPF v0.7.1
+
+## Blocker Fixes Incorporated in Locked contract: v0.7.1
 
 ### 1) Expanded transformer detail
 

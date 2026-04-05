@@ -25,9 +25,11 @@ use memmap2::MmapOptions;
 
 use crate::schema::{
     BRANDING, METADATA_KEY_BRANDING, METADATA_KEY_FEATURE_CONTINGENCIES_STUB,
-    METADATA_KEY_FEATURE_DYNAMICS_STUB, METADATA_KEY_FEATURE_NODE_BREAKER,
-    METADATA_KEY_RPF_VERSION, METADATA_KEY_VERSION, SCHEMA_VERSION, TABLE_BRANCHES, TABLE_BUSES,
-    TABLE_GENERATORS, TABLE_LOADS, TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, all_table_schemas,
+    METADATA_KEY_FEATURE_DIAGRAM_LAYOUT, METADATA_KEY_FEATURE_DYNAMICS_STUB,
+    METADATA_KEY_FEATURE_NODE_BREAKER, METADATA_KEY_RPF_VERSION, METADATA_KEY_VERSION,
+    SCHEMA_VERSION, SUPPORTED_RPF_VERSIONS, TABLE_BRANCHES, TABLE_BUSES, TABLE_DIAGRAM_OBJECTS,
+    TABLE_DIAGRAM_POINTS, TABLE_GENERATORS, TABLE_LOADS, TABLE_TRANSFORMERS_2W,
+    TABLE_TRANSFORMERS_3W, all_table_schemas, diagram_layout_table_schemas,
     node_breaker_table_schemas, schema_metadata, table_schema,
 };
 
@@ -73,6 +75,9 @@ pub struct RootWriteOptions {
     /// When true, append optional node-breaker detail tables after the 15
     /// canonical required root columns.
     pub include_node_breaker_detail: bool,
+    /// When true, append optional diagram layout tables after other enabled
+    /// optional root columns.
+    pub include_diagram_layout: bool,
     /// When true, mark contingencies payload as stub-derived.
     pub contingencies_are_stub: bool,
     /// When true, mark dynamics payload as stub-derived.
@@ -84,11 +89,74 @@ pub fn row_count_metadata_key(table_name: &str) -> String {
     format!("rpf.rows.{table_name}")
 }
 
+fn enabled_optional_table_schemas(options: &RootWriteOptions) -> Vec<(&'static str, Schema)> {
+    let mut optional = Vec::new();
+    if options.include_node_breaker_detail {
+        optional.extend(node_breaker_table_schemas());
+    }
+    if options.include_diagram_layout {
+        optional.extend(diagram_layout_table_schemas());
+    }
+    optional
+}
+
+fn validate_supported_rpf_version(metadata: &HashMap<String, String>) -> Result<()> {
+    let version = metadata
+        .get(METADATA_KEY_RPF_VERSION)
+        .or_else(|| metadata.get(METADATA_KEY_VERSION))
+        .context("invalid RPF file metadata: missing version tag")?;
+
+    if !SUPPORTED_RPF_VERSIONS.contains(&version.as_str()) {
+        bail!(
+            "unsupported RPF version '{version}'; supported versions are {}",
+            SUPPORTED_RPF_VERSIONS.join(", ")
+        );
+    }
+
+    if let Some(alias) = metadata.get(METADATA_KEY_VERSION) {
+        if alias != version {
+            bail!(
+                "invalid RPF file metadata: '{}'='{}' does not match '{}'='{}'",
+                METADATA_KEY_VERSION,
+                alias,
+                METADATA_KEY_RPF_VERSION,
+                version
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_diagram_layout_pair(root_schema: &Schema) -> Result<()> {
+    let has_objects = root_schema
+        .fields()
+        .iter()
+        .any(|field| field.name() == TABLE_DIAGRAM_OBJECTS);
+    let has_points = root_schema
+        .fields()
+        .iter()
+        .any(|field| field.name() == TABLE_DIAGRAM_POINTS);
+
+    if has_objects != has_points {
+        bail!(
+            "malformed RPF root schema: '{}' and '{}' must be present together",
+            TABLE_DIAGRAM_OBJECTS,
+            TABLE_DIAGRAM_POINTS
+        );
+    }
+
+    Ok(())
+}
+
 /// Builds the canonical root schema for an RPF Arrow IPC file.
-pub fn root_rpf_schema(include_node_breaker_detail: bool) -> Schema {
+pub fn root_rpf_schema(include_node_breaker_detail: bool, include_diagram_layout: bool) -> Schema {
     let mut table_schemas = all_table_schemas();
     if include_node_breaker_detail {
         table_schemas.extend(node_breaker_table_schemas());
+    }
+    if include_diagram_layout {
+        table_schemas.extend(diagram_layout_table_schemas());
     }
 
     let fields = table_schemas
@@ -120,7 +188,7 @@ fn require_non_null_count_equals_len(
     Ok(())
 }
 
-/// Reads all known tables from an RPF v0.7.0 root Arrow IPC file.
+/// Reads all known tables from an RPF v0.7.x root Arrow IPC file.
 pub fn read_rpf_tables(path: impl AsRef<Path>) -> Result<Vec<(String, RecordBatch)>> {
     let path = path.as_ref();
     let file = File::open(path)
@@ -136,6 +204,8 @@ pub fn read_rpf_tables(path: impl AsRef<Path>) -> Result<Vec<(String, RecordBatc
     })?;
 
     let reader_schema = reader.schema();
+    validate_supported_rpf_version(reader_schema.metadata())?;
+    validate_diagram_layout_pair(reader_schema.as_ref())?;
     let canonical_count = all_table_schemas().len();
     if reader_schema.fields().len() < canonical_count {
         bail!(
@@ -281,9 +351,7 @@ pub fn write_root_rpf(
     let output_path = output_path.as_ref();
 
     let mut table_specs = all_table_schemas();
-    if options.include_node_breaker_detail {
-        table_specs.extend(node_breaker_table_schemas());
-    }
+    table_specs.extend(enabled_optional_table_schemas(options));
 
     let max_rows = table_specs
         .iter()
@@ -296,7 +364,10 @@ pub fn write_root_rpf(
         .max()
         .unwrap_or(0);
 
-    let mut root_schema = root_rpf_schema(options.include_node_breaker_detail);
+    let mut root_schema = root_rpf_schema(
+        options.include_node_breaker_detail,
+        options.include_diagram_layout,
+    );
     let mut root_metadata = root_schema.metadata().clone();
     for (table_name, _) in &table_specs {
         let row_count = table_batches
@@ -308,6 +379,12 @@ pub fn write_root_rpf(
     if options.include_node_breaker_detail {
         root_metadata.insert(
             METADATA_KEY_FEATURE_NODE_BREAKER.to_string(),
+            "true".to_string(),
+        );
+    }
+    if options.include_diagram_layout {
+        root_metadata.insert(
+            METADATA_KEY_FEATURE_DIAGRAM_LAYOUT.to_string(),
             "true".to_string(),
         );
     }
@@ -407,10 +484,10 @@ pub fn validate_rpf_file(path: impl AsRef<Path>, options: &RootWriteOptions) -> 
         .with_context(|| format!("failed to open Arrow IPC FileReader for {}", path.display()))?;
 
     let mut canonical = all_table_schemas();
-    if options.include_node_breaker_detail {
-        canonical.extend(node_breaker_table_schemas());
-    }
+    canonical.extend(enabled_optional_table_schemas(options));
     let reader_schema = reader.schema();
+    validate_supported_rpf_version(reader_schema.metadata())?;
+    validate_diagram_layout_pair(reader_schema.as_ref())?;
     if reader_schema.fields().len() != canonical.len() {
         bail!(
             "post-write contract violation: expected {} canonical root columns, found {}",
@@ -439,6 +516,19 @@ pub fn validate_rpf_file(path: impl AsRef<Path>, options: &RootWriteOptions) -> 
             "post-write contract violation: raptrix.version expected '{}', found '{}'",
             SCHEMA_VERSION,
             version
+        );
+    }
+    let rpf_version = metadata.get(METADATA_KEY_RPF_VERSION).with_context(|| {
+        format!(
+            "post-write contract violation: missing metadata key '{}'",
+            METADATA_KEY_RPF_VERSION
+        )
+    })?;
+    if rpf_version != SCHEMA_VERSION {
+        bail!(
+            "post-write contract violation: rpf_version expected '{}', found '{}'",
+            SCHEMA_VERSION,
+            rpf_version
         );
     }
     let branding = metadata
@@ -494,5 +584,148 @@ pub fn validate_rpf_file(path: impl AsRef<Path>, options: &RootWriteOptions) -> 
     require_non_null_count_equals_len(TABLE_TRANSFORMERS_3W, t3w, "bus_m_id")?;
     require_non_null_count_equals_len(TABLE_TRANSFORMERS_3W, t3w, "bus_l_id")?;
 
+    if options.include_diagram_layout {
+        let feature = metadata
+            .get(METADATA_KEY_FEATURE_DIAGRAM_LAYOUT)
+            .with_context(|| {
+                format!(
+                    "post-write contract violation: missing metadata key '{}'",
+                    METADATA_KEY_FEATURE_DIAGRAM_LAYOUT
+                )
+            })?;
+        if feature != "true" {
+            bail!(
+                "post-write contract violation: '{}' expected 'true', found '{}'",
+                METADATA_KEY_FEATURE_DIAGRAM_LAYOUT,
+                feature
+            );
+        }
+
+        let diagram_objects = by_name
+            .get(TABLE_DIAGRAM_OBJECTS)
+            .context("post-write contract violation: missing diagram_objects table")?;
+        require_non_null_count_equals_len(TABLE_DIAGRAM_OBJECTS, diagram_objects, "element_id")?;
+        require_non_null_count_equals_len(TABLE_DIAGRAM_OBJECTS, diagram_objects, "element_type")?;
+        require_non_null_count_equals_len(TABLE_DIAGRAM_OBJECTS, diagram_objects, "diagram_id")?;
+        require_non_null_count_equals_len(TABLE_DIAGRAM_OBJECTS, diagram_objects, "visible")?;
+
+        let diagram_points = by_name
+            .get(TABLE_DIAGRAM_POINTS)
+            .context("post-write contract violation: missing diagram_points table")?;
+        require_non_null_count_equals_len(TABLE_DIAGRAM_POINTS, diagram_points, "element_id")?;
+        require_non_null_count_equals_len(TABLE_DIAGRAM_POINTS, diagram_points, "diagram_id")?;
+        require_non_null_count_equals_len(TABLE_DIAGRAM_POINTS, diagram_points, "seq")?;
+        require_non_null_count_equals_len(TABLE_DIAGRAM_POINTS, diagram_points, "x")?;
+        require_non_null_count_equals_len(TABLE_DIAGRAM_POINTS, diagram_points, "y")?;
+    }
+
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use anyhow::{Context, Result};
+    use arrow::array::{Float32Array, Float64Array, Int32Array, StringArray};
+    use arrow::record_batch::RecordBatch;
+
+    use crate::schema::{
+        all_table_schemas, diagram_objects_schema, diagram_points_schema, TABLE_DIAGRAM_OBJECTS,
+        TABLE_DIAGRAM_POINTS,
+    };
+
+    use super::{RootWriteOptions, read_rpf_tables, write_root_rpf};
+
+    #[test]
+    fn round_trip_preserves_diagram_layout_optional_tables() -> Result<()> {
+        let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_diagram_round_trip");
+        std::fs::create_dir_all(&tmp_dir)?;
+        let output_path = tmp_dir.join("diagram_round_trip.rpf");
+
+        let mut table_batches: HashMap<&'static str, RecordBatch> = all_table_schemas()
+            .into_iter()
+            .map(|(name, schema)| (name, RecordBatch::new_empty(Arc::new(schema))))
+            .collect();
+
+        let objects = RecordBatch::try_new(
+            Arc::new(diagram_objects_schema()),
+            vec![
+                Arc::new(StringArray::from(vec!["bus:1"])) as _,
+                Arc::new(StringArray::from(vec!["bus"])) as _,
+                Arc::new(StringArray::from(vec!["overview"])) as _,
+                Arc::new(Float32Array::from(vec![Some(15.0)])) as _,
+                Arc::new(arrow::array::BooleanArray::from(vec![true])) as _,
+                Arc::new(Int32Array::from(vec![Some(2)])) as _,
+            ],
+        )?;
+        let points = RecordBatch::try_new(
+            Arc::new(diagram_points_schema()),
+            vec![
+                Arc::new(StringArray::from(vec!["bus:1", "bus:1"])) as _,
+                Arc::new(StringArray::from(vec!["overview", "overview"])) as _,
+                Arc::new(Int32Array::from(vec![0, 1])) as _,
+                Arc::new(Float64Array::from(vec![10.0, 25.0])) as _,
+                Arc::new(Float64Array::from(vec![30.0, 30.0])) as _,
+            ],
+        )?;
+
+        table_batches.insert(TABLE_DIAGRAM_OBJECTS, objects);
+        table_batches.insert(TABLE_DIAGRAM_POINTS, points);
+
+        write_root_rpf(
+            &output_path,
+            &table_batches,
+            &RootWriteOptions {
+                include_node_breaker_detail: false,
+                include_diagram_layout: true,
+                contingencies_are_stub: false,
+                dynamics_are_stub: false,
+            },
+        )?;
+
+        let tables = read_rpf_tables(&output_path)?;
+        let diagram_objects = tables
+            .iter()
+            .find(|(name, _)| name == TABLE_DIAGRAM_OBJECTS)
+            .map(|(_, batch)| batch)
+            .context("expected diagram_objects table")?;
+        let diagram_points = tables
+            .iter()
+            .find(|(name, _)| name == TABLE_DIAGRAM_POINTS)
+            .map(|(_, batch)| batch)
+            .context("expected diagram_points table")?;
+
+        assert_eq!(diagram_objects.num_rows(), 1);
+        assert_eq!(diagram_points.num_rows(), 2);
+
+        let object_ids = diagram_objects
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .context("diagram_objects.element_id must be Utf8")?;
+        let rotations = diagram_objects
+            .column(3)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .context("diagram_objects.rotation must be Float32")?;
+        let point_x = diagram_points
+            .column(3)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .context("diagram_points.x must be Float64")?;
+        let point_seq = diagram_points
+            .column(2)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .context("diagram_points.seq must be Int32")?;
+
+        assert_eq!(object_ids.value(0), "bus:1");
+        assert!((rotations.value(0) - 15.0).abs() < f32::EPSILON);
+        assert_eq!(point_seq.value(1), 1);
+        assert!((point_x.value(1) - 25.0).abs() < f64::EPSILON);
+
+        Ok(())
+    }
 }

@@ -53,7 +53,7 @@ That split keeps the locked RPF contract in one reusable place so future convert
 
 ### Output capabilities
 
-- Build Arrow schema objects for the locked Raptrix PowerFlow Interchange v0.7.0 contract:
+- Build Arrow schema objects for the locked Raptrix PowerFlow Interchange v0.7.1 contract:
 	- metadata
 	- buses
 	- branches
@@ -79,17 +79,17 @@ That split keeps the locked RPF contract in one reusable place so future convert
 
 ## Data Contract (Locked)
 
-- Current schema contract: v0.7.0
+- Current schema contract: v0.8.0 (CGMES 3.0+ only)
 - Canonical source: raptrix-cim-arrow/src/schema.rs
 - Contract policy and semantics: docs/schema-contract.md
 - Cross-repo propagation workflow: docs/release-sync-workflow.md
-- Target ingest compatibility: CGMES 2.4.x and CGMES 3.x profile sets (auto-detect and explicit mode supported)
+- **CGMES Ingest Target**: v3.0+ and later only (complete merged profiles; auto-detect and explicit mode supported)
 
 ### Versioning Policy
 
-Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is now locked at schema `v0.7.0` for interoperability and deterministic ingest behavior, while the converter crate release tracks implementation maturity and is currently `0.2.0`.
+Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is now locked at schema `v0.8.0` for interoperability and deterministic CGMES 3.0+ ingest behavior, while the converter crate release tracks implementation maturity and is currently `0.2.1`.
 
-This split preserves compatibility guarantees for downstream tools: existing `v0.5.2` Parquet artifacts remain valid to read on the core path, and new `v0.7.0` optional features are additive only.
+This split preserves compatibility guarantees for downstream tools: existing `v0.5.2` Parquet artifacts remain valid to read on the core path, and new `v0.8.0` optional features (diagram layout via DL profile) are additive only. **Breaking change in v0.8.0**: CGMES 2.4.x support was removed. All ingest is now CGMES 3.0+ only.
 
 For third-party implementers, [docs/schema-contract.md](docs/schema-contract.md) is the authoritative reader/writer contract. It now documents the `.rpf` Arrow IPC container layout, canonical root column ordering, row-count metadata trimming rules, optional table detection, and full column/type references needed to build a compatible parser.
 
@@ -148,13 +148,13 @@ Use these as baseline indicators, not final production benchmarks.
 
 ## Project Layout
 
-- raptrix-cim-arrow/src/schema.rs: v0.7.0 table schemas, metadata constants, and schema registry helpers
+- raptrix-cim-arrow/src/schema.rs: v0.7.1 table schemas, metadata constants, and schema registry helpers
 - raptrix-cim-arrow/src/io.rs: generic root `.rpf` assembly, validation, readback, and summary helpers
 - src/models: CIM data structures and traits
 - src/parser.rs: parse helpers and EQ-to-branch mapping
 - src/rpf_writer.rs: CIM-specific mapping from parsed CGMES content into canonical table batches
 
-### Locked contract: v0.7.0 additive fields
+### Locked contract: v0.7.1 additive fields
 
 - Added optional dictionary-encoded `name` columns to:
 	- branches

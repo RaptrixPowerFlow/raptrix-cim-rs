@@ -207,6 +207,32 @@ pub struct ConnectivityNodeSpec {
     pub topological_node_mrid: Option<String>,
 }
 
+/// Parsed `Diagram` payload used for optional layout emission.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DiagramRecord {
+    pub diagram_rdf_id: String,
+    pub name: Option<String>,
+}
+
+/// Parsed `DiagramObject` payload used for optional layout emission.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DiagramObjectRecord {
+    pub obj_rdf_id: String,
+    pub diagram_rdf_id: String,
+    pub identified_object_rdf_id: String,
+    pub rotation: Option<f32>,
+    pub drawing_order: Option<i32>,
+}
+
+/// Parsed `DiagramObjectPoint` payload used for optional layout emission.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DiagramPointRecord {
+    pub obj_rdf_id: String,
+    pub seq: i32,
+    pub x: f64,
+    pub y: f64,
+}
+
 /// Parsed BaseVoltage payload keyed by mRID.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BaseVoltageSpec {
@@ -763,6 +789,101 @@ pub fn connectivity_nodes_from_reader<R: Read>(mut reader: R) -> Result<Vec<Conn
     Ok(rows)
 }
 
+/// Parses IEC 61970-453 diagram layout payloads from CGMES RDF/XML.
+pub fn diagram_layout_from_reader<R: Read>(
+    mut reader: R,
+) -> Result<(
+    Vec<DiagramRecord>,
+    Vec<DiagramObjectRecord>,
+    Vec<DiagramPointRecord>,
+)> {
+    let mut xml = String::new();
+    reader.read_to_string(&mut xml)?;
+
+    let mut diagrams = Vec::new();
+    if contains_exact_element_tag(&xml, "cim:Diagram") {
+        for fragment in extract_elements(&xml, "cim:Diagram")? {
+            let raw: RawDiagram<'_> = from_str(fragment)?;
+            let Some(diagram_rdf_id) = raw.resolved_mrid() else {
+                continue;
+            };
+
+            diagrams.push(DiagramRecord {
+                diagram_rdf_id,
+                name: raw
+                    .name
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToOwned::to_owned),
+            });
+        }
+    }
+
+    let mut objects = Vec::new();
+    if contains_exact_element_tag(&xml, "cim:DiagramObject") {
+        for fragment in extract_elements(&xml, "cim:DiagramObject")? {
+            let raw: RawDiagramObject<'_> = from_str(fragment)?;
+            let Some(obj_rdf_id) = raw.resolved_mrid() else {
+                continue;
+            };
+            let Some(diagram_ref) = raw.diagram else {
+                continue;
+            };
+            let Some(identified_object) = raw.identified_object else {
+                continue;
+            };
+
+            objects.push(DiagramObjectRecord {
+                obj_rdf_id,
+                diagram_rdf_id: normalize_cgmes_ref(&diagram_ref.resource),
+                identified_object_rdf_id: normalize_cgmes_ref(&identified_object.resource),
+                rotation: raw.rotation,
+                drawing_order: raw.drawing_order,
+            });
+        }
+    }
+
+    let mut points = Vec::new();
+    if contains_exact_element_tag(&xml, "cim:DiagramObjectPoint") {
+        for fragment in extract_elements(&xml, "cim:DiagramObjectPoint")? {
+            let raw: RawDiagramObjectPoint = from_str(fragment)?;
+            let Some(diagram_object) = raw.diagram_object else {
+                continue;
+            };
+            let (Some(x), Some(y)) = (raw.x, raw.y) else {
+                continue;
+            };
+
+            points.push(DiagramPointRecord {
+                obj_rdf_id: normalize_cgmes_ref(&diagram_object.resource),
+                seq: raw.sequence_number.unwrap_or(0),
+                x,
+                y,
+            });
+        }
+    }
+
+    diagrams.sort_unstable_by(|left, right| left.diagram_rdf_id.cmp(&right.diagram_rdf_id));
+    diagrams.dedup_by(|left, right| left.diagram_rdf_id == right.diagram_rdf_id);
+    objects.sort_unstable_by(|left, right| {
+        left.diagram_rdf_id
+            .cmp(&right.diagram_rdf_id)
+            .then_with(|| left.identified_object_rdf_id.cmp(&right.identified_object_rdf_id))
+            .then_with(|| left.obj_rdf_id.cmp(&right.obj_rdf_id))
+    });
+    objects.dedup_by(|left, right| left.obj_rdf_id == right.obj_rdf_id);
+    points.sort_unstable_by(|left, right| {
+        left.obj_rdf_id
+            .cmp(&right.obj_rdf_id)
+            .then_with(|| left.seq.cmp(&right.seq))
+            .then_with(|| left.x.total_cmp(&right.x))
+            .then_with(|| left.y.total_cmp(&right.y))
+    });
+
+    Ok((diagrams, objects, points))
+}
+
 /// Parsed terminal endpoint linkage used for EQ topology joins.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TerminalLink {
@@ -1058,6 +1179,44 @@ struct RawSwitch<'a> {
     retained: Option<bool>,
 }
 
+#[derive(Debug, Deserialize)]
+struct RawDiagram<'a> {
+    #[serde(rename = "@ID", default, borrow)]
+    m_rid: Option<Cow<'a, str>>,
+    #[serde(rename = "@about", default, borrow)]
+    about: Option<Cow<'a, str>>,
+    #[serde(rename = "IdentifiedObject.name", default, borrow)]
+    name: Option<Cow<'a, str>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawDiagramObject<'a> {
+    #[serde(rename = "@ID", default, borrow)]
+    m_rid: Option<Cow<'a, str>>,
+    #[serde(rename = "@about", default, borrow)]
+    about: Option<Cow<'a, str>>,
+    #[serde(rename = "DiagramObject.Diagram", default)]
+    diagram: Option<RdfResourceRef>,
+    #[serde(rename = "DiagramObject.IdentifiedObject", default)]
+    identified_object: Option<RdfResourceRef>,
+    #[serde(rename = "DiagramObject.rotation", default)]
+    rotation: Option<f32>,
+    #[serde(rename = "DiagramObject.drawingOrder", default)]
+    drawing_order: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawDiagramObjectPoint {
+    #[serde(rename = "DiagramObjectPoint.DiagramObject", default)]
+    diagram_object: Option<RdfResourceRef>,
+    #[serde(rename = "DiagramObjectPoint.sequenceNumber", default)]
+    sequence_number: Option<i32>,
+    #[serde(rename = "DiagramObjectPoint.xPosition", default)]
+    x: Option<f64>,
+    #[serde(rename = "DiagramObjectPoint.yPosition", default)]
+    y: Option<f64>,
+}
+
 impl RawPowerTransformer<'_> {
     fn resolved_mrid(&self) -> Option<String> {
         if let Some(mrid) = &self.m_rid {
@@ -1071,6 +1230,30 @@ impl RawPowerTransformer<'_> {
 }
 
 impl RawSwitch<'_> {
+    fn resolved_mrid(&self) -> Option<String> {
+        if let Some(mrid) = &self.m_rid {
+            return Some(normalize_cgmes_ref(mrid));
+        }
+        if let Some(about) = &self.about {
+            return Some(normalize_cgmes_ref(about));
+        }
+        None
+    }
+}
+
+impl RawDiagram<'_> {
+    fn resolved_mrid(&self) -> Option<String> {
+        if let Some(mrid) = &self.m_rid {
+            return Some(normalize_cgmes_ref(mrid));
+        }
+        if let Some(about) = &self.about {
+            return Some(normalize_cgmes_ref(about));
+        }
+        None
+    }
+}
+
+impl RawDiagramObject<'_> {
     fn resolved_mrid(&self) -> Option<String> {
         if let Some(mrid) = &self.m_rid {
             return Some(normalize_cgmes_ref(mrid));

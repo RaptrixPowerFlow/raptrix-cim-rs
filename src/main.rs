@@ -20,7 +20,7 @@ use clap::{ArgGroup, Parser, Subcommand};
 
 use raptrix_cim_rs::arrow_schema::{
     BRANDING, METADATA_KEY_FEATURE_CONTINGENCIES_STUB, METADATA_KEY_FEATURE_DYNAMICS_STUB,
-    METADATA_KEY_FEATURE_NODE_BREAKER,
+    METADATA_KEY_FEATURE_DIAGRAM_LAYOUT, METADATA_KEY_FEATURE_NODE_BREAKER,
 };
 use raptrix_cim_rs::rpf_writer::{
     BusResolutionMode, WriteOptions, rpf_file_metadata, summarize_rpf,
@@ -56,7 +56,7 @@ enum Commands {
 #[derive(Debug, clap::Args)]
 #[command(group(
     ArgGroup::new("profile_mode")
-        .args(["input_dir", "eq", "tp", "sv", "ssh", "dy"])
+    .args(["input_dir", "eq", "tp", "sv", "ssh", "dy", "dl"])
         .multiple(true)
 ))]
 struct ConvertArgs {
@@ -79,6 +79,10 @@ struct ConvertArgs {
     /// DY profile path.
     #[arg(long)]
     dy: Option<PathBuf>,
+
+    /// DL profile path carrying IEC 61970-453 diagram layout payloads.
+    #[arg(long)]
+    dl: Option<PathBuf>,
 
     /// Auto-detect CGMES profiles in a directory via case-insensitive filename matching.
     #[arg(long)]
@@ -103,6 +107,10 @@ struct ConvertArgs {
     /// Emit optional node-breaker detail tables for viewer/operations workflows.
     #[arg(long)]
     node_breaker: bool,
+
+    /// Suppress optional diagram layout tables even when CIM DiagramLayout is present.
+    #[arg(long)]
+    no_diagram: bool,
 
     /// Default system base MVA used when CGMES profile metadata is unavailable.
     #[arg(long, default_value_t = 100.0)]
@@ -219,6 +227,13 @@ fn run_view(args: ViewArgs) -> Result<()> {
     {
         enabled_features.push("dynamics-stub");
     }
+    if metadata
+        .get(METADATA_KEY_FEATURE_DIAGRAM_LAYOUT)
+        .map(|value| value == "true")
+        .unwrap_or(false)
+    {
+        enabled_features.push("diagram-layout");
+    }
 
     println!(
         "Feature flags: {}",
@@ -272,6 +287,7 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
             bus_resolution_mode: BusResolutionMode::ConnectivityDetail,
             emit_connectivity_groups: true,
             emit_node_breaker_detail: args.node_breaker,
+            emit_diagram_layout: !args.no_diagram,
             contingencies_are_stub: false,
             dynamics_are_stub: false,
             base_mva: args.base_mva,
@@ -285,6 +301,7 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
             bus_resolution_mode: BusResolutionMode::Topological,
             emit_connectivity_groups: false,
             emit_node_breaker_detail: args.node_breaker,
+            emit_diagram_layout: !args.no_diagram,
             contingencies_are_stub: false,
             dynamics_are_stub: false,
             base_mva: args.base_mva,
@@ -326,6 +343,10 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
         3
     } else {
         0
+    } + if write_options.emit_diagram_layout && summary.diagram_object_rows > 0 {
+        2
+    } else {
+        0
     };
     println!("Tables emitted: {emitted_tables}");
     if summary.tp_merged {
@@ -353,6 +374,10 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
             "Connectivity nodes emitted: {}",
             summary.connectivity_node_rows
         );
+    }
+    if write_options.emit_diagram_layout && summary.diagram_object_rows > 0 {
+        println!("Diagram objects emitted: {}", summary.diagram_object_rows);
+        println!("Diagram points emitted: {}", summary.diagram_point_rows);
     }
 
     Ok(())
@@ -410,11 +435,12 @@ fn has_explicit_profiles(args: &ConvertArgs) -> bool {
         || args.sv.is_some()
         || args.ssh.is_some()
         || args.dy.is_some()
+    || args.dl.is_some()
 }
 
 fn explicit_profiles(args: &ConvertArgs, cwd: &Path) -> Result<Vec<(String, PathBuf)>> {
     let eq = args.eq.as_ref().context("No EQ profile found")?;
-    let mut profiles = Vec::with_capacity(5);
+    let mut profiles = Vec::with_capacity(6);
     profiles.push(("EQ".to_string(), normalize_existing_path(eq, cwd)?));
 
     for (profile_name, path) in [
@@ -422,6 +448,7 @@ fn explicit_profiles(args: &ConvertArgs, cwd: &Path) -> Result<Vec<(String, Path
         ("SV", args.sv.as_ref()),
         ("SSH", args.ssh.as_ref()),
         ("DY", args.dy.as_ref()),
+        ("DL", args.dl.as_ref()),
     ] {
         if let Some(path) = path {
             profiles.push((
@@ -445,8 +472,8 @@ fn detect_profiles(input_dir: &Path, cwd: &Path) -> Result<Vec<(String, PathBuf)
         );
     }
 
-    let mut detected = Vec::with_capacity(5);
-    for profile in ["EQ", "TP", "SV", "SSH", "DY"] {
+    let mut detected = Vec::with_capacity(6);
+    for profile in ["EQ", "TP", "SV", "SSH", "DY", "DL"] {
         if let Some(path) = find_profile_file(&canonical_input_dir, profile)? {
             detected.push((profile.to_string(), path));
         }
