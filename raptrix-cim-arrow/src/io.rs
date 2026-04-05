@@ -348,6 +348,17 @@ pub fn write_root_rpf(
     table_batches: &HashMap<&'static str, RecordBatch>,
     options: &RootWriteOptions,
 ) -> Result<()> {
+    write_root_rpf_with_metadata(output_path, table_batches, options, &HashMap::new())
+}
+
+/// Writes a canonical root `.rpf` Arrow IPC file from prepared table batches,
+/// merging caller-provided metadata keys into root schema metadata.
+pub fn write_root_rpf_with_metadata(
+    output_path: impl AsRef<Path>,
+    table_batches: &HashMap<&'static str, RecordBatch>,
+    options: &RootWriteOptions,
+    additional_root_metadata: &HashMap<String, String>,
+) -> Result<()> {
     let output_path = output_path.as_ref();
 
     let mut table_specs = all_table_schemas();
@@ -399,6 +410,9 @@ pub fn write_root_rpf(
             METADATA_KEY_FEATURE_DYNAMICS_STUB.to_string(),
             "true".to_string(),
         );
+    }
+    for (key, value) in additional_root_metadata {
+        root_metadata.insert(key.clone(), value.clone());
     }
     root_schema = root_schema.with_metadata(root_metadata);
     let root_schema = Arc::new(root_schema);

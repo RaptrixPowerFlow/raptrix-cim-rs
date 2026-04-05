@@ -13,7 +13,7 @@
 //!   serialization only; no solver math is implemented here.
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 use std::path::Path;
 use std::sync::Arc;
@@ -27,12 +27,18 @@ use arrow::array::{
 use arrow::datatypes::{DataType, Field, Int32Type, UInt32Type};
 use arrow::record_batch::RecordBatch;
 use chrono::Utc;
-use raptrix_cim_arrow::{RootWriteOptions, write_root_rpf};
+use raptrix_cim_arrow::{RootWriteOptions, write_root_rpf_with_metadata};
 pub use raptrix_cim_arrow::{
     RpfSummary, TableSummary, read_rpf_tables, rpf_file_metadata, summarize_rpf,
 };
 
 use crate::arrow_schema::{
+    METADATA_KEY_FEATURE_TOPOLOGY_ONLY, METADATA_KEY_FEATURE_ZERO_INJECTION_STUB,
+    METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_GENERATION_ISLAND_COUNT,
+    METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_LOAD_ISLAND_COUNT,
+    METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_NETWORK_ISLAND_COUNT,
+    METADATA_KEY_TOPOLOGY_DETACHED_ISLANDS_PRESENT, METADATA_KEY_TOPOLOGY_ISLAND_COUNT,
+    METADATA_KEY_TOPOLOGY_MAIN_ISLAND_BUS_COUNT,
     SCHEMA_VERSION, TABLE_AREAS, TABLE_BRANCHES, TABLE_BUSES, TABLE_CONNECTIVITY_NODES,
     TABLE_CONTINGENCIES, TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_DYNAMICS_MODELS,
     TABLE_FIXED_SHUNTS, TABLE_GENERATORS, TABLE_INTERFACES, TABLE_LOADS, TABLE_METADATA,
@@ -59,6 +65,7 @@ pub enum BusResolutionMode {
 #[derive(Debug, Clone)]
 pub struct WriteOptions {
     pub bus_resolution_mode: BusResolutionMode,
+    pub detached_island_policy: DetachedIslandPolicy,
     pub emit_connectivity_groups: bool,
     pub emit_node_breaker_detail: bool,
     pub emit_diagram_layout: bool,
@@ -70,10 +77,22 @@ pub struct WriteOptions {
     pub timestamp_utc: Option<String>,
 }
 
+/// Policy for handling detached electrical islands at export time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DetachedIslandPolicy {
+    /// Preserve all islands and emit topology metadata diagnostics.
+    Permissive,
+    /// Fail export when detached islands have in-service network/load/generation.
+    Strict,
+    /// Keep only the largest island and prune detached islands from exported tables.
+    PruneDetached,
+}
+
 impl Default for WriteOptions {
     fn default() -> Self {
         Self {
             bus_resolution_mode: BusResolutionMode::Topological,
+            detached_island_policy: DetachedIslandPolicy::Permissive,
             emit_connectivity_groups: false,
             emit_node_breaker_detail: false,
             emit_diagram_layout: true,
@@ -136,6 +155,7 @@ struct BusRow<'a> {
     p_min_agg: f64,
     p_max_agg: f64,
     nominal_kv: Option<f64>,
+    bus_uuid: Option<Cow<'a, str>>,
 }
 
 #[derive(Debug, Clone)]
@@ -524,6 +544,283 @@ fn validate_pre_write_contract(
     Ok(())
 }
 
+fn network_island_components(
+    bus_rows: &[BusRow<'_>],
+    branch_rows: &[BranchRow<'_>],
+    transformer_2w_rows: &[Transformer2WRow<'_>],
+    transformer_3w_rows: &[Transformer3WRow<'_>],
+) -> Vec<Vec<i32>> {
+    let mut adj: HashMap<i32, Vec<i32>> = HashMap::with_capacity(bus_rows.len());
+    for row in bus_rows {
+        adj.entry(row.bus_id).or_default();
+    }
+
+    let mut add_edge = |from_bus_id: i32, to_bus_id: i32| {
+        if from_bus_id <= 0 || to_bus_id <= 0 || from_bus_id == to_bus_id {
+            return;
+        }
+        if !(adj.contains_key(&from_bus_id) && adj.contains_key(&to_bus_id)) {
+            return;
+        }
+        adj.entry(from_bus_id).or_default().push(to_bus_id);
+        adj.entry(to_bus_id).or_default().push(from_bus_id);
+    };
+
+    for row in branch_rows {
+        if row.status {
+            add_edge(row.from_bus_id, row.to_bus_id);
+        }
+    }
+    for row in transformer_2w_rows {
+        if row.status {
+            add_edge(row.from_bus_id, row.to_bus_id);
+        }
+    }
+    for row in transformer_3w_rows {
+        if row.status {
+            add_edge(row.bus_h_id, row.bus_m_id);
+            add_edge(row.bus_m_id, row.bus_l_id);
+            add_edge(row.bus_h_id, row.bus_l_id);
+        }
+    }
+
+    let mut bus_ids: Vec<i32> = adj.keys().copied().collect();
+    bus_ids.sort_unstable();
+
+    let mut visited: HashSet<i32> = HashSet::with_capacity(bus_ids.len());
+    let mut islands: Vec<Vec<i32>> = Vec::new();
+    for seed in bus_ids {
+        if visited.contains(&seed) {
+            continue;
+        }
+        let mut stack = vec![seed];
+        visited.insert(seed);
+        let mut component: Vec<i32> = Vec::new();
+        while let Some(node) = stack.pop() {
+            component.push(node);
+            if let Some(neighbors) = adj.get(&node) {
+                for neighbor in neighbors {
+                    if visited.insert(*neighbor) {
+                        stack.push(*neighbor);
+                    }
+                }
+            }
+        }
+        islands.push(component);
+    }
+    islands.sort_unstable_by(|left, right| right.len().cmp(&left.len()));
+    islands
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct IslandClassification {
+    has_in_service_network: bool,
+    has_in_service_load: bool,
+    has_in_service_generation: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct TopologyDiagnostics {
+    island_count: usize,
+    main_island_bus_count: usize,
+    detached_islands_present: bool,
+    detached_active_network_island_count: usize,
+    detached_active_load_island_count: usize,
+    detached_active_generation_island_count: usize,
+}
+
+fn classify_islands(
+    bus_rows: &[BusRow<'_>],
+    branch_rows: &[BranchRow<'_>],
+    transformer_2w_rows: &[Transformer2WRow<'_>],
+    transformer_3w_rows: &[Transformer3WRow<'_>],
+    load_rows: &[LoadRow<'_>],
+    gen_rows: &[GenRow<'_>],
+) -> TopologyDiagnostics {
+    let islands = network_island_components(
+        bus_rows,
+        branch_rows,
+        transformer_2w_rows,
+        transformer_3w_rows,
+    );
+
+    let mut network_pairs: HashSet<(i32, i32)> = HashSet::new();
+    let mut add_pair = |from_bus_id: i32, to_bus_id: i32| {
+        if from_bus_id <= 0 || to_bus_id <= 0 || from_bus_id == to_bus_id {
+            return;
+        }
+        let pair = if from_bus_id < to_bus_id {
+            (from_bus_id, to_bus_id)
+        } else {
+            (to_bus_id, from_bus_id)
+        };
+        network_pairs.insert(pair);
+    };
+
+    for row in branch_rows {
+        if row.status {
+            add_pair(row.from_bus_id, row.to_bus_id);
+        }
+    }
+    for row in transformer_2w_rows {
+        if row.status {
+            add_pair(row.from_bus_id, row.to_bus_id);
+        }
+    }
+    for row in transformer_3w_rows {
+        if row.status {
+            add_pair(row.bus_h_id, row.bus_m_id);
+            add_pair(row.bus_m_id, row.bus_l_id);
+            add_pair(row.bus_h_id, row.bus_l_id);
+        }
+    }
+
+    let mut load_buses: HashSet<i32> = HashSet::new();
+    for row in load_rows {
+        if row.status {
+            load_buses.insert(row.bus_id);
+        }
+    }
+    let mut gen_buses: HashSet<i32> = HashSet::new();
+    for row in gen_rows {
+        if row.status {
+            gen_buses.insert(row.bus_id);
+        }
+    }
+
+    let mut diagnostics = TopologyDiagnostics {
+        island_count: islands.len(),
+        main_island_bus_count: islands.first().map_or(0, Vec::len),
+        detached_islands_present: islands.len() > 1,
+        detached_active_network_island_count: 0,
+        detached_active_load_island_count: 0,
+        detached_active_generation_island_count: 0,
+    };
+
+    for island in islands.iter().skip(1) {
+        let bus_set: HashSet<i32> = island.iter().copied().collect();
+        let mut class = IslandClassification::default();
+
+        class.has_in_service_load = bus_set.iter().any(|bus_id| load_buses.contains(bus_id));
+        class.has_in_service_generation =
+            bus_set.iter().any(|bus_id| gen_buses.contains(bus_id));
+        class.has_in_service_network = network_pairs
+            .iter()
+            .any(|(left, right)| bus_set.contains(left) && bus_set.contains(right));
+
+        if class.has_in_service_network {
+            diagnostics.detached_active_network_island_count += 1;
+        }
+        if class.has_in_service_load {
+            diagnostics.detached_active_load_island_count += 1;
+        }
+        if class.has_in_service_generation {
+            diagnostics.detached_active_generation_island_count += 1;
+        }
+    }
+
+    diagnostics
+}
+
+fn enforce_detached_island_policy(
+    policy: DetachedIslandPolicy,
+    bus_rows: &mut Vec<BusRow<'static>>,
+    branch_rows: &mut Vec<BranchRow<'static>>,
+    gen_rows: &mut Vec<GenRow<'static>>,
+    load_rows: &mut Vec<LoadRow<'static>>,
+    transformer_2w_rows: &mut Vec<Transformer2WRow<'static>>,
+    transformer_3w_rows: &mut Vec<Transformer3WRow<'static>>,
+    fixed_shunt_rows: &mut Vec<FixedShuntRow<'static>>,
+    switched_shunt_rows: &mut Vec<SwitchedShuntRow>,
+    node_breaker_rows: &mut Vec<NodeBreakerDetailRow<'static>>,
+    connectivity_node_rows: &mut Vec<ConnectivityNodeDetailRow<'static>>,
+    split_bus_stub_elements: &mut Vec<ContingencyElement<'static>>,
+) -> Result<()> {
+    let diagnostics = classify_islands(
+        bus_rows,
+        branch_rows,
+        transformer_2w_rows,
+        transformer_3w_rows,
+        load_rows,
+        gen_rows,
+    );
+
+    match policy {
+        DetachedIslandPolicy::Permissive => return Ok(()),
+        DetachedIslandPolicy::Strict => {
+            let has_detached_active = diagnostics.detached_active_network_island_count > 0
+                || diagnostics.detached_active_load_island_count > 0
+                || diagnostics.detached_active_generation_island_count > 0;
+            if has_detached_active {
+                bail!(
+                    "detached island policy=strict rejected export: islands={} detached_active_network={} detached_active_load={} detached_active_generation={}",
+                    diagnostics.island_count,
+                    diagnostics.detached_active_network_island_count,
+                    diagnostics.detached_active_load_island_count,
+                    diagnostics.detached_active_generation_island_count,
+                );
+            }
+            return Ok(());
+        }
+        DetachedIslandPolicy::PruneDetached => {}
+    }
+
+    let islands = network_island_components(
+        bus_rows,
+        branch_rows,
+        transformer_2w_rows,
+        transformer_3w_rows,
+    );
+    let Some(main_island) = islands.first() else {
+        return Ok(());
+    };
+    let main_set: HashSet<i32> = main_island.iter().copied().collect();
+
+    bus_rows.retain(|row| main_set.contains(&row.bus_id));
+    branch_rows.retain(|row| main_set.contains(&row.from_bus_id) && main_set.contains(&row.to_bus_id));
+    gen_rows.retain(|row| main_set.contains(&row.bus_id));
+    load_rows.retain(|row| main_set.contains(&row.bus_id));
+    transformer_2w_rows
+        .retain(|row| main_set.contains(&row.from_bus_id) && main_set.contains(&row.to_bus_id));
+    transformer_3w_rows.retain(|row| {
+        main_set.contains(&row.bus_h_id)
+            && main_set.contains(&row.bus_m_id)
+            && main_set.contains(&row.bus_l_id)
+    });
+    fixed_shunt_rows.retain(|row| main_set.contains(&row.bus_id));
+    switched_shunt_rows.retain(|row| main_set.contains(&row.bus_id));
+    node_breaker_rows.retain(|row| {
+        row.from_bus_id.map(|bus_id| main_set.contains(&bus_id)).unwrap_or(true)
+            && row.to_bus_id.map(|bus_id| main_set.contains(&bus_id)).unwrap_or(true)
+    });
+    connectivity_node_rows.retain(|row| row.bus_id.map(|bus_id| main_set.contains(&bus_id)).unwrap_or(true));
+    split_bus_stub_elements.retain(|row| row.bus_id.map(|bus_id| main_set.contains(&bus_id)).unwrap_or(true));
+
+    Ok(())
+}
+
+fn is_topology_only_zero_injection_case(
+    bus_rows: &[BusRow<'_>],
+    load_rows: &[LoadRow<'_>],
+    gen_rows: &[GenRow<'_>],
+) -> bool {
+    let eps = 1e-9;
+
+    let buses_zero = bus_rows
+        .iter()
+        .all(|row| row.p_sched.abs() <= eps && row.q_sched.abs() <= eps);
+    let loads_zero = load_rows
+        .iter()
+        .filter(|row| row.status)
+        .all(|row| row.p_mw.abs() <= eps && row.q_mvar.abs() <= eps);
+    let gens_zero = gen_rows
+        .iter()
+        .filter(|row| row.status)
+        .all(|row| row.p_sched_mw.abs() <= eps);
+
+    buses_zero && loads_zero && gens_zero
+}
+
 /// Writes a complete Raptrix v0.8.0 `.rpf` Arrow IPC file.
 ///
 /// The writer materializes all required canonical tables (empty tables
@@ -565,26 +862,41 @@ pub fn write_complete_rpf_with_options(
             )
         })?;
     let (
-        bus_rows,
-        branch_rows,
-        gen_rows,
-        load_rows,
-        transformer_2w_rows,
-        transformer_3w_rows,
+        mut bus_rows,
+        mut branch_rows,
+        mut gen_rows,
+        mut load_rows,
+        mut transformer_2w_rows,
+        mut transformer_3w_rows,
         area_rows,
         zone_rows,
         owner_rows,
-        fixed_shunt_rows,
-        switched_shunt_rows,
+        mut fixed_shunt_rows,
+        mut switched_shunt_rows,
         connectivity_group_rows,
-        node_breaker_rows,
+        mut node_breaker_rows,
         switch_detail_rows,
-        connectivity_node_rows,
+        mut connectivity_node_rows,
         diagram_object_rows,
         diagram_point_rows,
-        split_bus_stub_elements,
+        mut split_bus_stub_elements,
         dy_model_specs,
     ) = topology;
+
+    enforce_detached_island_policy(
+        options.detached_island_policy,
+        &mut bus_rows,
+        &mut branch_rows,
+        &mut gen_rows,
+        &mut load_rows,
+        &mut transformer_2w_rows,
+        &mut transformer_3w_rows,
+        &mut fixed_shunt_rows,
+        &mut switched_shunt_rows,
+        &mut node_breaker_rows,
+        &mut connectivity_node_rows,
+        &mut split_bus_stub_elements,
+    )?;
 
     validate_pre_write_contract(
         &bus_rows,
@@ -674,7 +986,56 @@ pub fn write_complete_rpf_with_options(
         table_batches.insert(TABLE_DIAGRAM_POINTS, diagram_points_batch.clone());
     }
 
-    write_root_rpf(
+    let topology_diagnostics = classify_islands(
+        &bus_rows,
+        &branch_rows,
+        &transformer_2w_rows,
+        &transformer_3w_rows,
+        &load_rows,
+        &gen_rows,
+    );
+    let topology_only_zero_injection =
+        is_topology_only_zero_injection_case(&bus_rows, &load_rows, &gen_rows);
+
+    let mut additional_root_metadata: HashMap<String, String> = HashMap::new();
+    additional_root_metadata.insert(
+        METADATA_KEY_TOPOLOGY_ISLAND_COUNT.to_string(),
+        topology_diagnostics.island_count.to_string(),
+    );
+    additional_root_metadata.insert(
+        METADATA_KEY_TOPOLOGY_MAIN_ISLAND_BUS_COUNT.to_string(),
+        topology_diagnostics.main_island_bus_count.to_string(),
+    );
+    additional_root_metadata.insert(
+        METADATA_KEY_TOPOLOGY_DETACHED_ISLANDS_PRESENT.to_string(),
+        topology_diagnostics.detached_islands_present.to_string(),
+    );
+    additional_root_metadata.insert(
+        METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_NETWORK_ISLAND_COUNT.to_string(),
+        topology_diagnostics
+            .detached_active_network_island_count
+            .to_string(),
+    );
+    additional_root_metadata.insert(
+        METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_LOAD_ISLAND_COUNT.to_string(),
+        topology_diagnostics.detached_active_load_island_count.to_string(),
+    );
+    additional_root_metadata.insert(
+        METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_GENERATION_ISLAND_COUNT.to_string(),
+        topology_diagnostics
+            .detached_active_generation_island_count
+            .to_string(),
+    );
+    additional_root_metadata.insert(
+        METADATA_KEY_FEATURE_TOPOLOGY_ONLY.to_string(),
+        topology_only_zero_injection.to_string(),
+    );
+    additional_root_metadata.insert(
+        METADATA_KEY_FEATURE_ZERO_INJECTION_STUB.to_string(),
+        topology_only_zero_injection.to_string(),
+    );
+
+    write_root_rpf_with_metadata(
         output_path,
         &table_batches,
         &RootWriteOptions {
@@ -683,6 +1044,7 @@ pub fn write_complete_rpf_with_options(
             contingencies_are_stub: options.contingencies_are_stub || contingencies_are_stub,
             dynamics_are_stub: options.dynamics_are_stub || dynamics_are_stub,
         },
+        &additional_root_metadata,
     )?;
 
     let tp_merged = options.bus_resolution_mode == BusResolutionMode::Topological
@@ -1066,6 +1428,29 @@ fn parse_eq_components_for_path(
                     "failed to extract ConductingEquipment.BaseVoltage links from CGMES input file at {path}"
                 )
             })?;
+
+            // Some data providers ship TP/diagram payload in EQ-named files;
+            // parse opportunistically so valid mixed files are not ignored.
+            connectivity_groups =
+                parser::connectivity_node_groups_from_reader(Cursor::new(&bytes)).with_context(|| {
+                    format!(
+                        "failed to extract TopologicalNode/ConnectivityNode group links from CGMES input file at {path}"
+                    )
+                })?;
+            topological_nodes =
+                parser::topological_nodes_from_reader(Cursor::new(&bytes)).with_context(|| {
+                    format!("failed to extract TopologicalNode elements from CGMES input file at {path}")
+                })?;
+
+            let (parsed_diagrams, parsed_diagram_objects, parsed_diagram_points) =
+                parser::diagram_layout_from_reader(Cursor::new(&bytes)).with_context(|| {
+                    format!(
+                        "failed to extract DiagramLayout elements from CGMES input file at {path}"
+                    )
+                })?;
+            diagrams = parsed_diagrams;
+            diagram_objects = parsed_diagram_objects;
+            diagram_points = parsed_diagram_points;
         }
         CgmesProfileKind::Tp => {
             connectivity_groups =
@@ -1485,6 +1870,7 @@ fn parse_eq_topology_rows(
             p_min_agg: 0.0,
             p_max_agg: 0.0,
             nominal_kv: bus_nominal_kv_by_key.get(*bus_key).copied(),
+            bus_uuid: Some(Cow::Owned((*bus_key).to_owned())),
         })
         .collect();
 
@@ -2495,6 +2881,7 @@ fn build_buses_batch(rows: &[BusRow<'_>]) -> Result<RecordBatch> {
     let mut p_min_agg_b = Float64Builder::new();
     let mut p_max_agg_b = Float64Builder::new();
     let mut nominal_kv_b = Float64Builder::new();
+    let mut bus_uuid_b = StringDictionaryBuilder::<Int32Type>::new();
 
     for row in rows {
         bus_id_b.append_value(row.bus_id);
@@ -2520,6 +2907,11 @@ fn build_buses_batch(rows: &[BusRow<'_>]) -> Result<RecordBatch> {
         } else {
             nominal_kv_b.append_null();
         }
+        if let Some(bus_uuid) = row.bus_uuid.as_deref() {
+            bus_uuid_b.append(bus_uuid)?;
+        } else {
+            bus_uuid_b.append_null();
+        }
     }
 
     let arrays: Vec<ArrayRef> = vec![
@@ -2542,6 +2934,7 @@ fn build_buses_batch(rows: &[BusRow<'_>]) -> Result<RecordBatch> {
         Arc::new(p_min_agg_b.finish()) as ArrayRef,
         Arc::new(p_max_agg_b.finish()) as ArrayRef,
         Arc::new(nominal_kv_b.finish()) as ArrayRef,
+        Arc::new(bus_uuid_b.finish()) as ArrayRef,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build buses record batch")
@@ -3503,7 +3896,8 @@ mod tests {
     };
 
     use super::{
-        BusResolutionMode, GenRow, WriteOptions, infer_dynamics_model_type, read_rpf_tables,
+        BusResolutionMode, DetachedIslandPolicy, GenRow, WriteOptions, infer_dynamics_model_type,
+        read_rpf_tables,
         rpf_file_metadata, summarize_rpf, write_complete_rpf, write_complete_rpf_with_options,
     };
 
@@ -3667,6 +4061,15 @@ mod tests {
         assert_schema_shape_matches(tables[2].1.schema().as_ref(), &branches_schema());
         assert_schema_shape_matches(tables[12].1.schema().as_ref(), &contingencies_schema());
         assert_schema_shape_matches(tables[14].1.schema().as_ref(), &dynamics_models_schema());
+
+        let buses_batch = &tables[1].1;
+        let bus_uuid_dict = buses_batch
+            .column(19)
+            .as_any()
+            .downcast_ref::<DictionaryArray<Int32Type>>()
+            .expect("buses.bus_uuid must be dictionary-encoded UTF8");
+        assert_eq!(bus_uuid_dict.null_count(), 0);
+
         let branches_batch = &tables[2].1;
         assert_eq!(
             branches_batch.num_rows(),
@@ -3887,6 +4290,7 @@ mod tests {
             &output_path_str,
             &WriteOptions {
                 bus_resolution_mode: BusResolutionMode::Topological,
+                detached_island_policy: DetachedIslandPolicy::Permissive,
                 emit_connectivity_groups: false,
                 emit_node_breaker_detail: true,
                 emit_diagram_layout: true,
@@ -3945,6 +4349,18 @@ mod tests {
             metadata.get("raptrix.version"),
             Some(&SCHEMA_VERSION.to_string())
         );
+        assert_eq!(
+            metadata.get("rpf.topology.island_count"),
+            Some(&"1".to_string())
+        );
+        assert_eq!(
+            metadata.get("rpf.topology.detached_islands_present"),
+            Some(&"false".to_string())
+        );
+        assert_eq!(
+            metadata.get("rpf.features.topology_only"),
+            Some(&"true".to_string())
+        );
 
         Ok(())
     }
@@ -3966,6 +4382,7 @@ mod tests {
             &output_path_str,
             &WriteOptions {
                 bus_resolution_mode: BusResolutionMode::Topological,
+                detached_island_policy: DetachedIslandPolicy::Permissive,
                 emit_connectivity_groups: false,
                 emit_node_breaker_detail: true,
                 emit_diagram_layout: true,

@@ -112,24 +112,27 @@ def discover_cases() -> list[Case]:
     if data_root:
         root = Path(data_root)
         if root.is_dir():
-            for merged in sorted(root.glob("**/*-Merged")):
-                if not merged.is_dir():
-                    continue
-                eq_files = sorted(merged.glob("*_EQ.xml"))
-                if not eq_files:
-                    continue
-                for eq in eq_files:
+            # Discover every directory that directly contains *_EQ.xml files.
+            # This covers *-Merged assembled cases as well as standalone cases
+            # (e.g. PowerFlow/PowerFlow and PST/*) that use the same naming
+            # convention but live outside Merged directories.
+            eq_dirs: dict[Path, list[Path]] = {}
+            for eq_file in sorted(root.glob("**/*_EQ.xml")):
+                eq_dirs.setdefault(eq_file.parent, []).append(eq_file)
+
+            for dir_path, eq_files_in_dir in sorted(eq_dirs.items()):
+                for eq in sorted(eq_files_in_dir):
                     model = eq.stem[:-3]
                     cases.append(
                         Case(
                             case_name=f"external_{_safe_name(model)}",
                             source_kind="external-cgmes",
                             eq=eq,
-                            tp=merged / f"{model}_TP.xml" if (merged / f"{model}_TP.xml").is_file() else None,
-                            sv=merged / f"{model}_SV.xml" if (merged / f"{model}_SV.xml").is_file() else None,
-                            ssh=merged / f"{model}_SSH.xml" if (merged / f"{model}_SSH.xml").is_file() else None,
-                            dy=merged / f"{model}_DY.xml" if (merged / f"{model}_DY.xml").is_file() else None,
-                            dl=merged / f"{model}_DL.xml" if (merged / f"{model}_DL.xml").is_file() else None,
+                            tp=dir_path / f"{model}_TP.xml" if (dir_path / f"{model}_TP.xml").is_file() else None,
+                            sv=dir_path / f"{model}_SV.xml" if (dir_path / f"{model}_SV.xml").is_file() else None,
+                            ssh=dir_path / f"{model}_SSH.xml" if (dir_path / f"{model}_SSH.xml").is_file() else None,
+                            dy=dir_path / f"{model}_DY.xml" if (dir_path / f"{model}_DY.xml").is_file() else None,
+                            dl=dir_path / f"{model}_DL.xml" if (dir_path / f"{model}_DL.xml").is_file() else None,
                         )
                     )
 

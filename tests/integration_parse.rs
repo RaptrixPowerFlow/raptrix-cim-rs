@@ -14,7 +14,8 @@ use raptrix_cim_rs::arrow_schema::{BRANDING, SCHEMA_VERSION, branch_schema};
 use raptrix_cim_rs::models::base::IdentifiedObject;
 use raptrix_cim_rs::parser;
 use raptrix_cim_rs::rpf_writer::{
-    BusResolutionMode, WriteOptions, read_rpf_tables, write_complete_rpf_with_options,
+    BusResolutionMode, DetachedIslandPolicy, WriteOptions, read_rpf_tables,
+    write_complete_rpf_with_options,
 };
 use raptrix_cim_rs::test_utils::get_external_cgmes_path;
 
@@ -170,6 +171,7 @@ fn write_smallgrid_rpf_with_optional_node_breaker_tables() -> Result<()> {
         output_path.to_string_lossy().as_ref(),
         &WriteOptions {
             bus_resolution_mode: BusResolutionMode::Topological,
+            detached_island_policy: DetachedIslandPolicy::Permissive,
             emit_connectivity_groups: false,
             emit_node_breaker_detail: true,
             emit_diagram_layout: true,
@@ -221,6 +223,7 @@ fn write_fullgrid_rpf_with_optional_node_breaker_tables() -> Result<()> {
         output_path.to_string_lossy().as_ref(),
         &WriteOptions {
             bus_resolution_mode: BusResolutionMode::Topological,
+            detached_island_policy: DetachedIslandPolicy::Permissive,
             emit_connectivity_groups: false,
             emit_node_breaker_detail: true,
             emit_diagram_layout: true,
@@ -273,6 +276,7 @@ fn test_smallgrid_diagram_roundtrip() -> Result<()> {
         output_path.to_string_lossy().as_ref(),
         &WriteOptions {
             bus_resolution_mode: BusResolutionMode::Topological,
+            detached_island_policy: DetachedIslandPolicy::Permissive,
             emit_connectivity_groups: false,
             emit_node_breaker_detail: false,
             emit_diagram_layout: true,  // Enable diagram layout emission

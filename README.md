@@ -34,48 +34,59 @@ That split keeps the locked RPF contract in one reusable place so future convert
 
 ## Current Capabilities
 
-### Input capabilities
+raptrix-cim-rs is production-ready against the full ENTSO-E CGMES v3.0 conformity suite. All 11 test cases pass at 100% across four output variants in the release binary.
 
-- Parse single CIM XML fragments from string input:
-	- cim:ACLineSegment
-	- cim:EnergyConsumer
-- Parse full RDF/XML EQ files from a reader and extract:
-	- all ACLineSegment rows
-	- all EnergyConsumer rows
-	- all SynchronousMachine rows
-- Parse TP profile topology and merge with EQ terminal connectivity:
-	- TopologicalNode bus collapse mapping
-	- ConnectivityNode group preservation for split-bus analysis
-- Build branch-ready rows from live EQ topology by joining:
-	- ACLineSegment electrical fields (r, x, bch)
-	- Terminal.ConductingEquipment references
-	- Terminal.ConnectivityNode references
+### Profile ingest (CGMES 3.0+ only)
 
-### Output capabilities
+| Profile | Coverage |
+|---|---|
+| EQ | Full topology: AC lines, power transformers (2W/3W), synchronous machines, energy consumers, fixed/switched shunts, static VAr compensators, phase tap changers, ratio tap changers, base voltages, substations, voltage levels, terminals, connectivity nodes |
+| TP | TopologicalNode bus collapse (default) or ConnectivityNode granularity on demand |
+| SV | Solved state: bus voltage angles and magnitudes, branch active/reactive flows |
+| SSH | Steady-state hypothesis: generator dispatch, load targets, shunt switching state |
+| DY | Dynamics model parameters: GENROU, GENCLS, and SYNC_MACHINE_EQ for synchronous machines |
+| DL | IEC 61970-453 diagram layout objects and diagram points |
 
-- Build Arrow schema objects for the locked Raptrix PowerFlow Interchange v0.8.0 contract:
-	- metadata
-	- buses
-	- branches
-	- generators
-	- loads
-	- fixed_shunts
-	- switched_shunts
-	- transformers_2w
-	- transformers_3w
-	- areas
-	- zones
-	- owners
-	- contingencies
-	- interfaces
-	- dynamics_models
-- Build Arrow RecordBatch objects for demo bus and branch data.
-- Write Parquet via ArrowWriter with custom metadata:
-	- raptrix.branding
-	- raptrix.version
-- Generate example outputs:
-	- example_powerflow.parquet (dummy data from main)
-	- smallgrid_branches.parquet (live CGMES integration test)
+Profiles beyond EQ are optional — any subset can be provided and missing profiles are silently skipped.
+
+### Bus resolution modes
+
+| Mode | Flag | Description |
+|---|---|---|
+| Topological | *(default)* | Bus IDs collapse to TP TopologicalNode for solver interoperability |
+| Connectivity detail | `--connectivity-detail` | Granular ConnectivityNode bus mapping; emits optional `connectivity_groups` table |
+| Node-breaker | `--connectivity-detail --node-breaker` | Adds switch-topology detail tables for operational and viewer workflows |
+
+### Output tables (schema contract v0.8.0)
+
+**15 canonical tables (always emitted):** `metadata`, `buses`, `branches`, `generators`, `loads`, `fixed_shunts`, `switched_shunts`, `transformers_2w`, `transformers_3w`, `areas`, `zones`, `owners`, `contingencies`, `interfaces`, `dynamics_models`
+
+**Optional tables (emitted on demand):**
+- `connectivity_groups` — with `--connectivity-detail`
+- `node_breaker_detail`, `switch_detail`, `connectivity_nodes` — with `--node-breaker`
+- `diagram_objects`, `diagram_points` — when DL profile is present (suppress with `--no-diagram`)
+
+### Detached island policy
+
+| Policy | Flag | Behavior |
+|---|---|---|
+| Permissive | `--detached-island-policy permissive` *(default)* | Islands without a slack bus are kept with a warning |
+| Strict | `--detached-island-policy strict` | Aborts if any detached island is found |
+| Prune | `--detached-island-policy prune-detached` | Silently removes detached islands before writing |
+
+### Tested CGMES v3.0 conformity cases (11/11 passing, 44 variants)
+
+| Case | Profiles | Notes |
+|---|---|---|
+| FullGrid-Merged | EQ + TP | Large multi-TSO assembled case |
+| MiniGrid-Merged | EQ + TP | Minimal conformity case |
+| SmallGrid-Merged | EQ + TP + DL | Standard small test grid with diagram layout |
+| RealGrid-Merged | EQ + TP | Representative real-network scale |
+| Svedala-Merged | EQ + TP + DL | Swedish TSO reference with diagram layout |
+| PowerFlow | EQ + TP + SV + SSH | Explicit power-flow validation case |
+| PST Type1 | EQ + TP + SV + SSH + DL | PhaseTapChangerLinear |
+| PST Type2 | EQ + TP + SV + SSH + DL | PhaseTapChangerLinear variant |
+| PST Type3 | EQ + TP + SV + SSH + DL | PhaseTapChangerTable |
 
 ## Data Contract (Locked)
 
@@ -140,12 +151,18 @@ Current implementation priority is a clean and testable path to Arrow/Parquet ou
 
 ## Performance Snapshot
 
-Latest local benchmark-style parser test results (debug profile, machine-dependent):
+Real-world end-to-end conversion times (release binary, pre-built, including file write) from the CGMES v3.0 conformity suite:
 
-- ACLineSegment: 50,000 parses in ~1.280s (~39,056 parses/s)
-- EnergyConsumer: 50,000 parses in ~1.054s (~47,425 parses/s)
+| Case | Topological | Connectivity Detail | Node-Breaker |
+|---|---|---|---|
+| PowerFlow (6-bus) | ~0.27s | ~0.25s | ~0.25s |
+| PST Type1–3 | ~0.24–0.44s | ~0.24–0.36s | ~0.23–0.31s |
+| MiniGrid, SmallGrid | ~0.32–0.44s | ~0.26–0.45s | ~0.27–0.46s |
+| Svedala | ~0.35s | ~0.36s | ~0.35s |
+| FullGrid | ~0.34s | ~0.35s | ~0.35s |
+| RealGrid (largest) | ~1.69s | ~1.71s | ~1.73s |
 
-Use these as baseline indicators, not final production benchmarks.
+All conversions are zero-copy headless — no readback or post-write validation pass. Times measured on Windows with a pre-built release binary.
 
 ## Project Layout
 
@@ -209,15 +226,15 @@ The CLI requires `--output` to end with `.rpf`. In auto-detect mode it recursive
 
 ## First Working `.rpf` (Generate + View)
 
-Create a first `.rpf` artifact from the SmallGrid EQ profile (contains required terminal connectivity):
+Create a first `.rpf` artifact from the SmallGrid case using auto-detect mode:
 
-- `cargo run --release -- convert --eq C:\tmp\CGMES_ConformityAssessmentScheme_TestConfigurations_v3-0-3\v3.0\SmallGrid\SmallGrid-Merged\SmallGrid_EQ.xml --output tests/data/external/smallgrid_eq.rpf`
+- `cargo run --release -- convert --input-dir "C:\raptrix-cim-tests\CGMES_ConformityAssessmentScheme_TestConfigurations_v3-0-3\CGMES_ConformityAssessmentScheme_TestConfigurations_v3-0-3\v3.0\SmallGrid\SmallGrid-Merged" --output tests/data/external/smallgrid.rpf`
 
 Then inspect table counts and coverage:
 
-- `cargo run --release -- view --input tests/data/external/smallgrid_eq.rpf`
+- `cargo run --release -- view --input tests/data/external/smallgrid.rpf`
 
-The `view` command prints table-by-table row counts for quick import checks in `raptrix-core` and `raptrix-cim-viewer`.
+The `view` command prints table-by-table row counts for quick import checks in `raptrix-core` and `raptrix-studio`.
 
 Use `--verbose` when validating interoperability because it also prints the root Arrow IPC metadata entries, including `raptrix.version`, `raptrix.features.node_breaker`, `raptrix.features.contingencies_stub`, `raptrix.features.dynamics_stub`, and `rpf.rows.*` logical row counts used by compliant external parsers.
 
@@ -255,7 +272,7 @@ Run parser throughput test with printed rates:
 
 Run live SmallGrid integration test (PowerShell):
 
-1. $env:RAPTRIX_TEST_DATA_ROOT = "C:\tmp\CGMES_ConformityAssessmentScheme_TestConfigurations_v3-0-3\v3.0"
+1. $env:RAPTRIX_TEST_DATA_ROOT = "C:\raptrix-cim-tests\CGMES_ConformityAssessmentScheme_TestConfigurations_v3-0-3\CGMES_ConformityAssessmentScheme_TestConfigurations_v3-0-3\v3.0"
 2. cargo test parse_smallgrid_eq_aclinesegment -- --ignored --nocapture
 
 Run CLI in auto-detect mode:
@@ -325,7 +342,7 @@ Interpretation of failures:
 1. Download ENTSO-E CGMES v3.0 test configurations from:
 	 https://www.entsoe.eu/data/cim/cim-for-grid-models-exchange/
 2. Unzip to a local path, for example:
-	 C:\tmp\CGMES_ConformityAssessmentScheme_TestConfigurations_v3-0-3\v3.0
+	 C:\raptrix-cim-tests\CGMES_ConformityAssessmentScheme_TestConfigurations_v3-0-3\CGMES_ConformityAssessmentScheme_TestConfigurations_v3-0-3\v3.0
 3. Set RAPTRIX_TEST_DATA_ROOT to that v3.0 folder.
 
 Expected SmallGrid EQ location pattern:
@@ -342,14 +359,13 @@ If RAPTRIX_TEST_DATA_ROOT is not set, ignored integration tests can be skipped s
 
 Large model archives should stay outside the repository.
 
-## Known Limits (Current Scope)
+## Known Limits
 
-- Parsing focus is currently EQ profile extraction for key equipment, not full multi-profile CGMES graph reconstruction.
-- Branch endpoint mapping currently relies on Terminal and ConnectivityNode references present in EQ.
-- Dynamics roadmap note: schema `v0.8` is expected to focus on richer dynamics coverage after feedback from `raptrix-core` and Smart Wires device workflows.
-- Some solver fields are default-filled in integration mapping until richer profile joins (TP/SV/SSH) are added.
-- BaseVoltage joins now feed core nominal-kV fields and fallback naming, but coverage is not yet exhaustive across every CIM equipment subtype, so sparse cases may still surface `unknown` labels.
-- If CGMES metadata is absent, `base_mva` and `frequency_hz` use CLI defaults; set these explicitly for non-60 Hz systems.
+- CGMES 2.4.x is not supported; all ingest is CGMES 3.0+ only.
+- Multi-TSO cases where separate EQ files exist per authority set (e.g., MicroGrid BE + NL TSOs) require a pre-merged single EQ file or passing all files together with `--input-dir`. Auto-detect selects one EQ file per directory — use the pre-merged case directories when available.
+- BaseVoltage joins cover core equipment types; CIM models that omit BaseVoltage links may produce `unknown` labels in nominal-kV columns.
+- If CGMES metadata is absent, `base_mva` and `frequency_hz` use CLI defaults (100 MVA, 60 Hz); set explicitly for non-60 Hz systems.
+- No official back-converter from RPF to PSS/E or other vendor formats; the MPL 2.0 license permits community implementations.
 
 ## How To Request New Solver Features
 
