@@ -15,7 +15,7 @@
 - Additive changes (new optional columns, new optional tables, new optional metadata keys) require at least a MINOR bump.
 - PATCH bumps are reserved for non-structural fixes: bug fixes, metadata text fixes, and documentation clarifications without wire-shape changes.
 
-## 0.7 Nullability Guidance
+## 0.8 Nullability Guidance
 
 - The new 0.7 fields are important, but they are not universally recoverable from every accepted CIM dataset.
 - Writers should emit null for `nominal_kv`, `from_nominal_kv`, `to_nominal_kv`, `nominal_kv_h`, `nominal_kv_m`, `nominal_kv_l`, `equipment_kind`, and `equipment_id` when the source payload cannot support an honest value.
@@ -31,8 +31,8 @@ Every `.rpf` file must include:
 
 Current locked values:
 
-- `raptrix.version = 0.7.1`
-- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.7.1 - High-performance open profile by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.`
+- `raptrix.version = 0.8.0`
+- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.8.0 - High-performance open profile by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.`
 
 Optional file-level metadata keys:
 
@@ -338,6 +338,19 @@ This section is normative for external parser authors.
 - `model_type`: Dictionary<Int32, Utf8>, required
 - `params`: Map<String, Float64>, required
 
+Dynamics population rules for downstream consumers:
+
+- Writers SHOULD prefer DY-profile-linked model rows when CGMES DY input is present and references a known generator.
+- Writers SHOULD include parsed numeric DY parameters in `params` using normalized lowercase keys derived from CIM field names.
+- When DY coverage is partial, writers SHOULD fall back to EQ-derived rows for unmatched generators to preserve generator coverage.
+- When no generator-linked dynamics can be derived from DY or EQ, writers MAY emit a placeholder row and set `raptrix.features.dynamics_stub = true`.
+- `model_type` is an open string vocabulary. Writers MAY emit CIM class names (for example `SynchronousMachineDynamics`) or extension names (for example `raptrix.smart_valve.v1`).
+- For non-CIM extensions, writers SHOULD use namespaced `model_type` values and namespaced `params` keys to avoid collisions.
+- Provenance keys currently emitted in `params` are:
+	- `source_dy = 1.0` for DY-linked rows
+	- `source_eq_fallback = 1.0` for EQ fallback rows
+	- `source_stub = 1.0` for placeholder rows
+
 ### connectivity_groups
 
 - `topological_bus_id`: Int32, required
@@ -374,7 +387,7 @@ This section is normative for external parser authors.
 
 ## Optional Tables: diagram_objects and diagram_points
 
-RPF v0.7.1 adds two optional Arrow tables for persisted one-line layout, aligned with IEC 61970-453 `DiagramObject` and `DiagramObjectPoint`. These tables are intended for viewer/editor workflows and are additive only: when absent, downstream tools may synthesize layout at runtime; when present, tools should restore the saved layout exactly. The payload is carried inside the standard Apache Arrow IPC `.rpf` root container and may be derived from CGMES RDF/XML diagram layout content commonly exchanged under IEC 61970-501 CGMES profile sets.
+RPF v0.8.0 includes two optional Arrow tables for persisted one-line layout, aligned with IEC 61970-453 `DiagramObject` and `DiagramObjectPoint`. These tables are intended for viewer/editor workflows and are additive only: when absent, downstream tools may synthesize layout at runtime; when present, tools should restore the saved layout exactly. The payload is carried inside the standard Apache Arrow IPC `.rpf` root container and may be derived from CGMES RDF/XML diagram layout content commonly exchanged under IEC 61970-501 CGMES profile sets.
 
 The two tables must be present together or both absent. A file with `diagram_objects` but no `diagram_points`, or vice versa, is malformed.
 
@@ -412,7 +425,7 @@ IEC 61970-453 uses an inverted-Y convention where larger Y values are lower on s
 - Standard alignment: IEC 61970-453 `Diagram`, `DiagramObject`, and `DiagramObjectPoint`
 - Exchange context: IEC 61970-501 CGMES RDF/XML profile sets, including merged datasets that carry diagram layout payloads
 - Container format: Apache Arrow columnar IPC file layout already used by `.rpf`
-- Introduced in: RPF v0.7.1
+- Introduced in: RPF v0.8.0
 
 ## Blocker Fixes Incorporated in Locked contract: v0.7.1
 

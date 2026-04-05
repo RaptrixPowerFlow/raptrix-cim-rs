@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF
+  xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+  xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#">
+  <cim:ConnectivityNode rdf:ID="SV_N1"/>
+  <cim:ConnectivityNode rdf:ID="SV_N2"/>
+
+  <cim:ACLineSegment rdf:ID="SV_LINE_1">
+    <IdentifiedObject.name>Smart Valve Demo Line</IdentifiedObject.name>
+    <ACLineSegment.r>0.01</ACLineSegment.r>
+    <ACLineSegment.x>0.05</ACLineSegment.x>
+    <ACLineSegment.bch>0.001</ACLineSegment.bch>
+  </cim:ACLineSegment>
+
+  <cim:Terminal rdf:ID="SV_LT1">
+    <Terminal.ConductingEquipment rdf:resource="#SV_LINE_1"/>
+    <Terminal.ConnectivityNode rdf:resource="#SV_N1"/>
+    <ACDCTerminal.sequenceNumber>1</ACDCTerminal.sequenceNumber>
+  </cim:Terminal>
+  <cim:Terminal rdf:ID="SV_LT2">
+    <Terminal.ConductingEquipment rdf:resource="#SV_LINE_1"/>
+    <Terminal.ConnectivityNode rdf:resource="#SV_N2"/>
+    <ACDCTerminal.sequenceNumber>2</ACDCTerminal.sequenceNumber>
+  </cim:Terminal>
+
+  <cim:SynchronousMachine rdf:ID="GEN_SMART">
+    <IdentifiedObject.name>Smart Valve Generator</IdentifiedObject.name>
+    <SynchronousMachine.ratedS>100.0</SynchronousMachine.ratedS>
+    <SynchronousMachine.H>4.5</SynchronousMachine.H>
+    <SynchronousMachine.xdPrime>0.22</SynchronousMachine.xdPrime>
+    <SynchronousMachine.D>0.04</SynchronousMachine.D>
+  </cim:SynchronousMachine>
+  <cim:Terminal rdf:ID="SV_GT1">
+    <Terminal.ConductingEquipment rdf:resource="#GEN_SMART"/>
+    <Terminal.ConnectivityNode rdf:resource="#SV_N1"/>
+    <ACDCTerminal.sequenceNumber>1</ACDCTerminal.sequenceNumber>
+  </cim:Terminal>
+</rdf:RDF>

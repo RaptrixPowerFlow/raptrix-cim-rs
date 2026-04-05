@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF
+  xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+  xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#">
+  <cim:RaptrixSmartValveDynamics rdf:ID="SVD_1">
+    <DynamicsFunctionBlock.PowerSystemResource rdf:resource="#GEN_SMART"/>
+    <RaptrixSmartValveDynamics.kGain>2.5</RaptrixSmartValveDynamics.kGain>
+    <RaptrixSmartValveDynamics.tOpenS>0.3</RaptrixSmartValveDynamics.tOpenS>
+    <RaptrixSmartValveDynamics.tCloseS>0.45</RaptrixSmartValveDynamics.tCloseS>
+  </cim:RaptrixSmartValveDynamics>
+</rdf:RDF>

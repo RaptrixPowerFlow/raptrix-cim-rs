@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF
+  xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+  xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#">
+  <cim:ConnectivityNode rdf:ID="N1" />
+  <cim:ConnectivityNode rdf:ID="N2" />
+
+  <cim:ACLineSegment rdf:ID="L1">
+    <IdentifiedObject.name>Line 1</IdentifiedObject.name>
+    <ACLineSegment.r>0.01</ACLineSegment.r>
+    <ACLineSegment.x>0.05</ACLineSegment.x>
+    <ACLineSegment.bch>0.001</ACLineSegment.bch>
+  </cim:ACLineSegment>
+
+  <cim:Terminal rdf:ID="LT1">
+    <Terminal.ConductingEquipment rdf:resource="#L1"/>
+    <Terminal.ConnectivityNode rdf:resource="#N1"/>
+    <ACDCTerminal.sequenceNumber>1</ACDCTerminal.sequenceNumber>
+  </cim:Terminal>
+  <cim:Terminal rdf:ID="LT2">
+    <Terminal.ConductingEquipment rdf:resource="#L1"/>
+    <Terminal.ConnectivityNode rdf:resource="#N2"/>
+    <ACDCTerminal.sequenceNumber>2</ACDCTerminal.sequenceNumber>
+  </cim:Terminal>
+
+  <cim:Breaker rdf:ID="BR1">
+    <IdentifiedObject.name>Breaker 1</IdentifiedObject.name>
+    <Switch.open>false</Switch.open>
+    <Switch.normalOpen>false</Switch.normalOpen>
+    <Switch.retained>true</Switch.retained>
+  </cim:Breaker>
+  <cim:Terminal rdf:ID="BT1">
+    <Terminal.ConductingEquipment rdf:resource="#BR1"/>
+    <Terminal.ConnectivityNode rdf:resource="#N1"/>
+    <ACDCTerminal.sequenceNumber>1</ACDCTerminal.sequenceNumber>
+  </cim:Terminal>
+  <cim:Terminal rdf:ID="BT2">
+    <Terminal.ConductingEquipment rdf:resource="#BR1"/>
+    <Terminal.ConnectivityNode rdf:resource="#N2"/>
+    <ACDCTerminal.sequenceNumber>2</ACDCTerminal.sequenceNumber>
+  </cim:Terminal>
+</rdf:RDF>
