@@ -43,6 +43,27 @@ pub const METADATA_KEY_FEATURE_DIAGRAM_LAYOUT: &str = "raptrix.features.diagram_
 pub const METADATA_KEY_FEATURE_CONTINGENCIES_STUB: &str = "raptrix.features.contingencies_stub";
 /// Optional metadata key indicating dynamics_models table uses placeholder rows.
 pub const METADATA_KEY_FEATURE_DYNAMICS_STUB: &str = "raptrix.features.dynamics_stub";
+/// Optional metadata key indicating export is a topology-only snapshot.
+pub const METADATA_KEY_FEATURE_TOPOLOGY_ONLY: &str = "rpf.features.topology_only";
+/// Optional metadata key indicating all injections were zeroed by export.
+pub const METADATA_KEY_FEATURE_ZERO_INJECTION_STUB: &str = "rpf.features.zero_injection_stub";
+/// Optional metadata key indicating total electrical island count.
+pub const METADATA_KEY_TOPOLOGY_ISLAND_COUNT: &str = "rpf.topology.island_count";
+/// Optional metadata key indicating largest-island bus count.
+pub const METADATA_KEY_TOPOLOGY_MAIN_ISLAND_BUS_COUNT: &str =
+    "rpf.topology.main_island_bus_count";
+/// Optional metadata key indicating if detached islands exist.
+pub const METADATA_KEY_TOPOLOGY_DETACHED_ISLANDS_PRESENT: &str =
+    "rpf.topology.detached_islands_present";
+/// Optional metadata key counting detached islands with any in-service network element.
+pub const METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_NETWORK_ISLAND_COUNT: &str =
+    "rpf.topology.detached_active_network_island_count";
+/// Optional metadata key counting detached islands with any in-service load.
+pub const METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_LOAD_ISLAND_COUNT: &str =
+    "rpf.topology.detached_active_load_island_count";
+/// Optional metadata key counting detached islands with any in-service generation.
+pub const METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_GENERATION_ISLAND_COUNT: &str =
+    "rpf.topology.detached_active_generation_island_count";
 
 /// Canonical metadata table name.
 pub const TABLE_METADATA: &str = "metadata";
@@ -212,6 +233,7 @@ pub fn buses_schema() -> Schema {
             Field::new("p_min_agg", DataType::Float64, false),
             Field::new("p_max_agg", DataType::Float64, false),
             Field::new("nominal_kv", DataType::Float64, true),
+            Field::new("bus_uuid", dict_utf8(), true),
         ],
         schema_metadata(),
     )

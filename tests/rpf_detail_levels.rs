@@ -11,7 +11,8 @@ use raptrix_cim_rs::arrow_schema::{
     TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_NODE_BREAKER_DETAIL, TABLE_SWITCH_DETAIL,
 };
 use raptrix_cim_rs::rpf_writer::{
-    BusResolutionMode, WriteOptions, read_rpf_tables, rpf_file_metadata, summarize_rpf,
+    BusResolutionMode, DetachedIslandPolicy, WriteOptions, read_rpf_tables, rpf_file_metadata,
+    summarize_rpf,
     write_complete_rpf_with_options,
 };
 
@@ -188,6 +189,7 @@ fn generated_v080_outputs_make_detail_levels_explicit() -> Result<()> {
         topological_output.to_string_lossy().as_ref(),
         &WriteOptions {
             bus_resolution_mode: BusResolutionMode::Topological,
+            detached_island_policy: DetachedIslandPolicy::Permissive,
             emit_connectivity_groups: false,
             emit_node_breaker_detail: false,
             emit_diagram_layout: true,
@@ -216,6 +218,7 @@ fn generated_v080_outputs_make_detail_levels_explicit() -> Result<()> {
         connectivity_output.to_string_lossy().as_ref(),
         &WriteOptions {
             bus_resolution_mode: BusResolutionMode::ConnectivityDetail,
+            detached_island_policy: DetachedIslandPolicy::Permissive,
             emit_connectivity_groups: true,
             emit_node_breaker_detail: false,
             emit_diagram_layout: true,
@@ -244,6 +247,7 @@ fn generated_v080_outputs_make_detail_levels_explicit() -> Result<()> {
         node_breaker_output.to_string_lossy().as_ref(),
         &WriteOptions {
             bus_resolution_mode: BusResolutionMode::ConnectivityDetail,
+            detached_island_policy: DetachedIslandPolicy::Permissive,
             emit_connectivity_groups: true,
             emit_node_breaker_detail: true,
             emit_diagram_layout: true,
@@ -298,6 +302,7 @@ fn smart_valve_custom_dy_model_round_trips_into_dynamics_models() -> Result<()> 
         output_path.to_string_lossy().as_ref(),
         &WriteOptions {
             bus_resolution_mode: BusResolutionMode::Topological,
+            detached_island_policy: DetachedIslandPolicy::Permissive,
             emit_connectivity_groups: false,
             emit_node_breaker_detail: false,
             emit_diagram_layout: false,

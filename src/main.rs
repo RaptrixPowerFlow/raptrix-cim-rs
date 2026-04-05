@@ -16,16 +16,33 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use clap::{ArgGroup, Parser, Subcommand};
+use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 
 use raptrix_cim_rs::arrow_schema::{
     BRANDING, METADATA_KEY_FEATURE_CONTINGENCIES_STUB, METADATA_KEY_FEATURE_DYNAMICS_STUB,
     METADATA_KEY_FEATURE_DIAGRAM_LAYOUT, METADATA_KEY_FEATURE_NODE_BREAKER,
 };
 use raptrix_cim_rs::rpf_writer::{
-    BusResolutionMode, WriteOptions, rpf_file_metadata, summarize_rpf,
+    BusResolutionMode, DetachedIslandPolicy, WriteOptions, rpf_file_metadata, summarize_rpf,
     write_complete_rpf_with_options,
 };
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum DetachedIslandPolicyArg {
+    Permissive,
+    Strict,
+    PruneDetached,
+}
+
+impl From<DetachedIslandPolicyArg> for DetachedIslandPolicy {
+    fn from(value: DetachedIslandPolicyArg) -> Self {
+        match value {
+            DetachedIslandPolicyArg::Permissive => DetachedIslandPolicy::Permissive,
+            DetachedIslandPolicyArg::Strict => DetachedIslandPolicy::Strict,
+            DetachedIslandPolicyArg::PruneDetached => DetachedIslandPolicy::PruneDetached,
+        }
+    }
+}
 
 const COPYRIGHT: &str = "Copyright (c) 2026 Musto Technologies LLC";
 const CANONICAL_TABLE_COUNT: usize = 15;
@@ -111,6 +128,10 @@ struct ConvertArgs {
     /// Suppress optional diagram layout tables even when CIM DiagramLayout is present.
     #[arg(long)]
     no_diagram: bool,
+
+    /// Detached island handling policy: permissive, strict, or prune-detached.
+    #[arg(long, value_enum, default_value_t = DetachedIslandPolicyArg::Permissive)]
+    detached_island_policy: DetachedIslandPolicyArg,
 
     /// Default system base MVA used when CGMES profile metadata is unavailable.
     #[arg(long, default_value_t = 100.0)]
@@ -285,6 +306,7 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
     let write_options = if args.connectivity_detail {
         WriteOptions {
             bus_resolution_mode: BusResolutionMode::ConnectivityDetail,
+            detached_island_policy: args.detached_island_policy.into(),
             emit_connectivity_groups: true,
             emit_node_breaker_detail: args.node_breaker,
             emit_diagram_layout: !args.no_diagram,
@@ -299,6 +321,7 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
         WriteOptions {
             // Topological is default for interoperability.
             bus_resolution_mode: BusResolutionMode::Topological,
+            detached_island_policy: args.detached_island_policy.into(),
             emit_connectivity_groups: false,
             emit_node_breaker_detail: args.node_breaker,
             emit_diagram_layout: !args.no_diagram,
