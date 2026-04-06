@@ -232,6 +232,10 @@ struct SwitchedShuntRow {
     v_high: f64,
     b_steps: Vec<f64>,
     current_step: i32,
+    /// Authoritative initial susceptance in per-unit (v0.8.3+).
+    /// For CIM: sum of the first `current_step` cumulative b_steps values.
+    /// For PSS/E: BINIT / base_mva written directly by the psse-rs converter.
+    b_init_pu: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -2615,13 +2619,23 @@ fn parse_eq_topology_rows(
             b_steps.push(0.0);
         }
 
+        let current_step = shunt.current_step.unwrap_or(0);
+        // For CIM, b_steps are cumulative susceptance values (b_steps[i] = per_section*(i+1)).
+        // b_init_pu is the susceptance at the active step: b_steps[current_step - 1].
+        let b_init_pu = if current_step > 0 && (current_step as usize) <= b_steps.len() {
+            b_steps[(current_step as usize) - 1]
+        } else {
+            0.0
+        };
+
         switched_shunt_rows.push(SwitchedShuntRow {
             bus_id,
             status: true,
             v_low: shunt.v_low.unwrap_or(0.95),
             v_high: shunt.v_high.unwrap_or(1.05),
             b_steps,
-            current_step: shunt.current_step.unwrap_or(0),
+            current_step,
+            b_init_pu,
         });
     }
 
@@ -3470,6 +3484,7 @@ fn build_switched_shunts_batch(rows: &[SwitchedShuntRow]) -> Result<RecordBatch>
         _ => Arc::new(Field::new("item", DataType::Float64, false)),
     });
     let mut current_step_b = Int32Builder::new();
+    let mut b_init_pu_b = Float64Builder::new();
 
     for row in rows {
         bus_id_b.append_value(row.bus_id);
@@ -3483,6 +3498,7 @@ fn build_switched_shunts_batch(rows: &[SwitchedShuntRow]) -> Result<RecordBatch>
         b_steps_b.append(true);
 
         current_step_b.append_value(row.current_step.max(0));
+        b_init_pu_b.append_value(row.b_init_pu);
     }
 
     let arrays: Vec<ArrayRef> = vec![
@@ -3492,6 +3508,7 @@ fn build_switched_shunts_batch(rows: &[SwitchedShuntRow]) -> Result<RecordBatch>
         Arc::new(v_high_b.finish()) as ArrayRef,
         Arc::new(b_steps_b.finish()) as ArrayRef,
         Arc::new(current_step_b.finish()) as ArrayRef,
+        Arc::new(b_init_pu_b.finish()) as ArrayRef,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build switched_shunts record batch")
