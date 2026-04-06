@@ -1,6 +1,6 @@
 [package]
 name = "raptrix-cim-arrow"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 description = "Shared Raptrix CIM-Arrow schema and RPF Arrow IPC infrastructure"
 license = "MPL-2.0"

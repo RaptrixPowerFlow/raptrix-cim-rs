@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.8.2 profile.
+//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.8.3 profile.
 //!
 //! **CGMES 3.0+ Only**: This module targets CGMES v3.0 and later (v17+ CIM) merged profiles.
 //! Support for legacy CGMES 2.4.x was dropped in this release for simplicity and performance.
@@ -17,16 +17,19 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, Schema};
 
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.8.2 - High-performance open CIM profile (CGMES 3.0+) by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.8.3 - High-performance open CIM profile (CGMES 3.0+) by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.";
 
 /// Canonical RPF format version tag embedded as file-level metadata.
-pub const RPF_VERSION: &str = "0.8.2";
+pub const RPF_VERSION: &str = "0.8.3";
 
 /// Supported RPF versions accepted by generic Arrow IPC readers.
+/// v0.8.3 adds switched_shunts.b_init_pu for exact initial-susceptance round-trip.
 /// v0.8.2 requires buses.bus_uuid and adds mandatory case identity + validation metadata fields.
 /// v0.8.1 normalizes all power/admittance fields to per-unit on base_mva.
 /// v0.8.0 introduced diagram layout support and dropped CGMES 2.4.x compatibility.
-pub const SUPPORTED_RPF_VERSIONS: &[&str] = &["0.8.2", "0.8.1", "0.8.0", "0.7.1", "0.7.0"];
+pub const SUPPORTED_RPF_VERSIONS: &[&str] = &[
+    "v0.8.3", "0.8.3", "v0.8.2", "0.8.2", "v0.8.1", "0.8.1", "v0.8.0", "0.8.0", "0.7.1", "0.7.0",
+];
 
 /// Backward-compatible alias retained for older call sites.
 pub const SCHEMA_VERSION: &str = RPF_VERSION;
@@ -339,6 +342,10 @@ pub fn switched_shunts_schema() -> Schema {
                 false,
             ),
             Field::new("current_step", DataType::Int32, false),
+            // v0.8.3: authoritative initial susceptance (BINIT/base_mva for PSS/E;
+            // sum of energised steps for CIM).  Nullable so v0.8.2 files remain
+            // readable; writers MUST populate this field going forward.
+            Field::new("b_init_pu", DataType::Float64, true),
         ],
         schema_metadata(),
     )

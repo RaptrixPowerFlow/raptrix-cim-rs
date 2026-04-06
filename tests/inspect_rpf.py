@@ -22,8 +22,8 @@ except ImportError:  # pragma: no cover - handled by skip branch below
     ipc = None
 
 
-BRANDING = "Raptrix CIM-Arrow / PowerFlow Interchange v0.8.2 - High-performance open CIM profile (CGMES 3.0+) by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC."
-SCHEMA_VERSION = "0.8.2"
+BRANDING = "Raptrix CIM-Arrow / PowerFlow Interchange v0.8.3 - High-performance open CIM profile (CGMES 3.0+) by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC."
+SCHEMA_VERSION = "0.8.3"
 CANONICAL_TABLE_ORDER = [
     "metadata",
     "buses",

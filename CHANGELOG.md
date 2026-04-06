@@ -9,8 +9,27 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Musto Technologies LL
 
 Copyright (c) 2026 Musto Technologies LLC
 
-## [Schema Contract 0.8.2] - 2026-04-05
+## [Schema Contract 0.8.3] - 2026-04-06
 
+### Converter release: Crate version 0.2.2 (raptrix-cim-arrow) / 0.2.1 (raptrix-cim-rs) | Arrow schema v0.8.3
+
+### Added
+
+- `switched_shunts.b_init_pu` (Float64, nullable) — authoritative initial susceptance in per-unit.
+  - **PSS/E path**: written as `BINIT / base_mva` directly, so mixed-sign inductive/capacitive banks
+    round-trip exactly regardless of step ordering (fixes the 1.0 pu deficit at mixed-sign
+    switched-shunt buses in the Eastern Interconnect model).
+  - **CIM path**: written as `b_steps[current_step - 1]` (the CIM `SvShuntCompensator.sections`
+    energised susceptance from the cumulative b_steps array).
+  - Nullable so v0.8.2 files remain readable; writers **must** populate this field going forward.
+  - Readers should prefer `b_init_pu` over reconstructing from `b_steps + current_step` when present.
+
+### Changed
+
+- Branding and version constants bumped to v0.8.3.
+- `SUPPORTED_RPF_VERSIONS` now includes v0.8.3 as current.
+
+## [Schema Contract 0.8.2] - 2026-04-05
 ### Converter release: Crate version 0.2.1 | Arrow schema v0.8.2
 
 ### ⚠️ BREAKING CHANGE

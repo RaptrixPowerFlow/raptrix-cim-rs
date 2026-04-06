@@ -1,4 +1,4 @@
-# Schema Contract (Locked contract: v0.8.2 — CGMES 3.0+ Only)
+# Schema Contract (Locked contract: v0.8.3 — CGMES 3.0+ Only)
 
 ## Contract Policy
 
@@ -31,8 +31,8 @@ Every `.rpf` file must include:
 
 Current locked values:
 
-- `raptrix.version = 0.8.2`
-- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.8.2 - High-performance open profile by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.`
+- `raptrix.version = 0.8.3`
+- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.8.3 - High-performance open CIM profile (CGMES 3.0+) by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.`
 - `rpf.case_fingerprint = <required deterministic case identity fingerprint>`
 - `rpf.validation_mode = topology_only | solved_ready`
 
@@ -245,6 +245,7 @@ This section is normative for external parser authors.
 - `v_high`: Float64, required
 - `b_steps`: List<Float64>, required
 - `current_step`: Int32, required
+- `b_init_pu`: Float64, nullable — authoritative initial susceptance in per-unit (v0.8.3+). PSS/E source: `BINIT / base_mva`. CIM source: `b_steps[current_step - 1]`. Readers should prefer this field over reconstructing from `b_steps + current_step`. Nullable for backward compatibility; writers must populate this field.
 
 ### transformers_2w
 
