@@ -1,4 +1,4 @@
-# Schema Contract (Locked contract: v0.8.3 — CGMES 3.0+ Only)
+# Schema Contract (Locked contract: v0.8.4 — CGMES 3.0+ Only)
 
 ## Contract Policy
 
@@ -31,10 +31,12 @@ Every `.rpf` file must include:
 
 Current locked values:
 
-- `raptrix.version = 0.8.3`
-- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.8.3 - High-performance open CIM profile (CGMES 3.0+) by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.`
+- `raptrix.version = 0.8.4`
+- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.8.4 - High-performance open CIM profile (CGMES 3.0+) by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.`
 - `rpf.case_fingerprint = <required deterministic case identity fingerprint>`
 - `rpf.validation_mode = topology_only | solved_ready`
+- `rpf.case_mode = flat_start_planning | warm_start_planning | solved_snapshot` (v0.8.4+, required)
+- `rpf.solved_state_presence = actual_solved | not_available | not_computed` (v0.8.4+, required)
 
 Optional file-level metadata keys:
 
@@ -43,6 +45,10 @@ Optional file-level metadata keys:
 - `raptrix.features.contingencies_stub = true` when contingencies table is populated by placeholder/stub rows
 - `raptrix.features.dynamics_stub = true` when dynamics_models table is populated by placeholder/stub rows
 - `rpf.rows.<table_name> = <row_count>` for each emitted table
+- `rpf.solver.version = <string>` solver software version (only when `solved_state_presence = actual_solved`)
+- `rpf.solver.iterations = <int>` Newton-Raphson iteration count (only when solved)
+- `rpf.solver.accuracy = <float>` final mismatch residual (only when solved)
+- `rpf.solver.mode = <string>` bus control mode, e.g. `PV`, `PV_to_PQ` (only when solved)
 
 ## File Container Layout
 
@@ -143,6 +149,11 @@ Optional diagram layout tables (emitted only when `raptrix.features.diagram_layo
 - `diagram_objects`
 - `diagram_points`
 
+Optional solved-state tables (emitted only when `case_mode = solved_snapshot`, v0.8.4+):
+
+- `buses_solved`
+- `generators_solved`
+
 ## Column Reference
 
 This section is normative for external parser authors.
@@ -161,6 +172,12 @@ This section is normative for external parser authors.
 - `case_fingerprint`: Utf8, required
 - `validation_mode`: Dictionary<Int32, Utf8>, required
 - `custom_metadata`: Map<String, String>, nullable
+- `case_mode`: Dictionary<Int32, Utf8>, required — `flat_start_planning` | `warm_start_planning` | `solved_snapshot` (v0.8.4+)
+- `solved_state_presence`: Dictionary<Int32, Utf8>, nullable — `actual_solved` | `not_available` | `not_computed` (v0.8.4+)
+- `solver_version`: Utf8, nullable — populated only when `solved_state_presence = actual_solved` (v0.8.4+)
+- `solver_iterations`: Int32, nullable — Newton-Raphson iteration count (v0.8.4+)
+- `solver_accuracy`: Float64, nullable — final mismatch residual norm (v0.8.4+)
+- `solver_mode`: Dictionary<Int32, Utf8>, nullable — e.g. `PV`, `PV_to_PQ` (v0.8.4+)
 
 ### buses
 
@@ -558,12 +575,18 @@ Locked contract: v0.7.0 adds optional node-breaker detail tables (`node_breaker_
 An independent parser is considered compliant if it:
 
 1. Opens `.rpf` as Arrow IPC File format.
-2. Verifies `raptrix.version = 0.7.0`.
+2. Verifies `raptrix.version` is in the set of supported contract versions (current: `0.8.4`).
 3. Verifies required root columns appear in canonical order.
 4. Uses `rpf.rows.<table_name>` metadata to trim padded null tails.
 5. Treats the 15 required root columns as mandatory even when their logical row counts are zero.
 6. Detects optional tables by root column presence and feature metadata, not by guesswork.
 7. Ignores unknown future trailing root columns for forward compatibility.
+8. Reads and validates `rpf.case_mode` (required since v0.8.4): must be `flat_start_planning`, `warm_start_planning`, or `solved_snapshot`.
+9. When `case_mode = solved_snapshot`: expects `rpf.solved_state_presence = actual_solved` and treats `buses_solved` and `generators_solved` as required.
+10. When `case_mode` is a planning variant: treats `buses_solved` and `generators_solved` as absent; if found, the file is malformed.
+11. Reads solver provenance keys (`rpf.solver.*`) only when `solved_state_presence = actual_solved`; ignores them otherwise.
+
+For a plain-English explanation of all fields see [rpf-field-guide.md](rpf-field-guide.md).
 
 ## Compatibility Rules
 

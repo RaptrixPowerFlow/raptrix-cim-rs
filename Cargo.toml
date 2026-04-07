@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "raptrix-cim-rs"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 description = "High-performance IEC 61970 Common Information Model (CIM) parser in Rust"
 license = "MPL-2.0"
@@ -16,7 +16,7 @@ categories = ["parsing", "science"]
 quick-xml = { version = "0.39.2", features = ["serialize"] }
 serde = { version = "1.0", features = ["derive"] }
 clap = { version = "4.5", features = ["derive"] }
-raptrix-cim-arrow = { path = "raptrix-cim-arrow", version = "0.2.2" }
+raptrix-cim-arrow = { path = "raptrix-cim-arrow", version = "0.2.3" }
 
 # Arrow + Parquet for zero-copy CIM → columnar data pipeline
 arrow   = "58.0"

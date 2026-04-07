@@ -316,6 +316,8 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
             frequency_hz: args.frequency_hz,
             study_name: args.study_name.clone(),
             timestamp_utc: args.timestamp_utc.clone(),
+            case_mode: raptrix_cim_rs::rpf_writer::CaseMode::FlatStartPlanning,
+            solver_provenance: None,
         }
     } else {
         WriteOptions {
@@ -331,6 +333,8 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
             frequency_hz: args.frequency_hz,
             study_name: args.study_name.clone(),
             timestamp_utc: args.timestamp_utc.clone(),
+            case_mode: raptrix_cim_rs::rpf_writer::CaseMode::FlatStartPlanning,
+            solver_provenance: None,
         }
     };
 

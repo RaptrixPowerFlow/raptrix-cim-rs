@@ -9,6 +9,67 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Musto Technologies LL
 
 Copyright (c) 2026 Musto Technologies LLC
 
+## [Schema Contract 0.8.4] - 2026-04-07
+
+### Converter release: Crate version 0.2.3 (raptrix-cim-arrow) / 0.2.2 (raptrix-cim-rs) | Arrow schema v0.8.4
+
+### Added
+
+**Strict planning-vs-solved semantics** — root cause fix for cross-converter false / mixed-state data.
+
+- `metadata.case_mode` (dict, **required**, non-null) — explicit case classification:
+  - `flat_start_planning` — all bus voltages at 1.0 pu / 0°; no solved-state data.
+  - `warm_start_planning` — planning setpoints from a prior solve (warm start); still a planning case.
+  - `solved_snapshot` — post-solve snapshot; solved-state tables are expected.
+- `metadata.solved_state_presence` (dict, nullable) — per-export provenance tag for solved fields:
+  - `actual_solved` — solver ran and produced results.
+  - `not_available` — solved data not obtainable on this export path.
+  - `not_computed` — no solve has run; planning-only case (default for all CIM exports).
+- Solver provenance columns on `metadata` row (all nullable; populated only when `solved_state_presence = actual_solved`):
+  - `solver_version` (Utf8) — solver software version string, e.g. `"raptrix-core 1.4.2"`.
+  - `solver_iterations` (Int32) — Newton-Raphson iteration count until convergence.
+  - `solver_accuracy` (Float64) — final mismatch residual norm.
+  - `solver_mode` (dict) — bus control mode after convergence, e.g. `"PV"`, `"PV_to_PQ"`.
+- Optional **`buses_solved`** table (v0.8.4+, emitted only when `case_mode = solved_snapshot`):
+  - `bus_id` (Int32, non-null) — foreign key into `buses`.
+  - `v_mag_pu` (Float64, nullable) — post-solve voltage magnitude in per-unit.
+  - `v_ang_deg` (Float64, nullable) — post-solve voltage angle in degrees.
+  - `p_inj_pu`, `q_inj_pu` (Float64, nullable) — net injection.
+  - `bus_type_solved` (Int8, nullable) — effective bus type after PV→PQ switching.
+  - `provenance` (dict, nullable).
+- Optional **`generators_solved`** table (v0.8.4+, emitted only when `case_mode = solved_snapshot`):
+  - `bus_id`, `id` (non-null) — foreign keys into `generators`.
+  - `p_actual_pu`, `q_actual_pu` (Float64, nullable) — post-solve real/reactive output.
+  - `pv_to_pq` (Boolean, nullable) — true when this unit's bus switched PV→PQ during solve.
+  - `provenance` (dict, nullable).
+- New public Rust types in `rpf_writer`:
+  - `CaseMode` enum (`FlatStartPlanning` | `WarmStartPlanning` | `SolvedSnapshot`).
+  - `SolvedStatePresence` enum (`ActualSolved` | `NotAvailable` | `NotComputed`).
+  - `SolverProvenance` struct (all fields optional).
+- `WriteOptions.case_mode` and `WriteOptions.solver_provenance` fields.
+- New file-level metadata keys: `rpf.case_mode`, `rpf.solved_state_presence`, `rpf.solver.version`, `rpf.solver.iterations`, `rpf.solver.accuracy`, `rpf.solver.mode`.
+- `RootWriteOptions.include_solved_state` flag for solver-side RPF assembly.
+- `root_rpf_schema_with_options()` helper in `raptrix-cim-arrow::io`.
+- `solved_state_table_schemas()` helper in `raptrix-cim-arrow::schema`.
+
+### Changed
+
+- `validate_pre_write_contract` now also calls `validate_planning_fields_finite` — all buses must have finite, positive `v_mag_set` and finite `v_ang_set`, `v_min`, `v_max` before an RPF file is written.
+- Exporter fails fast with clear errors on:
+  - `case_mode = solved_snapshot` without `solver_provenance` set.
+  - `solver_provenance` set on a non-solved (planning) case.
+  - Planning fields containing NaN or Inf.
+- `metadata.is_planning_case` is now derived from `case_mode` rather than hardcoded `true`.
+- Branding and version constants bumped to v0.8.4.
+- `SUPPORTED_RPF_VERSIONS` now includes v0.8.4 as current.
+
+### Non-negotiable invariants enforced
+
+- Flat-start planning must always exist for a valid model.
+- Solved-state fields are optional and nullable; exporters must **never** fabricate solved values.
+- PV→PQ switching outcome lives only in `generators_solved.pv_to_pq`; it must never be back-propagated into `generators.p_sched_pu` or any other planning field.
+- Contradictory metadata combinations (`case_mode = solved_snapshot` + `solved_state_presence ≠ actual_solved`, or vice-versa) are hard errors.
+
 ## [Schema Contract 0.8.3] - 2026-04-06
 
 ### Converter release: Crate version 0.2.2 (raptrix-cim-arrow) / 0.2.1 (raptrix-cim-rs) | Arrow schema v0.8.3

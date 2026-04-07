@@ -57,7 +57,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 | Connectivity detail | `--connectivity-detail` | Granular ConnectivityNode bus mapping; emits optional `connectivity_groups` table |
 | Node-breaker | `--connectivity-detail --node-breaker` | Adds switch-topology detail tables for operational and viewer workflows |
 
-### Output tables (schema contract v0.8.3)
+### Output tables (schema contract v0.8.4)
 
 **15 canonical tables (always emitted):** `metadata`, `buses`, `branches`, `generators`, `loads`, `fixed_shunts`, `switched_shunts`, `transformers_2w`, `transformers_3w`, `areas`, `zones`, `owners`, `contingencies`, `interfaces`, `dynamics_models`
 
@@ -65,6 +65,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 - `connectivity_groups` — with `--connectivity-detail`
 - `node_breaker_detail`, `switch_detail`, `connectivity_nodes` — with `--node-breaker`
 - `diagram_objects`, `diagram_points` — when DL profile is present (suppress with `--no-diagram`)
+- `buses_solved`, `generators_solved` — when `case_mode = solved_snapshot` (v0.8.4+)
 
 ### Detached island policy
 
@@ -90,17 +91,20 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 
 ## Data Contract (Locked)
 
-- Current schema contract: v0.8.3 (CGMES 3.0+ only)
+- Current schema contract: v0.8.4 (CGMES 3.0+ only)
 - Canonical source: raptrix-cim-arrow/src/schema.rs
 - Contract policy and semantics: docs/schema-contract.md
+- Plain-English field guide: [docs/rpf-field-guide.md](docs/rpf-field-guide.md)
 - Cross-repo propagation workflow: docs/release-sync-workflow.md
 - **CGMES Ingest Target**: v3.0+ and later only (complete merged profiles; auto-detect and explicit mode supported)
 
 ### Versioning Policy
 
-Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is now locked at schema `v0.8.3` for interoperability and deterministic CGMES 3.0+ ingest behavior, while the converter crate release tracks implementation maturity and is currently `0.2.1`.
+Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is now locked at schema `v0.8.4` for interoperability and deterministic CGMES 3.0+ ingest behavior, while the converter crate release tracks implementation maturity and is currently `0.2.2`.
 
 This split preserves compatibility guarantees for downstream tools: existing `v0.5.2` Parquet artifacts remain valid to read on the core path, and new `v0.8.0` optional features (diagram layout via DL profile) are additive only. **Breaking change in v0.8.0**: CGMES 2.4.x support was removed. All ingest is now CGMES 3.0+ only.
+
+**v0.8.4**: Strict planning-vs-solved semantics. Every `.rpf` file now declares exactly what kind of case it is and what solved state it carries. The exporter will hard-fail rather than fabricate or silently mix planning and solved data.
 
 For third-party implementers, [docs/schema-contract.md](docs/schema-contract.md) is the authoritative reader/writer contract. It now documents the `.rpf` Arrow IPC container layout, canonical root column ordering, row-count metadata trimming rules, optional table detection, and full column/type references needed to build a compatible parser.
 
@@ -166,13 +170,21 @@ All conversions are zero-copy headless — no readback or post-write validation 
 
 ## Project Layout
 
-- raptrix-cim-arrow/src/schema.rs: v0.8.3 table schemas, metadata constants, and schema registry helpers
+- raptrix-cim-arrow/src/schema.rs: v0.8.4 table schemas, metadata constants, and schema registry helpers
 - raptrix-cim-arrow/src/io.rs: generic root `.rpf` assembly, validation, readback, and summary helpers
 - src/models: CIM data structures and traits
 - src/parser.rs: parse helpers and EQ-to-branch mapping
 - src/rpf_writer.rs: CIM-specific mapping from parsed CGMES content into canonical table batches
 
 ### Locked contract: v0.8.x notable fields
+
+- v0.8.4 additions (planning-vs-solved semantics):
+	- `metadata.case_mode` required — `flat_start_planning` | `warm_start_planning` | `solved_snapshot`
+	- `metadata.solved_state_presence` nullable — `actual_solved` | `not_available` | `not_computed`
+	- `metadata.solver_version`, `solver_iterations`, `solver_accuracy`, `solver_mode` nullable — only populated for `solved_snapshot` cases
+	- Optional `buses_solved` and `generators_solved` tables — only present for `solved_snapshot` cases
+	- Hard validation: exporter rejects NaN planning fields; rejects `solved_snapshot` without solver provenance; rejects solver provenance on planning cases
+	- See [docs/rpf-field-guide.md](docs/rpf-field-guide.md) for a plain-English explanation of these semantics
 
 - v0.8.3 additions:
 	- `switched_shunts.b_init_pu` nullable authoritative initial susceptance per-unit field
@@ -252,6 +264,24 @@ Use `--verbose` when validating interoperability because it also prints the root
 ## Library Usage
 
 Use the CIM converter directly from Rust:
+
+```rust
+use raptrix_cim_rs::{
+    write_complete_rpf_with_options,
+    rpf_writer::{WriteOptions, CaseMode},
+};
+
+fn convert_planning(eq_path: &str, output_path: &str) -> anyhow::Result<()> {
+    // Default: flat-start planning case — no solved state
+    write_complete_rpf_with_options(
+        &[eq_path],
+        output_path,
+        &WriteOptions::default(),
+    )
+}
+```
+
+Use `write_complete_rpf` for the simple one-call form:
 
 ```rust
 use raptrix_cim_rs::write_complete_rpf;

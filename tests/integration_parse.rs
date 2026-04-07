@@ -181,6 +181,7 @@ fn write_smallgrid_rpf_with_optional_node_breaker_tables() -> Result<()> {
             frequency_hz: 60.0,
             study_name: None,
             timestamp_utc: None,
+            ..Default::default()
         },
     )?;
 
@@ -233,6 +234,7 @@ fn write_fullgrid_rpf_with_optional_node_breaker_tables() -> Result<()> {
             frequency_hz: 60.0,
             study_name: None,
             timestamp_utc: None,
+            ..Default::default()
         },
     )?;
 
@@ -286,6 +288,7 @@ fn test_smallgrid_diagram_roundtrip() -> Result<()> {
             frequency_hz: 60.0,
             study_name: None,
             timestamp_utc: None,
+            ..Default::default()
         },
     )?;
 
