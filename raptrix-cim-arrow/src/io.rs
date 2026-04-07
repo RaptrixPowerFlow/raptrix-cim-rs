@@ -27,10 +27,11 @@ use crate::schema::{
     BRANDING, METADATA_KEY_BRANDING, METADATA_KEY_FEATURE_CONTINGENCIES_STUB,
     METADATA_KEY_FEATURE_DIAGRAM_LAYOUT, METADATA_KEY_FEATURE_DYNAMICS_STUB,
     METADATA_KEY_FEATURE_NODE_BREAKER, METADATA_KEY_RPF_VERSION, METADATA_KEY_VERSION,
-    SCHEMA_VERSION, SUPPORTED_RPF_VERSIONS, TABLE_BRANCHES, TABLE_BUSES, TABLE_DIAGRAM_OBJECTS,
-    TABLE_DIAGRAM_POINTS, TABLE_GENERATORS, TABLE_LOADS, TABLE_TRANSFORMERS_2W,
-    TABLE_TRANSFORMERS_3W, all_table_schemas, diagram_layout_table_schemas,
-    node_breaker_table_schemas, schema_metadata, table_schema,
+    SCHEMA_VERSION, SUPPORTED_RPF_VERSIONS, TABLE_BRANCHES, TABLE_BUSES, TABLE_BUSES_SOLVED,
+    TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_GENERATORS, TABLE_GENERATORS_SOLVED,
+    TABLE_LOADS, TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, all_table_schemas,
+    diagram_layout_table_schemas, node_breaker_table_schemas, schema_metadata,
+    solved_state_table_schemas, table_schema,
 };
 
 /// Summary stats for a single logical table found in an `.rpf` file.
@@ -82,6 +83,9 @@ pub struct RootWriteOptions {
     pub contingencies_are_stub: bool,
     /// When true, mark dynamics payload as stub-derived.
     pub dynamics_are_stub: bool,
+    /// When true, append optional solved-state tables (`buses_solved`,
+    /// `generators_solved`) after all other root columns (v0.8.4+).
+    pub include_solved_state: bool,
 }
 
 /// Returns the metadata key used to store the logical row count for a table.
@@ -96,6 +100,9 @@ fn enabled_optional_table_schemas(options: &RootWriteOptions) -> Vec<(&'static s
     }
     if options.include_diagram_layout {
         optional.extend(diagram_layout_table_schemas());
+    }
+    if options.include_solved_state {
+        optional.extend(solved_state_table_schemas());
     }
     optional
 }
@@ -151,12 +158,25 @@ fn validate_diagram_layout_pair(root_schema: &Schema) -> Result<()> {
 
 /// Builds the canonical root schema for an RPF Arrow IPC file.
 pub fn root_rpf_schema(include_node_breaker_detail: bool, include_diagram_layout: bool) -> Schema {
+    let options = RootWriteOptions {
+        include_node_breaker_detail,
+        include_diagram_layout,
+        ..Default::default()
+    };
+    root_rpf_schema_with_options(&options)
+}
+
+/// Builds the canonical root schema for an RPF Arrow IPC file from full options.
+pub fn root_rpf_schema_with_options(options: &RootWriteOptions) -> Schema {
     let mut table_schemas = all_table_schemas();
-    if include_node_breaker_detail {
+    if options.include_node_breaker_detail {
         table_schemas.extend(node_breaker_table_schemas());
     }
-    if include_diagram_layout {
+    if options.include_diagram_layout {
         table_schemas.extend(diagram_layout_table_schemas());
+    }
+    if options.include_solved_state {
+        table_schemas.extend(solved_state_table_schemas());
     }
 
     let fields = table_schemas
@@ -375,10 +395,7 @@ pub fn write_root_rpf_with_metadata(
         .max()
         .unwrap_or(0);
 
-    let mut root_schema = root_rpf_schema(
-        options.include_node_breaker_detail,
-        options.include_diagram_layout,
-    );
+    let mut root_schema = root_rpf_schema_with_options(options);
     let mut root_metadata = root_schema.metadata().clone();
     for (table_name, _) in &table_specs {
         let row_count = table_batches
@@ -631,6 +648,20 @@ pub fn validate_rpf_file(path: impl AsRef<Path>, options: &RootWriteOptions) -> 
         require_non_null_count_equals_len(TABLE_DIAGRAM_POINTS, diagram_points, "seq")?;
         require_non_null_count_equals_len(TABLE_DIAGRAM_POINTS, diagram_points, "x")?;
         require_non_null_count_equals_len(TABLE_DIAGRAM_POINTS, diagram_points, "y")?;
+    }
+
+    // v0.8.4: validate solved-state tables when included.
+    if options.include_solved_state {
+        let buses_solved = by_name
+            .get(TABLE_BUSES_SOLVED)
+            .context("post-write contract violation: missing buses_solved table")?;
+        require_non_null_count_equals_len(TABLE_BUSES_SOLVED, buses_solved, "bus_id")?;
+
+        let generators_solved = by_name
+            .get(TABLE_GENERATORS_SOLVED)
+            .context("post-write contract violation: missing generators_solved table")?;
+        require_non_null_count_equals_len(TABLE_GENERATORS_SOLVED, generators_solved, "bus_id")?;
+        require_non_null_count_equals_len(TABLE_GENERATORS_SOLVED, generators_solved, "id")?;
     }
 
     Ok(())

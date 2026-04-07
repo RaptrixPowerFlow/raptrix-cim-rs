@@ -17,18 +17,22 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, Schema};
 
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.8.3 - High-performance open CIM profile (CGMES 3.0+) by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.8.4 - High-performance open CIM profile (CGMES 3.0+) by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.";
 
 /// Canonical RPF format version tag embedded as file-level metadata.
-pub const RPF_VERSION: &str = "0.8.3";
+pub const RPF_VERSION: &str = "0.8.4";
 
 /// Supported RPF versions accepted by generic Arrow IPC readers.
+/// v0.8.4 adds strict planning-vs-solved semantics: case_mode enum, solved_state_presence
+///   provenance tags, solver metadata (version/iterations/accuracy/mode), and optional
+///   buses_solved / generators_solved tables for post-solve round-trip.
 /// v0.8.3 adds switched_shunts.b_init_pu for exact initial-susceptance round-trip.
 /// v0.8.2 requires buses.bus_uuid and adds mandatory case identity + validation metadata fields.
 /// v0.8.1 normalizes all power/admittance fields to per-unit on base_mva.
 /// v0.8.0 introduced diagram layout support and dropped CGMES 2.4.x compatibility.
 pub const SUPPORTED_RPF_VERSIONS: &[&str] = &[
-    "v0.8.3", "0.8.3", "v0.8.2", "0.8.2", "v0.8.1", "0.8.1", "v0.8.0", "0.8.0", "0.7.1", "0.7.0",
+    "v0.8.4", "0.8.4", "v0.8.3", "0.8.3", "v0.8.2", "0.8.2", "v0.8.1", "0.8.1", "v0.8.0", "0.8.0",
+    "0.7.1", "0.7.0",
 ];
 
 /// Backward-compatible alias retained for older call sites.
@@ -56,6 +60,20 @@ pub const METADATA_KEY_FEATURE_DYNAMICS_STUB: &str = "raptrix.features.dynamics_
 pub const METADATA_KEY_FEATURE_TOPOLOGY_ONLY: &str = "rpf.features.topology_only";
 /// Optional metadata key indicating all injections were zeroed by export.
 pub const METADATA_KEY_FEATURE_ZERO_INJECTION_STUB: &str = "rpf.features.zero_injection_stub";
+/// Required metadata key describing the case mode (flat_start_planning | warm_start_planning | solved_snapshot).
+/// Added in v0.8.4.
+pub const METADATA_KEY_CASE_MODE: &str = "rpf.case_mode";
+/// Required metadata key indicating presence/provenance of solved-state fields.
+/// Values: actual_solved | not_available | not_computed. Added in v0.8.4.
+pub const METADATA_KEY_SOLVED_STATE_PRESENCE: &str = "rpf.solved_state_presence";
+/// Optional metadata key for solver software version string (written when solved_state_presence=actual_solved).
+pub const METADATA_KEY_SOLVER_VERSION: &str = "rpf.solver.version";
+/// Optional metadata key for solver iteration count (written when solved_state_presence=actual_solved).
+pub const METADATA_KEY_SOLVER_ITERATIONS: &str = "rpf.solver.iterations";
+/// Optional metadata key for solver final mismatch accuracy (written when solved_state_presence=actual_solved).
+pub const METADATA_KEY_SOLVER_ACCURACY: &str = "rpf.solver.accuracy";
+/// Optional metadata key for solver bus-type mode, e.g. "PV", "PV_to_PQ" (written when solved_state_presence=actual_solved).
+pub const METADATA_KEY_SOLVER_MODE: &str = "rpf.solver.mode";
 /// Optional metadata key indicating total electrical island count.
 pub const METADATA_KEY_TOPOLOGY_ISLAND_COUNT: &str = "rpf.topology.island_count";
 /// Optional metadata key indicating largest-island bus count.
@@ -118,6 +136,12 @@ pub const TABLE_DIAGRAM_OBJECTS: &str = "diagram_objects";
 pub const TABLE_DIAGRAM_POINTS: &str = "diagram_points";
 /// Backward-compatible alias for older callers.
 pub const TABLE_DYNAMICS: &str = "dynamics";
+/// Optional solved-state table emitted only when case_mode=solved_snapshot.
+/// Contains per-bus post-solve voltage magnitude, angle, and injections.
+pub const TABLE_BUSES_SOLVED: &str = "buses_solved";
+/// Optional solved-state table emitted only when case_mode=solved_snapshot.
+/// Contains per-generator post-solve real/reactive output and PV→PQ switch flag.
+pub const TABLE_GENERATORS_SOLVED: &str = "generators_solved";
 
 /// Optional column required on export-side solved-result tables.
 pub const COLUMN_CONTINGENCY_ID: &str = "contingency_id";
@@ -203,6 +227,12 @@ pub fn schema_metadata() -> HashMap<String, String> {
 }
 
 /// `metadata` table schema.
+///
+/// v0.8.4 adds planning-vs-solved semantics fields:
+/// - `case_mode`: flat_start_planning | warm_start_planning | solved_snapshot
+/// - `solved_state_presence`: actual_solved | not_available | not_computed
+/// - Solver provenance fields (all nullable): solver_version, solver_iterations,
+///   solver_accuracy, solver_mode. Populated only when solved_state_presence=actual_solved.
 pub fn metadata_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
@@ -218,6 +248,13 @@ pub fn metadata_schema() -> Schema {
             Field::new("case_fingerprint", DataType::Utf8, false),
             Field::new("validation_mode", dict_utf8(), false),
             Field::new("custom_metadata", map_string_string(), true),
+            // v0.8.4: planning-vs-solved semantics
+            Field::new("case_mode", dict_utf8(), false),
+            Field::new("solved_state_presence", dict_utf8(), true),
+            Field::new("solver_version", DataType::Utf8, true),
+            Field::new("solver_iterations", DataType::Int32, true),
+            Field::new("solver_accuracy", DataType::Float64, true),
+            Field::new("solver_mode", dict_utf8(), true),
         ],
         schema_metadata(),
     )
@@ -598,6 +635,72 @@ pub fn diagram_layout_table_schemas() -> Vec<(&'static str, Schema)> {
     ]
 }
 
+/// Optional `buses_solved` table schema (v0.8.4+).
+///
+/// Emitted only when `case_mode = solved_snapshot`.  All value columns are
+/// nullable so a partial solve or a bus with no result can be represented
+/// honestly.  `provenance` encodes per-row data origin:
+/// `actual_solved` | `not_available` | `not_computed`.
+pub fn buses_solved_schema() -> Schema {
+    Schema::new_with_metadata(
+        vec![
+            // Foreign key into buses.bus_id — must be present for every row.
+            Field::new("bus_id", DataType::Int32, false),
+            // Post-solve voltage magnitude in per-unit.
+            Field::new("v_mag_pu", DataType::Float64, true),
+            // Post-solve voltage angle in degrees.
+            Field::new("v_ang_deg", DataType::Float64, true),
+            // Total net real injection at bus in per-unit (positive = generation).
+            Field::new("p_inj_pu", DataType::Float64, true),
+            // Total net reactive injection at bus in per-unit.
+            Field::new("q_inj_pu", DataType::Float64, true),
+            // Effective bus type after Newton-Raphson (may differ from planning
+            // intent when PV → PQ switching occurred): 1=PQ, 2=PV, 3=slack.
+            Field::new("bus_type_solved", DataType::Int8, true),
+            // Per-row data provenance.
+            Field::new("provenance", dict_utf8(), true),
+        ],
+        schema_metadata(),
+    )
+}
+
+/// Optional `generators_solved` table schema (v0.8.4+).
+///
+/// Emitted only when `case_mode = solved_snapshot`.  Captures post-solve
+/// real and reactive output from each generating unit, plus the PV→PQ
+/// switching flag which must never be back-propagated into planning fields.
+pub fn generators_solved_schema() -> Schema {
+    Schema::new_with_metadata(
+        vec![
+            // Foreign key into generators.bus_id — must be present.
+            Field::new("bus_id", DataType::Int32, false),
+            // Foreign key into generators.id — must be present.
+            Field::new("id", dict_utf8(), false),
+            // Actual solved real power output in per-unit.
+            Field::new("p_actual_pu", DataType::Float64, true),
+            // Actual solved reactive power output in per-unit.
+            Field::new("q_actual_pu", DataType::Float64, true),
+            // True when this unit's bus was switched from PV to PQ during solve.
+            // This flag must never be written back to generators.p_sched_pu.
+            Field::new("pv_to_pq", DataType::Boolean, true),
+            // Per-row data provenance.
+            Field::new("provenance", dict_utf8(), true),
+        ],
+        schema_metadata(),
+    )
+}
+
+/// Returns optional solved-state table schemas in deterministic order (v0.8.4+).
+///
+/// These tables are appended after all other optional root columns when
+/// `case_mode = solved_snapshot`.
+pub fn solved_state_table_schemas() -> Vec<(&'static str, Schema)> {
+    vec![
+        (TABLE_BUSES_SOLVED, buses_solved_schema()),
+        (TABLE_GENERATORS_SOLVED, generators_solved_schema()),
+    ]
+}
+
 /// Returns all required table schemas in canonical v0.7.1 order.
 pub fn all_table_schemas() -> Vec<(&'static str, Schema)> {
     vec![
@@ -644,6 +747,8 @@ pub fn table_schema(table_name: &str) -> Option<Schema> {
         TABLE_DIAGRAM_OBJECTS => Some(diagram_objects_schema()),
         TABLE_DIAGRAM_POINTS => Some(diagram_points_schema()),
         TABLE_DYNAMICS => Some(dynamics_models_schema()),
+        TABLE_BUSES_SOLVED => Some(buses_solved_schema()),
+        TABLE_GENERATORS_SOLVED => Some(generators_solved_schema()),
         _ => None,
     }
 }

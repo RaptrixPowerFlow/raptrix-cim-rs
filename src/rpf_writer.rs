@@ -34,8 +34,12 @@ pub use raptrix_cim_arrow::{
 };
 
 use crate::arrow_schema::{
-    METADATA_KEY_CASE_FINGERPRINT, METADATA_KEY_FEATURE_TOPOLOGY_ONLY,
+    METADATA_KEY_CASE_FINGERPRINT, METADATA_KEY_CASE_MODE,
+    METADATA_KEY_FEATURE_TOPOLOGY_ONLY,
     METADATA_KEY_FEATURE_ZERO_INJECTION_STUB,
+    METADATA_KEY_SOLVED_STATE_PRESENCE,
+    METADATA_KEY_SOLVER_ACCURACY, METADATA_KEY_SOLVER_ITERATIONS,
+    METADATA_KEY_SOLVER_MODE, METADATA_KEY_SOLVER_VERSION,
     METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_GENERATION_ISLAND_COUNT,
     METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_LOAD_ISLAND_COUNT,
     METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_NETWORK_ISLAND_COUNT,
@@ -78,6 +82,12 @@ pub struct WriteOptions {
     pub frequency_hz: f64,
     pub study_name: Option<String>,
     pub timestamp_utc: Option<String>,
+    /// Explicit case mode written to the metadata row and file-level metadata.
+    /// CIM EQ/TP exports are always `FlatStartPlanning` (default).
+    pub case_mode: CaseMode,
+    /// Solver provenance written when `case_mode = SolvedSnapshot`.
+    /// Must be `None` for planning cases; must be `Some` when `case_mode = SolvedSnapshot`.
+    pub solver_provenance: Option<SolverProvenance>,
 }
 
 /// Policy for handling detached electrical islands at export time.
@@ -89,6 +99,76 @@ pub enum DetachedIslandPolicy {
     Strict,
     /// Keep only the largest island and prune detached islands from exported tables.
     PruneDetached,
+}
+
+/// Explicit case mode written into the exported RPF metadata row (v0.8.4+).
+///
+/// This is the single authoritative declaration of what kind of state the
+/// exported case represents.  Solvers and downstream consumers use this field
+/// to decide whether solved-state tables are expected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CaseMode {
+    /// All bus voltages initialised to 1.0 pu / 0°.  No solved-state data.
+    /// This is the default for all CIM EQ/TP exports.
+    #[default]
+    FlatStartPlanning,
+    /// Planning setpoints copied from a prior solved state (warm start), but
+    /// the file is still a planning case — not a solved snapshot.
+    WarmStartPlanning,
+    /// Post-solve snapshot from the solver.  Solved-state tables
+    /// (`buses_solved`, `generators_solved`) must be present and populated.
+    SolvedSnapshot,
+}
+
+impl CaseMode {
+    /// Returns the canonical string value written to metadata.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CaseMode::FlatStartPlanning => "flat_start_planning",
+            CaseMode::WarmStartPlanning => "warm_start_planning",
+            CaseMode::SolvedSnapshot => "solved_snapshot",
+        }
+    }
+}
+
+/// Per-export tag indicating whether solved-state field values are present
+/// and what their origin is (v0.8.4+).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SolvedStatePresence {
+    /// Solver ran successfully and produced results written into solved-state tables.
+    ActualSolved,
+    /// Solved data was not obtainable for this export (e.g., converter-only path).
+    NotAvailable,
+    /// No solve has been run; this is a planning-only case.  Default for CIM exports.
+    NotComputed,
+}
+
+impl SolvedStatePresence {
+    /// Returns the canonical string value written to metadata.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SolvedStatePresence::ActualSolved => "actual_solved",
+            SolvedStatePresence::NotAvailable => "not_available",
+            SolvedStatePresence::NotComputed => "not_computed",
+        }
+    }
+}
+
+/// Solver provenance block populated when `solved_state_presence = actual_solved` (v0.8.4+).
+///
+/// All fields are optional; populate only what the solver provides.
+/// Written as nullable columns in the `metadata` table and also as
+/// file-level metadata keys (`rpf.solver.*`).
+#[derive(Debug, Clone, Default)]
+pub struct SolverProvenance {
+    /// Solver software version string, e.g. `"raptrix-core 1.4.2"`.
+    pub solver_version: Option<String>,
+    /// Number of Newton-Raphson iterations until convergence.
+    pub solver_iterations: Option<i32>,
+    /// Final mismatch accuracy (absolute MW/MVAR or per-unit residual norm).
+    pub solver_accuracy: Option<f64>,
+    /// Bus control mode after convergence, e.g. `"PV"`, `"PV_to_PQ"`.
+    pub solver_mode: Option<String>,
 }
 
 impl Default for WriteOptions {
@@ -105,6 +185,8 @@ impl Default for WriteOptions {
             frequency_hz: 60.0,
             study_name: None,
             timestamp_utc: None,
+            case_mode: CaseMode::FlatStartPlanning,
+            solver_provenance: None,
         }
     }
 }
@@ -139,6 +221,13 @@ struct MetadataRow<'a> {
     snapshot_timestamp_utc: Cow<'a, str>,
     case_fingerprint: Cow<'a, str>,
     validation_mode: Cow<'a, str>,
+    // v0.8.4 planning-vs-solved semantics
+    case_mode: Cow<'a, str>,
+    solved_state_presence: Option<Cow<'a, str>>,
+    solver_version: Option<Cow<'a, str>>,
+    solver_iterations: Option<i32>,
+    solver_accuracy: Option<f64>,
+    solver_mode: Option<Cow<'a, str>>,
 }
 
 #[derive(Debug, Clone)]
@@ -601,6 +690,78 @@ fn validate_pre_write_contract(
     Ok(())
 }
 
+/// Validates that required planning-state fields on every bus row are finite
+/// and physically plausible.  Called as part of the pre-write contract.
+fn validate_planning_fields_finite(bus_rows: &[BusRow<'_>]) -> Result<()> {
+    for row in bus_rows {
+        if !row.v_mag_set.is_finite() || row.v_mag_set <= 0.0 {
+            bail!(
+                "planning contract violation: buses.v_mag_set must be finite and > 0; \
+                 bus_id={} v_mag_set={}",
+                row.bus_id,
+                row.v_mag_set
+            );
+        }
+        if !row.v_ang_set.is_finite() {
+            bail!(
+                "planning contract violation: buses.v_ang_set must be finite; \
+                 bus_id={} v_ang_set={}",
+                row.bus_id,
+                row.v_ang_set
+            );
+        }
+        if !row.v_min.is_finite() || !row.v_max.is_finite() {
+            bail!(
+                "planning contract violation: buses.v_min/v_max must be finite; bus_id={}",
+                row.bus_id
+            );
+        }
+        if row.v_min > row.v_max {
+            bail!(
+                "planning contract violation: buses.v_min > v_max; \
+                 bus_id={} v_min={} v_max={}",
+                row.bus_id,
+                row.v_min,
+                row.v_max
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Validates that case_mode and solved_state_presence are mutually consistent.
+///
+/// Rules:
+/// - `solved_snapshot` requires `actual_solved`.
+/// - `flat_start_planning` / `warm_start_planning` must not claim `actual_solved`.
+///   Solvers must use `solved_snapshot` for post-solve results.
+fn validate_case_mode_consistency(
+    case_mode: CaseMode,
+    solved_state_presence: SolvedStatePresence,
+) -> Result<()> {
+    match (case_mode, solved_state_presence) {
+        (CaseMode::SolvedSnapshot, SolvedStatePresence::NotComputed)
+        | (CaseMode::SolvedSnapshot, SolvedStatePresence::NotAvailable) => {
+            bail!(
+                "metadata consistency violation: case_mode=solved_snapshot requires \
+                 solved_state_presence=actual_solved, got '{}'",
+                solved_state_presence.as_str()
+            );
+        }
+        (CaseMode::FlatStartPlanning, SolvedStatePresence::ActualSolved)
+        | (CaseMode::WarmStartPlanning, SolvedStatePresence::ActualSolved) => {
+            bail!(
+                "metadata consistency violation: case_mode='{}' cannot have \
+                 solved_state_presence=actual_solved; use case_mode=solved_snapshot \
+                 for post-solve exports",
+                case_mode.as_str()
+            );
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn network_island_components(
     bus_rows: &[BusRow<'_>],
     branch_rows: &[BranchRow<'_>],
@@ -964,6 +1125,35 @@ pub fn write_complete_rpf_with_options(
         &transformer_3w_rows,
     )?;
 
+    // v0.8.4: validate planning fields are finite before any solved-state checks.
+    validate_planning_fields_finite(&bus_rows)?;
+
+    // v0.8.4: determine solved_state_presence from case_mode and options.
+    let solved_state_presence = match options.case_mode {
+        CaseMode::SolvedSnapshot => SolvedStatePresence::ActualSolved,
+        CaseMode::FlatStartPlanning | CaseMode::WarmStartPlanning => {
+            SolvedStatePresence::NotComputed
+        }
+    };
+
+    // v0.8.4: fail fast on contradictory case_mode / solved_state_presence.
+    validate_case_mode_consistency(options.case_mode, solved_state_presence)?;
+
+    // v0.8.4: SolvedSnapshot requires solver provenance; planning cases must not carry it.
+    if options.case_mode == CaseMode::SolvedSnapshot && options.solver_provenance.is_none() {
+        bail!(
+            "export contract violation: case_mode=solved_snapshot requires solver_provenance \
+             to be set in WriteOptions so the metadata row carries accurate solver attribution"
+        );
+    }
+    if options.case_mode != CaseMode::SolvedSnapshot && options.solver_provenance.is_some() {
+        bail!(
+            "export contract violation: solver_provenance must only be set when \
+             case_mode=solved_snapshot; got case_mode='{}'",
+            options.case_mode.as_str()
+        );
+    }
+
     let study_name = options
         .study_name
         .clone()
@@ -982,6 +1172,19 @@ pub fn write_complete_rpf_with_options(
         VALIDATION_MODE_SOLVED_READY
     };
 
+    // v0.8.4: extract solver provenance fields (all None for planning cases).
+    let (sv_version, sv_iterations, sv_accuracy, sv_mode) =
+        if let Some(ref prov) = options.solver_provenance {
+            (
+                prov.solver_version.as_deref().map(Cow::Borrowed),
+                prov.solver_iterations,
+                prov.solver_accuracy,
+                prov.solver_mode.as_deref().map(Cow::Borrowed),
+            )
+        } else {
+            (None, None, None, None)
+        };
+
     let metadata_row = MetadataRow {
         base_mva: options.base_mva,
         frequency_hz: options.frequency_hz,
@@ -989,11 +1192,17 @@ pub fn write_complete_rpf_with_options(
         study_name: Cow::Owned(study_name.clone()),
         timestamp_utc: Cow::Owned(snapshot_timestamp_utc.clone()),
         raptrix_version: Cow::Borrowed(SCHEMA_VERSION),
-        is_planning_case: true,
+        is_planning_case: options.case_mode != CaseMode::SolvedSnapshot,
         source_case_id: Cow::Owned(study_name),
         snapshot_timestamp_utc: Cow::Owned(snapshot_timestamp_utc),
         case_fingerprint: Cow::Owned(case_fingerprint.clone()),
         validation_mode: Cow::Borrowed(validation_mode),
+        case_mode: Cow::Borrowed(options.case_mode.as_str()),
+        solved_state_presence: Some(Cow::Borrowed(solved_state_presence.as_str())),
+        solver_version: sv_version.map(|v| Cow::Owned(v.into_owned())),
+        solver_iterations: sv_iterations,
+        solver_accuracy: sv_accuracy,
+        solver_mode: sv_mode.map(|v| Cow::Owned(v.into_owned())),
     };
 
     let metadata_batch = build_metadata_batch(&metadata_row)?;
@@ -1105,6 +1314,33 @@ pub fn write_complete_rpf_with_options(
         METADATA_KEY_VALIDATION_MODE.to_string(),
         validation_mode.to_string(),
     );
+    // v0.8.4: planning-vs-solved metadata keys.
+    additional_root_metadata.insert(
+        METADATA_KEY_CASE_MODE.to_string(),
+        options.case_mode.as_str().to_string(),
+    );
+    additional_root_metadata.insert(
+        METADATA_KEY_SOLVED_STATE_PRESENCE.to_string(),
+        solved_state_presence.as_str().to_string(),
+    );
+    if let Some(ref prov) = options.solver_provenance {
+        if let Some(ref ver) = prov.solver_version {
+            additional_root_metadata
+                .insert(METADATA_KEY_SOLVER_VERSION.to_string(), ver.clone());
+        }
+        if let Some(iters) = prov.solver_iterations {
+            additional_root_metadata
+                .insert(METADATA_KEY_SOLVER_ITERATIONS.to_string(), iters.to_string());
+        }
+        if let Some(acc) = prov.solver_accuracy {
+            additional_root_metadata
+                .insert(METADATA_KEY_SOLVER_ACCURACY.to_string(), acc.to_string());
+        }
+        if let Some(ref mode) = prov.solver_mode {
+            additional_root_metadata
+                .insert(METADATA_KEY_SOLVER_MODE.to_string(), mode.clone());
+        }
+    }
 
     write_root_rpf_with_metadata(
         output_path,
@@ -1114,6 +1350,9 @@ pub fn write_complete_rpf_with_options(
             include_diagram_layout: options.emit_diagram_layout && !diagram_object_rows.is_empty(),
             contingencies_are_stub: options.contingencies_are_stub || contingencies_are_stub,
             dynamics_are_stub: options.dynamics_are_stub || dynamics_are_stub,
+            // CIM exporter produces planning cases only; solver core sets this when
+            // assembling solved_snapshot files with buses_solved/generators_solved.
+            include_solved_state: false,
         },
         &additional_root_metadata,
     )?;
@@ -2915,11 +3154,17 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
     let mut snapshot_timestamp_utc_b = StringBuilder::new();
     let mut case_fingerprint_b = StringBuilder::new();
     let mut validation_mode_b = StringDictionaryBuilder::<Int32Type>::new();
+    // v0.8.4 builders
+    let mut case_mode_b = StringDictionaryBuilder::<Int32Type>::new();
+    let mut solved_state_presence_b = StringDictionaryBuilder::<Int32Type>::new();
+    let mut solver_version_b = StringBuilder::new();
+    let mut solver_iterations_b = Int32Builder::new();
+    let mut solver_accuracy_b = Float64Builder::new();
+    let mut solver_mode_b = StringDictionaryBuilder::<Int32Type>::new();
 
     base_mva_b.append_value(row.base_mva);
     frequency_b.append_value(row.frequency_hz);
     psse_b.append_value(row.psse_version);
-    // Zero-copy-friendly append path for borrowed Cow data.
     study_name_b.append(row.study_name.as_ref())?;
     timestamp_b.append_value(row.timestamp_utc.as_ref());
     raptrix_version_b.append_value(row.raptrix_version.as_ref());
@@ -2928,6 +3173,28 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
     snapshot_timestamp_utc_b.append_value(row.snapshot_timestamp_utc.as_ref());
     case_fingerprint_b.append_value(row.case_fingerprint.as_ref());
     validation_mode_b.append(row.validation_mode.as_ref())?;
+    // v0.8.4
+    case_mode_b.append(row.case_mode.as_ref())?;
+    match &row.solved_state_presence {
+        Some(v) => { solved_state_presence_b.append(v.as_ref())?; }
+        None => solved_state_presence_b.append_null(),
+    }
+    match &row.solver_version {
+        Some(v) => solver_version_b.append_value(v.as_ref()),
+        None => solver_version_b.append_null(),
+    }
+    match row.solver_iterations {
+        Some(v) => solver_iterations_b.append_value(v),
+        None => solver_iterations_b.append_null(),
+    }
+    match row.solver_accuracy {
+        Some(v) => solver_accuracy_b.append_value(v),
+        None => solver_accuracy_b.append_null(),
+    }
+    match &row.solver_mode {
+        Some(v) => { solver_mode_b.append(v.as_ref())?; }
+        None => solver_mode_b.append_null(),
+    }
 
     let custom_metadata_type = schema.field(11).data_type().clone();
     let custom_metadata_array = new_null_array(&custom_metadata_type, 1);
@@ -2945,6 +3212,13 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
         Arc::new(case_fingerprint_b.finish()) as ArrayRef,
         Arc::new(validation_mode_b.finish()) as ArrayRef,
         custom_metadata_array,
+        // v0.8.4
+        Arc::new(case_mode_b.finish()) as ArrayRef,
+        Arc::new(solved_state_presence_b.finish()) as ArrayRef,
+        Arc::new(solver_version_b.finish()) as ArrayRef,
+        Arc::new(solver_iterations_b.finish()) as ArrayRef,
+        Arc::new(solver_accuracy_b.finish()) as ArrayRef,
+        Arc::new(solver_mode_b.finish()) as ArrayRef,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build metadata record batch")
@@ -4392,6 +4666,7 @@ mod tests {
                 frequency_hz: 60.0,
                 study_name: None,
                 timestamp_utc: None,
+                ..Default::default()
             },
         )?;
 
@@ -4484,6 +4759,7 @@ mod tests {
                 frequency_hz: 60.0,
                 study_name: None,
                 timestamp_utc: None,
+                ..Default::default()
             },
         )?;
 
