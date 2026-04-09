@@ -40,6 +40,8 @@ use crate::arrow_schema::{
     METADATA_KEY_SOLVED_STATE_PRESENCE,
     METADATA_KEY_SOLVER_ACCURACY, METADATA_KEY_SOLVER_ITERATIONS,
     METADATA_KEY_SOLVER_MODE, METADATA_KEY_SOLVER_VERSION,
+    METADATA_KEY_SOLVER_SLACK_BUS_ID, METADATA_KEY_SOLVER_ANGLE_REFERENCE_DEG,
+    METADATA_KEY_SOLVED_SHUNT_STATE_PRESENCE,
     METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_GENERATION_ISLAND_COUNT,
     METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_LOAD_ISLAND_COUNT,
     METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_NETWORK_ISLAND_COUNT,
@@ -169,6 +171,46 @@ pub struct SolverProvenance {
     pub solver_accuracy: Option<f64>,
     /// Bus control mode after convergence, e.g. `"PV"`, `"PV_to_PQ"`.
     pub solver_mode: Option<String>,
+    /// The bus_id used as the angle reference (slack bus) in the solve.
+    /// Prevents silent reference-frame mismatch when snapshots are re-used.
+    /// Written to metadata table column `slack_bus_id_solved` and
+    /// file-level key `rpf.solver.slack_bus_id`.
+    pub slack_bus_id_solved: Option<i32>,
+    /// Angle reference value in degrees applied at the slack bus (typically 0.0).
+    /// Written to metadata table column `angle_reference_deg` and
+    /// file-level key `rpf.solver.angle_reference_deg`.
+    pub angle_reference_deg: Option<f64>,
+    /// Whether the `switched_shunts_solved` table contains actual post-solve
+    /// shunt state or was unavailable.  Lets loaders fail-fast if a
+    /// solved snapshot claims solved but lacks full shunt state.
+    /// Written to metadata table column `solved_shunt_state_presence` and
+    /// file-level key `rpf.solver.solved_shunt_state_presence`.
+    pub solved_shunt_state_presence: Option<SolvedShuntStatePresence>,
+}
+
+/// Provenance tag for switched-shunt post-solve state (v0.8.5+).
+///
+/// Written into the `metadata` table column `solved_shunt_state_presence` and
+/// the file-level key `rpf.solver.solved_shunt_state_presence`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SolvedShuntStatePresence {
+    /// Solver produced per-bank solved step and susceptance.  The
+    /// `switched_shunts_solved` table is populated and authoritative.
+    ActualSolved,
+    /// Solved shunt state was not available (e.g., solver did not track
+    /// discrete shunt steps).  The `switched_shunts_solved` table is absent
+    /// or empty; loaders should warn rather than fail.
+    NotAvailable,
+}
+
+impl SolvedShuntStatePresence {
+    /// Returns the canonical string value written to metadata.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SolvedShuntStatePresence::ActualSolved => "actual_solved",
+            SolvedShuntStatePresence::NotAvailable => "not_available",
+        }
+    }
 }
 
 impl Default for WriteOptions {
@@ -228,6 +270,10 @@ struct MetadataRow<'a> {
     solver_iterations: Option<i32>,
     solver_accuracy: Option<f64>,
     solver_mode: Option<Cow<'a, str>>,
+    // v0.8.5 angle-reference frame and shunt provenance
+    slack_bus_id_solved: Option<i32>,
+    angle_reference_deg: Option<f64>,
+    solved_shunt_state_presence: Option<Cow<'a, str>>,
 }
 
 #[derive(Debug, Clone)]
@@ -325,6 +371,9 @@ struct SwitchedShuntRow {
     /// For CIM: sum of the first `current_step` cumulative b_steps values.
     /// For PSS/E: BINIT / base_mva written directly by the psse-rs converter.
     b_init_pu: f64,
+    /// Stable per-bank identity (v0.8.5+).  CIM mRID or PSS/E-synthesized id.
+    /// None when not available from source.
+    shunt_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1173,16 +1222,21 @@ pub fn write_complete_rpf_with_options(
     };
 
     // v0.8.4: extract solver provenance fields (all None for planning cases).
-    let (sv_version, sv_iterations, sv_accuracy, sv_mode) =
+    // v0.8.5: also extract angle-reference and shunt state provenance.
+    let (sv_version, sv_iterations, sv_accuracy, sv_mode,
+         sv_slack_bus_id, sv_angle_ref_deg, sv_shunt_state_presence) =
         if let Some(ref prov) = options.solver_provenance {
             (
                 prov.solver_version.as_deref().map(Cow::Borrowed),
                 prov.solver_iterations,
                 prov.solver_accuracy,
                 prov.solver_mode.as_deref().map(Cow::Borrowed),
+                prov.slack_bus_id_solved,
+                prov.angle_reference_deg,
+                prov.solved_shunt_state_presence.map(|s| Cow::Borrowed(s.as_str())),
             )
         } else {
-            (None, None, None, None)
+            (None, None, None, None, None, None, None)
         };
 
     let metadata_row = MetadataRow {
@@ -1203,6 +1257,10 @@ pub fn write_complete_rpf_with_options(
         solver_iterations: sv_iterations,
         solver_accuracy: sv_accuracy,
         solver_mode: sv_mode.map(|v| Cow::Owned(v.into_owned())),
+        // v0.8.5
+        slack_bus_id_solved: sv_slack_bus_id,
+        angle_reference_deg: sv_angle_ref_deg,
+        solved_shunt_state_presence: sv_shunt_state_presence.map(|v| Cow::Owned(v.into_owned())),
     };
 
     let metadata_batch = build_metadata_batch(&metadata_row)?;
@@ -1339,6 +1397,25 @@ pub fn write_complete_rpf_with_options(
         if let Some(ref mode) = prov.solver_mode {
             additional_root_metadata
                 .insert(METADATA_KEY_SOLVER_MODE.to_string(), mode.clone());
+        }
+        // v0.8.5: angle-reference and shunt-state provenance keys.
+        if let Some(slack_id) = prov.slack_bus_id_solved {
+            additional_root_metadata.insert(
+                METADATA_KEY_SOLVER_SLACK_BUS_ID.to_string(),
+                slack_id.to_string(),
+            );
+        }
+        if let Some(ang_ref) = prov.angle_reference_deg {
+            additional_root_metadata.insert(
+                METADATA_KEY_SOLVER_ANGLE_REFERENCE_DEG.to_string(),
+                ang_ref.to_string(),
+            );
+        }
+        if let Some(shunt_state) = prov.solved_shunt_state_presence {
+            additional_root_metadata.insert(
+                METADATA_KEY_SOLVED_SHUNT_STATE_PRESENCE.to_string(),
+                shunt_state.as_str().to_string(),
+            );
         }
     }
 
@@ -2875,6 +2952,8 @@ fn parse_eq_topology_rows(
             b_steps,
             current_step,
             b_init_pu,
+            // v0.8.5: CIM path — use ShuntCompensator mRID as stable bank identity.
+            shunt_id: Some(shunt.base.m_rid.to_string()),
         });
     }
 
@@ -3161,6 +3240,10 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
     let mut solver_iterations_b = Int32Builder::new();
     let mut solver_accuracy_b = Float64Builder::new();
     let mut solver_mode_b = StringDictionaryBuilder::<Int32Type>::new();
+    // v0.8.5 builders
+    let mut slack_bus_id_solved_b = Int32Builder::new();
+    let mut angle_reference_deg_b = Float64Builder::new();
+    let mut solved_shunt_state_presence_b = StringDictionaryBuilder::<Int32Type>::new();
 
     base_mva_b.append_value(row.base_mva);
     frequency_b.append_value(row.frequency_hz);
@@ -3195,6 +3278,19 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
         Some(v) => { solver_mode_b.append(v.as_ref())?; }
         None => solver_mode_b.append_null(),
     }
+    // v0.8.5
+    match row.slack_bus_id_solved {
+        Some(v) => slack_bus_id_solved_b.append_value(v),
+        None => slack_bus_id_solved_b.append_null(),
+    }
+    match row.angle_reference_deg {
+        Some(v) => angle_reference_deg_b.append_value(v),
+        None => angle_reference_deg_b.append_null(),
+    }
+    match &row.solved_shunt_state_presence {
+        Some(v) => { solved_shunt_state_presence_b.append(v.as_ref())?; }
+        None => solved_shunt_state_presence_b.append_null(),
+    }
 
     let custom_metadata_type = schema.field(11).data_type().clone();
     let custom_metadata_array = new_null_array(&custom_metadata_type, 1);
@@ -3219,6 +3315,10 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
         Arc::new(solver_iterations_b.finish()) as ArrayRef,
         Arc::new(solver_accuracy_b.finish()) as ArrayRef,
         Arc::new(solver_mode_b.finish()) as ArrayRef,
+        // v0.8.5
+        Arc::new(slack_bus_id_solved_b.finish()) as ArrayRef,
+        Arc::new(angle_reference_deg_b.finish()) as ArrayRef,
+        Arc::new(solved_shunt_state_presence_b.finish()) as ArrayRef,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build metadata record batch")
@@ -3759,6 +3859,7 @@ fn build_switched_shunts_batch(rows: &[SwitchedShuntRow]) -> Result<RecordBatch>
     });
     let mut current_step_b = Int32Builder::new();
     let mut b_init_pu_b = Float64Builder::new();
+    let mut shunt_id_b = StringDictionaryBuilder::<Int32Type>::new();
 
     for row in rows {
         bus_id_b.append_value(row.bus_id);
@@ -3773,6 +3874,10 @@ fn build_switched_shunts_batch(rows: &[SwitchedShuntRow]) -> Result<RecordBatch>
 
         current_step_b.append_value(row.current_step.max(0));
         b_init_pu_b.append_value(row.b_init_pu);
+        match row.shunt_id.as_deref() {
+            Some(id) => { shunt_id_b.append(id)?; }
+            None => shunt_id_b.append_null(),
+        }
     }
 
     let arrays: Vec<ArrayRef> = vec![
@@ -3783,6 +3888,7 @@ fn build_switched_shunts_batch(rows: &[SwitchedShuntRow]) -> Result<RecordBatch>
         Arc::new(b_steps_b.finish()) as ArrayRef,
         Arc::new(current_step_b.finish()) as ArrayRef,
         Arc::new(b_init_pu_b.finish()) as ArrayRef,
+        Arc::new(shunt_id_b.finish()) as ArrayRef,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build switched_shunts record batch")

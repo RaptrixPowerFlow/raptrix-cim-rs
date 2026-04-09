@@ -10,6 +10,63 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Musto Technologies LL
 Copyright (c) 2026 Musto Technologies LLC
 
 ## [Schema Contract 0.8.4] - 2026-04-07
+## [Schema Contract 0.8.5] - 2026-04-09
+
+### Converter release: Crate version 0.2.4 (raptrix-cim-arrow) / 0.2.3 (raptrix-cim-rs) | Arrow schema v0.8.5
+
+### Added
+
+**Switched-shunt stable identity and per-bank solved state** — highest-value schema fix from round-trip testing; bus_id-only addressing is ambiguous when multiple banks exist at the same bus.
+
+- `switched_shunts.shunt_id` (dict, nullable, v0.8.5+) — stable per-bank identifier. CIM path: `ShuntCompensator` mRID. PSS/E path: synthesized as `"{bus_id}_shunt_{n}"` (1-indexed). Nullable for backward compatibility; writers must populate when available. Readers must use this field — not `bus_id` alone — to cross-reference into `switched_shunts_solved`.
+- New optional solved-state table **`switched_shunts_solved`** (v0.8.5+, emitted only when `case_mode = solved_snapshot` and `solved_shunt_state_presence = actual_solved`):
+  - `bus_id` (Int32, non-null) — FK into `switched_shunts`.
+  - `shunt_id` (dict, nullable) — FK into `switched_shunts.shunt_id`.
+  - `current_step_solved` (Int32, nullable) — energized step index after convergence (1-indexed).
+  - `b_pu_solved` (Float64, nullable) — post-solve total susceptance in per-unit.
+  - `provenance` (dict, nullable).
+
+**Extended `generators_solved` for first-class round-trip** — promotes to a fully required solved-snapshot table when `case_mode = solved_snapshot`.
+
+- `generators_solved.p_mw` (Float64, nullable, v0.8.5+) — actual real power in MW (`= p_actual_pu × base_mva`); solver-native unit convenience. Always consistent with `p_actual_pu`.
+- `generators_solved.q_mvar` (Float64, nullable, v0.8.5+) — actual reactive power in MVAR.
+- `generators_solved.status` (Boolean, nullable, v0.8.5+) — in-service status at solve time; distinguishes planning-in-service units excluded by unit commitment from units that genuinely ran.
+
+**Solved angle-reference metadata** — prevents silent reference-frame mismatch when snapshots are re-used.
+
+- `metadata.slack_bus_id_solved` (Int32, nullable, v0.8.5+) — `bus_id` of the angle reference (slack) bus used in the solve.
+- `metadata.angle_reference_deg` (Float64, nullable, v0.8.5+) — angle reference in degrees applied at the slack bus; typically 0.0.
+- New file-level metadata keys (written only when `solved_state_presence = actual_solved`):
+  - `rpf.solver.slack_bus_id`
+  - `rpf.solver.angle_reference_deg`
+
+**Solved-shunt provenance metadata** — lets loaders fail fast or warn when a solved snapshot claims solved but lacks full shunt state.
+
+- `metadata.solved_shunt_state_presence` (dict, nullable, v0.8.5+) — `actual_solved | not_available`.
+- New file-level metadata key `rpf.solver.solved_shunt_state_presence` (written only when `solved_state_presence = actual_solved`).
+
+**New public Rust types in `rpf_writer`:**
+- `SolvedShuntStatePresence` enum (`ActualSolved` | `NotAvailable`).
+- `SolverProvenance.slack_bus_id_solved`, `.angle_reference_deg`, `.solved_shunt_state_presence` fields.
+- `SwitchedShuntRow.shunt_id` field (CIM mRID populated by CIM exporter).
+- `MetadataRow.slack_bus_id_solved`, `.angle_reference_deg`, `.solved_shunt_state_presence` fields.
+
+### Changed
+
+- Branding and version constants bumped to v0.8.5.
+- `SUPPORTED_RPF_VERSIONS` now includes v0.8.5 as current; v0.8.4 and earlier remain readable.
+- Parser checklist updated: `switched_shunts_solved` is required when `solved_shunt_state_presence = actual_solved`; `not_available` triggers a warning not a failure.
+- Optional solved-state table ordering now includes `switched_shunts_solved` after `generators_solved` in `solved_state_table_schemas()`.
+
+### Non-negotiable invariants (unchanged from v0.8.4, restated for v0.8.5)
+
+- Flat-start planning must always exist for a valid model.
+- Solved-state fields are optional and nullable; exporters must **never** fabricate solved values.
+- PV→PQ switching outcome lives only in `generators_solved.pv_to_pq`; must never be back-propagated.
+- `generators_solved.status = false` means the solver excluded this unit; it does not imply the unit was out of service in the planning case.
+- `switched_shunts_solved` absence with `solved_shunt_state_presence = not_available` is a valid solved snapshot; loaders should warn, not fail.
+
+## [Schema Contract 0.8.4] - 2026-04-07
 
 ### Converter release: Crate version 0.2.3 (raptrix-cim-arrow) / 0.2.2 (raptrix-cim-rs) | Arrow schema v0.8.4
 
