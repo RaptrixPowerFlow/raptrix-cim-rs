@@ -1,4 +1,4 @@
-# Schema Contract (Locked contract: v0.8.4 — CGMES 3.0+ Only)
+# Schema Contract (Locked contract: v0.8.5 — CGMES 3.0+ Only)
 
 ## Contract Policy
 
@@ -31,8 +31,8 @@ Every `.rpf` file must include:
 
 Current locked values:
 
-- `raptrix.version = 0.8.4`
-- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.8.4 - High-performance open CIM profile (CGMES 3.0+) by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.`
+- `raptrix.version = 0.8.5`
+- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.8.5 - High-performance open CIM profile (CGMES 3.0+) by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.`
 - `rpf.case_fingerprint = <required deterministic case identity fingerprint>`
 - `rpf.validation_mode = topology_only | solved_ready`
 - `rpf.case_mode = flat_start_planning | warm_start_planning | solved_snapshot` (v0.8.4+, required)
@@ -49,6 +49,9 @@ Optional file-level metadata keys:
 - `rpf.solver.iterations = <int>` Newton-Raphson iteration count (only when solved)
 - `rpf.solver.accuracy = <float>` final mismatch residual (only when solved)
 - `rpf.solver.mode = <string>` bus control mode, e.g. `PV`, `PV_to_PQ` (only when solved)
+- `rpf.solver.slack_bus_id = <int>` the bus_id used as the angle reference (slack bus) in the solve (v0.8.5+, only when solved)
+- `rpf.solver.angle_reference_deg = <float>` angle reference value in degrees, typically 0.0 (v0.8.5+, only when solved)
+- `rpf.solver.solved_shunt_state_presence = actual_solved | not_available` (v0.8.5+, only when solved)
 
 ## File Container Layout
 
@@ -153,6 +156,8 @@ Optional solved-state tables (emitted only when `case_mode = solved_snapshot`, v
 
 - `buses_solved`
 - `generators_solved`
+- `switched_shunts_solved` (v0.8.5+)
+- `switched_shunts_solved` (v0.8.5+)
 
 ## Column Reference
 
@@ -178,6 +183,9 @@ This section is normative for external parser authors.
 - `solver_iterations`: Int32, nullable — Newton-Raphson iteration count (v0.8.4+)
 - `solver_accuracy`: Float64, nullable — final mismatch residual norm (v0.8.4+)
 - `solver_mode`: Dictionary<Int32, Utf8>, nullable — e.g. `PV`, `PV_to_PQ` (v0.8.4+)
+- `slack_bus_id_solved`: Int32, nullable — bus_id of the angle reference (slack) bus used in the solve; prevents silent reference-frame mismatch when snapshots are re-used (v0.8.5+)
+- `angle_reference_deg`: Float64, nullable — angle reference value in degrees applied at the slack bus; typically 0.0 (v0.8.5+)
+- `solved_shunt_state_presence`: Dictionary<Int32, Utf8>, nullable — `actual_solved` | `not_available`; lets loaders fail fast or warn if solved snapshot claims solved but lacks full shunt state (v0.8.5+)
 
 ### buses
 
@@ -263,6 +271,7 @@ This section is normative for external parser authors.
 - `b_steps`: List<Float64>, required
 - `current_step`: Int32, required
 - `b_init_pu`: Float64, nullable — authoritative initial susceptance in per-unit (v0.8.3+). PSS/E source: `BINIT / base_mva`. CIM source: `b_steps[current_step - 1]`. Readers should prefer this field over reconstructing from `b_steps + current_step`. Nullable for backward compatibility; writers must populate this field.
+- `shunt_id`: Dictionary<Int32, Utf8>, nullable — stable per-bank identity to disambiguate multiple banks at the same bus (v0.8.5+). CIM path: `ShuntCompensator` mRID. PSS/E path: synthesized as `"{bus_id}_shunt_{n}"` (1-indexed). Nullable for backward compatibility; writers must populate when available.
 
 ### transformers_2w
 
@@ -452,6 +461,43 @@ IEC 61970-453 uses an inverted-Y convention where larger Y values are lower on s
 - Container format: Apache Arrow columnar IPC file layout already used by `.rpf`
 - Introduced in: RPF v0.8.0
 
+## Optional Tables: buses_solved, generators_solved, switched_shunts_solved
+
+These tables are emitted only when `case_mode = solved_snapshot` (v0.8.4+/v0.8.5+).
+When `case_mode` is a planning variant, all three tables must be absent.
+
+### buses_solved
+
+- `bus_id`: Int32, non-null — FK into `buses`.
+- `v_mag_pu`: Float64, nullable — post-solve voltage magnitude in per-unit.
+- `v_ang_deg`: Float64, nullable — post-solve voltage angle in degrees.
+- `p_inj_pu`: Float64, nullable — net active power injection in per-unit.
+- `q_inj_pu`: Float64, nullable — net reactive power injection in per-unit.
+- `bus_type_solved`: Int8, nullable — effective bus type after convergence: 1=PQ, 2=PV, 3=slack.
+- `provenance`: Dictionary<Int32, Utf8>, nullable.
+
+### generators_solved
+
+- `bus_id`: Int32, non-null — FK into `generators`.
+- `id`: Dictionary<Int32, Utf8>, non-null — FK into `generators`.
+- `p_actual_pu`: Float64, nullable — post-solve real power output in per-unit.
+- `q_actual_pu`: Float64, nullable — post-solve reactive power output in per-unit.
+- `p_mw`: Float64, nullable — actual real power in MW (`= p_actual_pu × base_mva`); solver-native unit convenience (v0.8.5+).
+- `q_mvar`: Float64, nullable — actual reactive power in MVAR (`= q_actual_pu × base_mva`) (v0.8.5+).
+- `status`: Boolean, nullable — in-service status at solve time (v0.8.5+).
+- `pv_to_pq`: Boolean, nullable — true when this unit's bus switched PV→PQ during solve.
+- `provenance`: Dictionary<Int32, Utf8>, nullable.
+
+### switched_shunts_solved
+
+Emitted only when `solved_shunt_state_presence = actual_solved` (v0.8.5+).
+
+- `bus_id`: Int32, non-null — FK into `switched_shunts`.
+- `shunt_id`: Dictionary<Int32, Utf8>, nullable — FK into `switched_shunts.shunt_id`.
+- `current_step_solved`: Int32, nullable — energized step after convergence (1-indexed).
+- `b_pu_solved`: Float64, nullable — post-solve total susceptance in per-unit.
+- `provenance`: Dictionary<Int32, Utf8>, nullable.
+
 ## Blocker Fixes Incorporated in Locked contract: v0.7.1
 
 ### 1) Expanded transformer detail
@@ -575,16 +621,17 @@ Locked contract: v0.7.0 adds optional node-breaker detail tables (`node_breaker_
 An independent parser is considered compliant if it:
 
 1. Opens `.rpf` as Arrow IPC File format.
-2. Verifies `raptrix.version` is in the set of supported contract versions (current: `0.8.4`).
+2. Verifies `raptrix.version` is in the set of supported contract versions (current: `0.8.5`).
 3. Verifies required root columns appear in canonical order.
 4. Uses `rpf.rows.<table_name>` metadata to trim padded null tails.
 5. Treats the 15 required root columns as mandatory even when their logical row counts are zero.
 6. Detects optional tables by root column presence and feature metadata, not by guesswork.
 7. Ignores unknown future trailing root columns for forward compatibility.
 8. Reads and validates `rpf.case_mode` (required since v0.8.4): must be `flat_start_planning`, `warm_start_planning`, or `solved_snapshot`.
-9. When `case_mode = solved_snapshot`: expects `rpf.solved_state_presence = actual_solved` and treats `buses_solved` and `generators_solved` as required.
-10. When `case_mode` is a planning variant: treats `buses_solved` and `generators_solved` as absent; if found, the file is malformed.
+9. When `case_mode = solved_snapshot`: expects `rpf.solved_state_presence = actual_solved` and treats `buses_solved` and `generators_solved` as required; treats `switched_shunts_solved` as required when `rpf.solver.solved_shunt_state_presence = actual_solved`.
+10. When `case_mode` is a planning variant: treats `buses_solved`, `generators_solved`, and `switched_shunts_solved` as absent; if found, the file is malformed.
 11. Reads solver provenance keys (`rpf.solver.*`) only when `solved_state_presence = actual_solved`; ignores them otherwise.
+12. When `rpf.solver.solved_shunt_state_presence = not_available`: warns that switched-shunt solved state is absent; does not fail (v0.8.5+).
 
 For a plain-English explanation of all fields see [rpf-field-guide.md](rpf-field-guide.md).
 

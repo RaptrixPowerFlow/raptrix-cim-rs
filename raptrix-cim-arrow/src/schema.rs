@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.8.3 profile.
+//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.8.5 profile.
 //!
 //! **CGMES 3.0+ Only**: This module targets CGMES v3.0 and later (v17+ CIM) merged profiles.
 //! Support for legacy CGMES 2.4.x was dropped in this release for simplicity and performance.
@@ -17,12 +17,15 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, Schema};
 
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.8.4 - High-performance open CIM profile (CGMES 3.0+) by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.8.5 - High-performance open CIM profile (CGMES 3.0+) by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.";
 
 /// Canonical RPF format version tag embedded as file-level metadata.
-pub const RPF_VERSION: &str = "0.8.4";
+pub const RPF_VERSION: &str = "0.8.5";
 
 /// Supported RPF versions accepted by generic Arrow IPC readers.
+/// v0.8.5 adds switched-shunt stable identity, switched_shunts_solved table, extended
+///   generators_solved (p_mw, q_mvar, status), angle-reference metadata
+///   (slack_bus_id_solved, angle_reference_deg), and solved_shunt_state_presence.
 /// v0.8.4 adds strict planning-vs-solved semantics: case_mode enum, solved_state_presence
 ///   provenance tags, solver metadata (version/iterations/accuracy/mode), and optional
 ///   buses_solved / generators_solved tables for post-solve round-trip.
@@ -31,8 +34,8 @@ pub const RPF_VERSION: &str = "0.8.4";
 /// v0.8.1 normalizes all power/admittance fields to per-unit on base_mva.
 /// v0.8.0 introduced diagram layout support and dropped CGMES 2.4.x compatibility.
 pub const SUPPORTED_RPF_VERSIONS: &[&str] = &[
-    "v0.8.4", "0.8.4", "v0.8.3", "0.8.3", "v0.8.2", "0.8.2", "v0.8.1", "0.8.1", "v0.8.0", "0.8.0",
-    "0.7.1", "0.7.0",
+    "v0.8.5", "0.8.5", "v0.8.4", "0.8.4", "v0.8.3", "0.8.3", "v0.8.2", "0.8.2",
+    "v0.8.1", "0.8.1", "v0.8.0", "0.8.0", "0.7.1", "0.7.0",
 ];
 
 /// Backward-compatible alias retained for older call sites.
@@ -74,6 +77,15 @@ pub const METADATA_KEY_SOLVER_ITERATIONS: &str = "rpf.solver.iterations";
 pub const METADATA_KEY_SOLVER_ACCURACY: &str = "rpf.solver.accuracy";
 /// Optional metadata key for solver bus-type mode, e.g. "PV", "PV_to_PQ" (written when solved_state_presence=actual_solved).
 pub const METADATA_KEY_SOLVER_MODE: &str = "rpf.solver.mode";
+/// Optional metadata key for the angle-reference (slack) bus_id used in the solve.
+/// Written when solved_state_presence=actual_solved. Integer encoded as string.
+pub const METADATA_KEY_SOLVER_SLACK_BUS_ID: &str = "rpf.solver.slack_bus_id";
+/// Optional metadata key for the angle reference value in degrees used in the solve.
+/// Written when solved_state_presence=actual_solved. Float encoded as string.
+pub const METADATA_KEY_SOLVER_ANGLE_REFERENCE_DEG: &str = "rpf.solver.angle_reference_deg";
+/// Optional metadata key indicating solved shunt switching state presence.
+/// Values: actual_solved | not_available. Written when solved_state_presence=actual_solved.
+pub const METADATA_KEY_SOLVED_SHUNT_STATE_PRESENCE: &str = "rpf.solver.solved_shunt_state_presence";
 /// Optional metadata key indicating total electrical island count.
 pub const METADATA_KEY_TOPOLOGY_ISLAND_COUNT: &str = "rpf.topology.island_count";
 /// Optional metadata key indicating largest-island bus count.
@@ -142,6 +154,9 @@ pub const TABLE_BUSES_SOLVED: &str = "buses_solved";
 /// Optional solved-state table emitted only when case_mode=solved_snapshot.
 /// Contains per-generator post-solve real/reactive output and PV→PQ switch flag.
 pub const TABLE_GENERATORS_SOLVED: &str = "generators_solved";
+/// Optional solved-state table emitted only when case_mode=solved_snapshot.
+/// Contains per-bank post-solve switched-shunt step and susceptance (v0.8.5+).
+pub const TABLE_SWITCHED_SHUNTS_SOLVED: &str = "switched_shunts_solved";
 
 /// Optional column required on export-side solved-result tables.
 pub const COLUMN_CONTINGENCY_ID: &str = "contingency_id";
@@ -255,6 +270,14 @@ pub fn metadata_schema() -> Schema {
             Field::new("solver_iterations", DataType::Int32, true),
             Field::new("solver_accuracy", DataType::Float64, true),
             Field::new("solver_mode", dict_utf8(), true),
+            // v0.8.5: angle-reference frame and shunt provenance
+            // bus_id of the angle reference (slack) bus used in the solve.
+            Field::new("slack_bus_id_solved", DataType::Int32, true),
+            // Angle reference value in degrees applied at the slack bus (typically 0.0).
+            Field::new("angle_reference_deg", DataType::Float64, true),
+            // Indicates whether switched-shunt solved state (step + susceptance) is
+            // present in switched_shunts_solved: actual_solved | not_available.
+            Field::new("solved_shunt_state_presence", dict_utf8(), true),
         ],
         schema_metadata(),
     )
@@ -383,6 +406,11 @@ pub fn switched_shunts_schema() -> Schema {
             // sum of energised steps for CIM).  Nullable so v0.8.2 files remain
             // readable; writers MUST populate this field going forward.
             Field::new("b_init_pu", DataType::Float64, true),
+            // v0.8.5: stable per-bank identity to disambiguate multiple banks at
+            // the same bus.  CIM path: ShuntCompensator mRID.  PSS/E path:
+            // synthesized as "{bus_id}_shunt_{n}" (1-indexed).  Nullable for
+            // backward compatibility; writers must populate when available.
+            Field::new("shunt_id", dict_utf8(), true),
         ],
         schema_metadata(),
     )
@@ -680,9 +708,45 @@ pub fn generators_solved_schema() -> Schema {
             Field::new("p_actual_pu", DataType::Float64, true),
             // Actual solved reactive power output in per-unit.
             Field::new("q_actual_pu", DataType::Float64, true),
+            // v0.8.5: actual solved real power in MW (= p_actual_pu * base_mva).
+            // Provided for solver-native unit convenience; always consistent with p_actual_pu.
+            Field::new("p_mw", DataType::Float64, true),
+            // v0.8.5: actual solved reactive power in MVAR (= q_actual_pu * base_mva).
+            Field::new("q_mvar", DataType::Float64, true),
+            // v0.8.5: in-service status at solve time.  A generator can be in-service
+            // in the planning case but excluded from the solve (e.g., forced off by
+            // unit commitment).  Null means status unknown.
+            Field::new("status", DataType::Boolean, true),
             // True when this unit's bus was switched from PV to PQ during solve.
             // This flag must never be written back to generators.p_sched_pu.
             Field::new("pv_to_pq", DataType::Boolean, true),
+            // Per-row data provenance.
+            Field::new("provenance", dict_utf8(), true),
+        ],
+        schema_metadata(),
+    )
+}
+
+/// Optional `switched_shunts_solved` table schema (v0.8.5+).
+///
+/// Emitted only when `case_mode = solved_snapshot`.  One row per switched-shunt
+/// bank in service after Newton-Raphson convergence.  Uses `shunt_id` for
+/// stable cross-table identity when multiple banks exist at the same bus.
+pub fn switched_shunts_solved_schema() -> Schema {
+    Schema::new_with_metadata(
+        vec![
+            // Foreign key into switched_shunts.bus_id — must be present.
+            Field::new("bus_id", DataType::Int32, false),
+            // Stable per-bank identifier matching switched_shunts.shunt_id.
+            // Nullable when source data lacks a stable bank mRID; bus_id alone
+            // is insufficient for disambiguation when multiple banks exist at a bus.
+            Field::new("shunt_id", dict_utf8(), true),
+            // Energized step index after Newton-Raphson convergence (1-indexed).
+            // Corresponds to switched_shunts.b_steps[current_step_solved - 1].
+            Field::new("current_step_solved", DataType::Int32, true),
+            // Post-solve total susceptance in per-unit.  Matches
+            // b_steps[current_step_solved - 1] for well-formed cases.
+            Field::new("b_pu_solved", DataType::Float64, true),
             // Per-row data provenance.
             Field::new("provenance", dict_utf8(), true),
         ],
@@ -698,6 +762,7 @@ pub fn solved_state_table_schemas() -> Vec<(&'static str, Schema)> {
     vec![
         (TABLE_BUSES_SOLVED, buses_solved_schema()),
         (TABLE_GENERATORS_SOLVED, generators_solved_schema()),
+        (TABLE_SWITCHED_SHUNTS_SOLVED, switched_shunts_solved_schema()),
     ]
 }
 
@@ -749,6 +814,7 @@ pub fn table_schema(table_name: &str) -> Option<Schema> {
         TABLE_DYNAMICS => Some(dynamics_models_schema()),
         TABLE_BUSES_SOLVED => Some(buses_solved_schema()),
         TABLE_GENERATORS_SOLVED => Some(generators_solved_schema()),
+        TABLE_SWITCHED_SHUNTS_SOLVED => Some(switched_shunts_solved_schema()),
         _ => None,
     }
 }

@@ -1,6 +1,6 @@
 # RPF Field Guide — Plain-English Reference
 
-**Schema contract: v0.8.4 | Format: Apache Arrow IPC**
+**Schema contract: v0.8.5 | Format: Apache Arrow IPC**
 
 This guide explains every table and field in an `.rpf` file in plain English. It is written for engineers who need to read, validate, or build tools against RPF files without digging into Arrow source code. For the normative type-level contract see [schema-contract.md](schema-contract.md).
 
@@ -61,6 +61,9 @@ These are key-value strings in the Arrow file header. Every RPF reader should ch
 | `rpf.solver.iterations` | Number of Newton-Raphson iterations to convergence. |
 | `rpf.solver.accuracy` | Final mismatch residual norm. Smaller is more accurate. Typical convergence target is 1e-6 or better. |
 | `rpf.solver.mode` | Bus control mode at convergence, e.g. `PV` (voltage-controlled generation) or `PV_to_PQ` (generator hit a reactive limit and switched to constant-Q control). |
+| `rpf.solver.slack_bus_id` | Integer `bus_id` of the angle reference bus used in the solve. Prevents silent reference-frame mismatch when snapshots are re-used across different network topologies. (v0.8.5+) |
+| `rpf.solver.angle_reference_deg` | Angle reference value in degrees assigned to the slack bus, almost always 0.0. (v0.8.5+) |
+| `rpf.solver.solved_shunt_state_presence` | `actual_solved` if the `switched_shunts_solved` table is present and authoritative; `not_available` if the solver did not track discrete shunt steps. (v0.8.5+) |
 
 ### Feature flags
 
@@ -103,6 +106,9 @@ This table always has exactly one row and summarizes the case.
 | `solver_iterations` | integer | Newton-Raphson iterations. Null for planning cases. |
 | `solver_accuracy` | number | Final mismatch norm. Null for planning cases. |
 | `solver_mode` | text | Bus control mode at convergence. Null for planning cases. |
+| `slack_bus_id_solved` | integer | The `bus_id` used as the angle reference (slack bus) in the solve. Prevents silent reference-frame mismatch when solved snapshots are re-used. Null for planning cases. (v0.8.5+) |
+| `angle_reference_deg` | number | The angle value in degrees assigned to the slack bus during the solve, almost always 0.0. Null for planning cases. (v0.8.5+) |
+| `solved_shunt_state_presence` | text | `actual_solved` when the `switched_shunts_solved` table is present and authoritative; `not_available` when the solver did not track discrete shunt steps. Null for planning cases. (v0.8.5+) |
 
 ---
 
@@ -220,6 +226,7 @@ Switched shunts are reactor or capacitor banks that can be switched in discrete 
 | `b_steps` | list of numbers | Susceptance per step in per-unit. Each entry is one switchable step. |
 | `current_step` | integer | Which step is currently in service. 1-indexed. |
 | `b_init_pu` | number | Authoritative initial susceptance in per-unit. Always use this field — it is more reliable than reconstructing from `b_steps[current_step - 1]`. Populated from CGMES `ShuntCompensator.sections` or equivalent. |
+| `shunt_id` | text | Stable per-bank identity to disambiguate multiple switched-shunt banks at the same bus. CIM path: the `ShuntCompensator` mRID. PSS/E path: synthesized as `"{bus_id}_shunt_{n}"` (1-indexed bank within the bus). Null when source data lacks a stable bank mRID. Use this field — not `bus_id` alone — to cross-reference into `switched_shunts_solved`. (v0.8.5+) |
 
 ---
 
@@ -393,7 +400,28 @@ Post-converged generator dispatch from the solver. Reflects the actual operating
 | `id` | Generator identifier, links to `generators.id`. |
 | `p_actual_pu` | Actual active power output at convergence in per-unit. |
 | `q_actual_pu` | Actual reactive power output at convergence in per-unit. |
+| `p_mw` | number | Actual active power output at convergence in MW (`= p_actual_pu × base_mva`). Provided for solver-native unit convenience. (v0.8.5+) |
+| `q_mvar` | number | Actual reactive power output at convergence in MVAR. (v0.8.5+) |
+| `status` | true/false | In-service status at solve time. A generator may be in service in the planning case but excluded by the solver's unit commitment logic; this field captures that distinction. Null means unknown. (v0.8.5+) |
 | `pv_to_pq` | True if this generator hit a reactive limit during the solve and switched from PV to PQ bus control. |
+| `provenance` | Short string identifying the solver or data source. |
+
+---
+
+## How to check a file is valid
+
+| `provenance` | Short string identifying the solver or data source that produced this row. |
+
+#### `switched_shunts_solved`
+
+Post-converged switched-shunt bank state from the solver. Present only when `case_mode = solved_snapshot` **and** `solved_shunt_state_presence = actual_solved`. One row per bank. When multiple banks exist at the same bus, use `shunt_id` (not `bus_id` alone) for correct cross-table joins. (v0.8.5+)
+
+| Field | What it means |
+|---|---|
+| `bus_id` | Foreign key into `switched_shunts`. |
+| `shunt_id` | Stable bank identifier, links to `switched_shunts.shunt_id`. Null when source data lacks a stable mRID. |
+| `current_step_solved` | Energized step index after Newton-Raphson convergence (1-indexed). Maps to `switched_shunts.b_steps[current_step_solved - 1]`. |
+| `b_pu_solved` | Post-solve total switched susceptance in per-unit. Should match `b_steps[current_step_solved - 1]` for well-formed cases. |
 | `provenance` | Short string identifying the solver or data source. |
 
 ---
@@ -404,10 +432,11 @@ The quickest sanity checks for any RPF reader:
 
 1. `raptrix.version` must be in the list of supported versions.
 2. `rpf.case_mode` must be one of `flat_start_planning`, `warm_start_planning`, `solved_snapshot`.
-3. If `rpf.case_mode = solved_snapshot`, `rpf.solved_state_presence` must be `actual_solved` and the `buses_solved` table must be present.
-4. If `rpf.case_mode` is either planning variant, `buses_solved` and `generators_solved` must be absent.
-5. `rpf.rows.<table>` metadata must match the trimmed row counts for each table.
-6. The 15 required root columns must be present in order, even if their row counts are zero.
+3. If `rpf.case_mode = solved_snapshot`, `rpf.solved_state_presence` must be `actual_solved` and the `buses_solved` and `generators_solved` tables must be present.
+4. If `rpf.case_mode = solved_snapshot` and `rpf.solver.solved_shunt_state_presence = actual_solved`, `switched_shunts_solved` must be present. If `not_available`, warn but do not fail. (v0.8.5+)
+5. If `rpf.case_mode` is a planning variant, `buses_solved`, `generators_solved`, and `switched_shunts_solved` must be absent.
+6. `rpf.rows.<table>` metadata must match the trimmed row counts for each table.
+7. The 15 required root columns must be present in order, even if their row counts are zero.
 
 ---
 
