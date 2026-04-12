@@ -36,6 +36,15 @@ That split keeps the locked RPF contract in one reusable place so future convert
 
 raptrix-cim-rs is production-ready against the full ENTSO-E CGMES v3.0 conformity suite. All 11 test cases pass at 100% across four output variants in the release binary.
 
+### CIM-First Positioning (US + EU)
+
+This project is CIM-first and IEC 61970-native for both North American and European workflows:
+
+- **US / NAESB-first framing**: The parser and schema target IEC 61970 CIM 17+ classes and RDF/XML profile exchange directly.
+- **EU / CGMES validation at scale**: ENTSO-E CGMES v3.0.3 conformity datasets are used as the canonical public regression corpus.
+- **Same model foundation**: NAESB exchanges and CGMES profile sets use the same IEC 61970 CIM family (EQ/TP/SV/SSH/DY/DL), so the core ingest architecture is shared.
+- **Public-data reality**: There is no public NAESB CIM 17+ test-configuration bundle equivalent to ENTSO-E CAS; the ENTSO-E suite remains the strongest open validation proxy.
+
 ### Profile ingest (CGMES 3.0+ only)
 
 | Profile | Coverage |
@@ -57,7 +66,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 | Connectivity detail | `--connectivity-detail` | Granular ConnectivityNode bus mapping; emits optional `connectivity_groups` table |
 | Node-breaker | `--connectivity-detail --node-breaker` | Adds switch-topology detail tables for operational and viewer workflows |
 
-### Output tables (schema contract v0.8.4)
+### Output tables (schema contract v0.8.5)
 
 **15 canonical tables (always emitted):** `metadata`, `buses`, `branches`, `generators`, `loads`, `fixed_shunts`, `switched_shunts`, `transformers_2w`, `transformers_3w`, `areas`, `zones`, `owners`, `contingencies`, `interfaces`, `dynamics_models`
 
@@ -65,7 +74,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 - `connectivity_groups` — with `--connectivity-detail`
 - `node_breaker_detail`, `switch_detail`, `connectivity_nodes` — with `--node-breaker`
 - `diagram_objects`, `diagram_points` — when DL profile is present (suppress with `--no-diagram`)
-- `buses_solved`, `generators_solved` — when `case_mode = solved_snapshot` (v0.8.4+)
+- `buses_solved`, `generators_solved`, `switched_shunts_solved` — when `case_mode = solved_snapshot` (v0.8.5+)
 
 ### Detached island policy
 
@@ -91,7 +100,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 
 ## Data Contract (Locked)
 
-- Current schema contract: v0.8.4 (CGMES 3.0+ only)
+- Current schema contract: v0.8.5 (CGMES 3.0+ only)
 - Canonical source: raptrix-cim-arrow/src/schema.rs
 - Contract policy and semantics: docs/schema-contract.md
 - Plain-English field guide: [docs/rpf-field-guide.md](docs/rpf-field-guide.md)
@@ -100,11 +109,11 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 
 ### Versioning Policy
 
-Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is now locked at schema `v0.8.4` for interoperability and deterministic CGMES 3.0+ ingest behavior, while the converter crate release tracks implementation maturity and is currently `0.2.2`.
+Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is now locked at schema `v0.8.5` for interoperability and deterministic CGMES 3.0+ ingest behavior, while the converter crate release tracks implementation maturity and is currently `0.2.2`.
 
 This split preserves compatibility guarantees for downstream tools: existing `v0.5.2` Parquet artifacts remain valid to read on the core path, and new `v0.8.0` optional features (diagram layout via DL profile) are additive only. **Breaking change in v0.8.0**: CGMES 2.4.x support was removed. All ingest is now CGMES 3.0+ only.
 
-**v0.8.4**: Strict planning-vs-solved semantics. Every `.rpf` file now declares exactly what kind of case it is and what solved state it carries. The exporter will hard-fail rather than fabricate or silently mix planning and solved data.
+**v0.8.5**: Adds solved shunt-state round-trip (`switched_shunts_solved`) and explicit solved angle-reference metadata (`slack_bus_id_solved`, `angle_reference_deg`) while preserving strict planning-vs-solved semantics from v0.8.4.
 
 For third-party implementers, [docs/schema-contract.md](docs/schema-contract.md) is the authoritative reader/writer contract. It now documents the `.rpf` Arrow IPC container layout, canonical root column ordering, row-count metadata trimming rules, optional table detection, and full column/type references needed to build a compatible parser.
 
@@ -170,13 +179,18 @@ All conversions are zero-copy headless — no readback or post-write validation 
 
 ## Project Layout
 
-- raptrix-cim-arrow/src/schema.rs: v0.8.4 table schemas, metadata constants, and schema registry helpers
+- raptrix-cim-arrow/src/schema.rs: v0.8.5 table schemas, metadata constants, and schema registry helpers
 - raptrix-cim-arrow/src/io.rs: generic root `.rpf` assembly, validation, readback, and summary helpers
 - src/models: CIM data structures and traits
 - src/parser.rs: parse helpers and EQ-to-branch mapping
 - src/rpf_writer.rs: CIM-specific mapping from parsed CGMES content into canonical table batches
 
 ### Locked contract: v0.8.x notable fields
+
+- v0.8.5 additions:
+	- Optional `switched_shunts_solved` table for solved shunt switching state round-trip
+	- `metadata.slack_bus_id_solved` and `metadata.angle_reference_deg` for explicit solved angle-reference provenance
+	- `metadata.solved_shunt_state_presence` for solved shunt-state availability semantics
 
 - v0.8.4 additions (planning-vs-solved semantics):
 	- `metadata.case_mode` required — `flat_start_planning` | `warm_start_planning` | `solved_snapshot`

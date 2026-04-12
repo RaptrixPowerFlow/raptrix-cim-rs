@@ -2,7 +2,9 @@
 
 ## Purpose
 
-raptrix-cim-rs turns CGMES RDF/XML into Arrow-native outputs for power-flow and related solver pipelines, with a locked v0.6.0 Raptrix PowerFlow Interchange schema contract.
+raptrix-cim-rs turns CIM RDF/XML (including CGMES profile sets) into Arrow-native outputs for power-flow and related solver pipelines, with a locked v0.8.5 Raptrix PowerFlow Interchange schema contract.
+
+The architecture is CIM-first for both US and EU use: IEC 61970 CIM 17+ is the model baseline, while ENTSO-E CGMES v3.0.3 is used as the public regression corpus.
 
 ## Design Goals
 
@@ -27,7 +29,7 @@ Current serialization status:
 
 ## Core Modules
 
-- raptrix-cim-arrow/src/schema.rs: locked v0.6.0 table schemas, metadata constants, and table registry helpers.
+- raptrix-cim-arrow/src/schema.rs: locked v0.8.5 table schemas, metadata constants, and table registry helpers.
 - raptrix-cim-arrow/src/io.rs: generic `.rpf` root-file assembly, validation, and readback helpers.
 - src/models: CIM types and trait hierarchy.
 - src/parser.rs: parse helpers and profile-specific row mapping.
@@ -41,11 +43,13 @@ Current serialization status:
 - Mapping boundary: typed model values to solver-oriented row structures.
 - Serialization boundary: row structures to Arrow RecordBatch and output container bytes.
 
-Locked schema boundaries in v0.6.0:
+Locked schema boundaries in v0.8.5:
 
 - all 15 required tables must materialize (empty allowed)
 - dictionary-encoded string identity fields
 - explicit keys and FK references
+- strict planning-vs-solved semantics via case-mode and solved-state metadata
+- solved shunt-state and angle-reference provenance for solved snapshots
 - nested Arrow types for contingencies and dynamics model params
 
 ## Error Handling
