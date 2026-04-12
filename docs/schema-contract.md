@@ -10,6 +10,8 @@
 
 - **CGMES Ingest Target**: v3.0 and later only (complete merged profiles with EQ, TP, SV, DL, GL, SSH, etc.).
 - **Legacy Support Dropped**: CGMES 2.4.x support was removed in v0.8.0. All ingest is now CGMES 3.0+ only. This enables cleaner parsing logic, better performance, and full alignment with ENTSO-E Conformity Assessment Scheme (v3.0.3 current).
+- **CIM-first for US and EU**: raptrix-cim-rs targets IEC 61970 CIM 17+ classes and RDF/XML profile exchange directly. This aligns with both North American (NAESB-governed) and European (CGMES profile-set) workflows.
+- **Public validation corpus**: ENTSO-E CGMES v3.0.3 CAS remains the canonical public regression dataset. There is no public NAESB test-configuration bundle equivalent to ENTSO-E CAS.
 - The `.rpf` contract is forward compatible for additive changes only. Readers must ignore unknown trailing root columns and unknown file metadata keys.
 - Breaking file-format changes (required column rename/removal/reorder, required table rename/removal/reorder, type change for required fields) require a MAJOR contract bump.
 - Additive changes (new optional columns, new optional tables, new optional metadata keys) require at least a MINOR bump.

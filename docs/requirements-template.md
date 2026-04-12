@@ -8,7 +8,8 @@ Describe the exact solver behavior this feature enables.
 
 ## 2) Required Inputs
 
-- CGMES profiles: EQ, TP, SV, SSH, other
+- CIM profile baseline: IEC 61970 CIM 17+ (US/NAESB and EU/CGMES)
+- Profile payloads: EQ, TP, SV, SSH, DY, DL, other
 - Required classes/fields:
 - Cardinality assumptions:
 

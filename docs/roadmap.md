@@ -1,5 +1,11 @@
 # Roadmap
 
+## Market Interoperability Position
+
+- CIM-first messaging: IEC 61970 CIM 17+ baseline for North American and European integrations.
+- EU public validation: ENTSO-E CGMES v3.0.3 conformity suite remains the canonical public regression source.
+- US deployment reality: no public NAESB test-configuration package equivalent is currently available; partner utility data is used for private validation when available.
+
 ## 0.1 Baseline (Delivered)
 
 - Parse ACLineSegment and EnergyConsumer fragments and EQ files.

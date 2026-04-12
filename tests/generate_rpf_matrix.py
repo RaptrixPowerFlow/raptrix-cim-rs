@@ -53,6 +53,10 @@ class RunResult:
     dynamics_rows_emitted: int
     dynamics_rows_dy_linked: int
     dynamics_rows_eq_fallback: int
+    diagram_objects_emitted: int
+    diagram_points_emitted: int
+    node_breaker_detail_rows: int
+    switch_detail_rows: int
 
 
 def _extract_metric(stdout_text: str, label: str) -> int:
@@ -61,6 +65,26 @@ def _extract_metric(stdout_text: str, label: str) -> int:
     if not match:
         return 0
     return int(match.group(1))
+
+
+def _sanitize_path(path: Path | None) -> str | None:
+    if path is None:
+        return None
+    try:
+        rel = path.resolve().relative_to(REPO_ROOT.resolve())
+        return rel.as_posix()
+    except ValueError:
+        return f"<external>/{path.name}"
+
+
+def _sanitize_env_path(value: str | None) -> str | None:
+    if value is None:
+        return None
+    try:
+        rel = Path(value).resolve().relative_to(REPO_ROOT.resolve())
+        return rel.as_posix()
+    except ValueError:
+        return "<external>"
 
 
 def _safe_name(text: str) -> str:
@@ -186,6 +210,10 @@ def run_cli(mode: str, case: Case, variant: str, args: list[str], output_dir: Pa
     dynamics_rows_emitted = _extract_metric(completed.stdout, "Dynamics rows emitted")
     dynamics_rows_dy_linked = _extract_metric(completed.stdout, "Dynamics DY-linked rows")
     dynamics_rows_eq_fallback = _extract_metric(completed.stdout, "Dynamics EQ-fallback rows")
+    diagram_objects_emitted = _extract_metric(completed.stdout, "Diagram objects emitted")
+    diagram_points_emitted = _extract_metric(completed.stdout, "Diagram points emitted")
+    node_breaker_detail_rows = _extract_metric(completed.stdout, "Node-breaker detail rows")
+    switch_detail_rows = _extract_metric(completed.stdout, "Switch detail rows")
 
     return RunResult(
         mode=mode,
@@ -201,6 +229,10 @@ def run_cli(mode: str, case: Case, variant: str, args: list[str], output_dir: Pa
         dynamics_rows_emitted=dynamics_rows_emitted,
         dynamics_rows_dy_linked=dynamics_rows_dy_linked,
         dynamics_rows_eq_fallback=dynamics_rows_eq_fallback,
+        diagram_objects_emitted=diagram_objects_emitted,
+        diagram_points_emitted=diagram_points_emitted,
+        node_breaker_detail_rows=node_breaker_detail_rows,
+        switch_detail_rows=switch_detail_rows,
     )
 
 
@@ -271,21 +303,33 @@ def main() -> int:
 
     serialized_cases = []
     for case in cases:
-        data = asdict(case)
-        for key in ("eq", "tp", "sv", "ssh", "dy", "dl"):
-            value = data.get(key)
-            data[key] = str(value) if value is not None else None
+        data = {
+            "case_name": case.case_name,
+            "source_kind": case.source_kind,
+            "eq": _sanitize_path(case.eq),
+            "tp": _sanitize_path(case.tp),
+            "sv": _sanitize_path(case.sv),
+            "ssh": _sanitize_path(case.ssh),
+            "dy": _sanitize_path(case.dy),
+            "dl": _sanitize_path(case.dl),
+        }
         serialized_cases.append(data)
 
+    serialized_results = []
+    for result in all_results:
+        data = asdict(result)
+        data["output_path"] = _sanitize_path(Path(result.output_path))
+        serialized_results.append(data)
+
     report = {
-        "repo_root": str(REPO_ROOT),
-        "results_dir": str(RESULTS_DIR),
-        "raptrix_test_data_root": os.environ.get("RAPTRIX_TEST_DATA_ROOT"),
+        "repo_root": ".",
+        "results_dir": str(RESULTS_DIR.relative_to(REPO_ROOT)).replace("\\", "/"),
+        "raptrix_test_data_root": _sanitize_env_path(os.environ.get("RAPTRIX_TEST_DATA_ROOT")),
         "include_ssh_dy": args.include_ssh_dy,
         "cases_with_dy_profile": sum(1 for case in cases if case.dy is not None),
         "cases": serialized_cases,
         "summary": summary,
-        "results": [asdict(result) for result in all_results],
+        "results": serialized_results,
     }
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -296,8 +340,8 @@ def main() -> int:
     lines = [
         "# RPF Matrix Report",
         "",
-        f"Results directory: {RESULTS_DIR}",
-        f"RAPTRIX_TEST_DATA_ROOT: {os.environ.get('RAPTRIX_TEST_DATA_ROOT', '<unset>')}",
+        f"Results directory: {RESULTS_DIR.relative_to(REPO_ROOT).as_posix()}",
+        f"RAPTRIX_TEST_DATA_ROOT: {_sanitize_env_path(os.environ.get('RAPTRIX_TEST_DATA_ROOT')) or '<unset>'}",
         f"Include SSH/DY: {args.include_ssh_dy}",
         f"Cases with DY profile: {sum(1 for case in cases if case.dy is not None)}",
         "",
@@ -322,6 +366,49 @@ def main() -> int:
             lines.append(
                 f"| {item.mode} | {item.case_name} | {item.variant} | {item.return_code} |"
             )
+
+    # Studio-focused ranking for external corpus models.
+    by_case: dict[str, list[RunResult]] = {}
+    for item in all_results:
+        if item.mode != "release" or not item.case_name.startswith("external_"):
+            continue
+        by_case.setdefault(item.case_name, []).append(item)
+
+    ranking: list[tuple[str, int, int, int, int]] = []
+    for case_name, case_runs in by_case.items():
+        best = max(
+            case_runs,
+            key=lambda r: (
+                r.diagram_points_emitted,
+                r.diagram_objects_emitted,
+                r.node_breaker_detail_rows,
+                r.switch_detail_rows,
+            ),
+        )
+        score = (
+            (best.diagram_points_emitted * 10)
+            + (best.diagram_objects_emitted * 5)
+            + best.node_breaker_detail_rows
+            + best.switch_detail_rows
+        )
+        ranking.append(
+            (
+                case_name,
+                score,
+                best.diagram_objects_emitted,
+                best.diagram_points_emitted,
+                best.node_breaker_detail_rows,
+            )
+        )
+
+    ranking.sort(key=lambda x: (x[1], x[3], x[2], x[4]), reverse=True)
+    lines += ["", "## Studio Visualization Shortlist (release, external cases)", ""]
+    lines.append("| Rank | Case | Score | Diagram Objects | Diagram Points | Node-Breaker Rows |")
+    lines.append("|---:|---|---:|---:|---:|---:|")
+    for idx, item in enumerate(ranking, start=1):
+        lines.append(
+            f"| {idx} | {item[0]} | {item[1]} | {item[2]} | {item[3]} | {item[4]} |"
+        )
 
     (RESULTS_DIR / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 

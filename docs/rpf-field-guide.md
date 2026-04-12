@@ -4,6 +4,8 @@
 
 This guide explains every table and field in an `.rpf` file in plain English. It is written for engineers who need to read, validate, or build tools against RPF files without digging into Arrow source code. For the normative type-level contract see [schema-contract.md](schema-contract.md).
 
+This repository is **CIM-first**: it targets IEC 61970 CIM 17+ exchange for both North American and European integrations. Public regression coverage is anchored on ENTSO-E CGMES v3.0.3 datasets because there is no public NAESB test-package equivalent.
+
 ---
 
 ## What is an RPF file?
@@ -38,7 +40,7 @@ These are key-value strings in the Arrow file header. Every RPF reader should ch
 
 | Key | Example value | What it means |
 |---|---|---|
-| `raptrix.version` | `0.8.4` | The schema contract version this file was written to. Readers should reject files with an unsupported version. |
+| `raptrix.version` | `0.8.5` | The schema contract version this file was written to. Readers should reject files with an unsupported version. |
 | `raptrix.branding` | *(long string)* | Human-readable provenance string identifying the writing tool and copyright. |
 | `rpf.case_fingerprint` | `abc123...` | A deterministic hash of the case identity. Useful for de-duplication and reproducibility checks. |
 | `rpf.validation_mode` | `topology_only` or `solved_ready` | `topology_only` means the file has enough topology to run but may be missing some steady-state parameters. `solved_ready` means all parameters needed for full Newton-Raphson are present. |

@@ -38,7 +38,9 @@ Run this workflow on any of the following changes:
 3. Ensure GitHub action `Master Contract CI` publishes the contract artifact.
 4. Publish release notes with:
    - schema/contract impact summary
+   - **CIM-first interoperability posture**: IEC 61970 CIM 17+ baseline for US/NAESB and EU profile exchanges
    - **CGMES ingest compatibility**: v3.0+ only (breaking change in v0.8.0)
+   - **Public dataset note**: ENTSO-E CAS is the canonical public validation corpus; NAESB-equivalent public bundles are not currently available
    - migration notes for downstream repos
 
 ## Downstream Sync Checklist
