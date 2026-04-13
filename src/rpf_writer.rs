@@ -1430,6 +1430,8 @@ pub fn write_complete_rpf_with_options(
             // CIM exporter produces planning cases only; solver core sets this when
             // assembling solved_snapshot files with buses_solved/generators_solved.
             include_solved_state: false,
+            include_facts_devices: false,
+            include_facts_solved: false,
         },
         &additional_root_metadata,
     )?;
@@ -3467,6 +3469,16 @@ fn build_branches_batch(rows: &[BranchRow<'_>]) -> Result<RecordBatch> {
         Arc::new(name_b.finish()) as ArrayRef,
         Arc::new(from_nominal_kv_b.finish()) as ArrayRef,
         Arc::new(to_nominal_kv_b.finish()) as ArrayRef,
+        // v0.8.6 additive FACTS columns default to null for CIM exports that do
+        // not currently materialize explicit FACTS rows.
+        new_null_array(schema.field(16).data_type(), rows.len()),
+        new_null_array(schema.field(17).data_type(), rows.len()),
+        new_null_array(schema.field(18).data_type(), rows.len()),
+        new_null_array(schema.field(19).data_type(), rows.len()),
+        new_null_array(schema.field(20).data_type(), rows.len()),
+        new_null_array(schema.field(21).data_type(), rows.len()),
+        new_null_array(schema.field(22).data_type(), rows.len()),
+        new_null_array(schema.field(23).data_type(), rows.len()),
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build branches record batch")

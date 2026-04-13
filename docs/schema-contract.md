@@ -1,4 +1,4 @@
-# Schema Contract (Locked contract: v0.8.5 — CGMES 3.0+ Only)
+# Schema Contract (Locked contract: v0.8.6 — CGMES 3.0+ Only)
 
 ## Contract Policy
 
@@ -33,8 +33,8 @@ Every `.rpf` file must include:
 
 Current locked values:
 
-- `raptrix.version = 0.8.5`
-- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.8.5 - High-performance open CIM profile (CGMES 3.0+) by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.`
+- `raptrix.version = 0.8.6`
+- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.8.6 - High-performance open CIM profile (CGMES 3.0+) by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.`
 - `rpf.case_fingerprint = <required deterministic case identity fingerprint>`
 - `rpf.validation_mode = topology_only | solved_ready`
 - `rpf.case_mode = flat_start_planning | warm_start_planning | solved_snapshot` (v0.8.4+, required)
@@ -46,6 +46,8 @@ Optional file-level metadata keys:
 - `raptrix.features.diagram_layout = true` when optional IEC 61970-453 diagram layout tables are emitted
 - `raptrix.features.contingencies_stub = true` when contingencies table is populated by placeholder/stub rows
 - `raptrix.features.dynamics_stub = true` when dynamics_models table is populated by placeholder/stub rows
+- `raptrix.features.facts = true` when optional FACTS metadata table(s) are emitted (v0.8.6+)
+- `raptrix.features.facts_solved = true` when optional `facts_solved` table is emitted (v0.8.6+)
 - `rpf.rows.<table_name> = <row_count>` for each emitted table
 - `rpf.solver.version = <string>` solver software version (only when `solved_state_presence = actual_solved`)
 - `rpf.solver.iterations = <int>` Newton-Raphson iteration count (only when solved)
@@ -54,6 +56,7 @@ Optional file-level metadata keys:
 - `rpf.solver.slack_bus_id = <int>` the bus_id used as the angle reference (slack bus) in the solve (v0.8.5+, only when solved)
 - `rpf.solver.angle_reference_deg = <float>` angle reference value in degrees, typically 0.0 (v0.8.5+, only when solved)
 - `rpf.solver.solved_shunt_state_presence = actual_solved | not_available` (v0.8.5+, only when solved)
+- `rpf.facts_solved_state_presence = actual_solved | not_available` (v0.8.6+, optional; defaults to `not_available` when `facts_devices` is present and `facts_solved` is absent)
 
 ## File Container Layout
 
@@ -93,6 +96,11 @@ Optional root columns, when present, are appended after the required columns in 
 18. `connectivity_nodes`
 19. `diagram_objects`
 20. `diagram_points`
+21. `buses_solved`
+22. `generators_solved`
+23. `switched_shunts_solved`
+24. `facts_devices`
+25. `facts_solved`
 
 `connectivity_groups` is an optional detail table emitted only in connectivity-detail mode and is appended after the required root columns when that mode is active.
 
@@ -159,7 +167,11 @@ Optional solved-state tables (emitted only when `case_mode = solved_snapshot`, v
 - `buses_solved`
 - `generators_solved`
 - `switched_shunts_solved` (v0.8.5+)
-- `switched_shunts_solved` (v0.8.5+)
+
+Optional FACTS tables (v0.8.6+, emitted only when FACTS metadata is present):
+
+- `facts_devices`
+- `facts_solved` (optional solved snapshot replay companion)
 
 ## Column Reference
 
@@ -230,6 +242,14 @@ This section is normative for external parser authors.
 - `name`: Dictionary<UInt32, Utf8>, nullable
 - `from_nominal_kv`: Float64, nullable
 - `to_nominal_kv`: Float64, nullable
+- `device_type`: Dictionary<Int32, Utf8>, nullable (v0.8.6+) — canonical token for SmartValve is `smartvalve`; reader normalization must accept alias `SV` (case-insensitive) and canonicalize to `smartvalve`.
+- `control_mode`: Dictionary<Int32, Utf8>, nullable (v0.8.6+) — open vocabulary; recommended values include `series_impedance`, `phase_shift`, `voltage_injection`, `bypass`.
+- `control_target_flow_mw`: Float64, nullable (v0.8.6+) — flow target used by flow-controlling FACTS.
+- `x_min_pu`: Float64, nullable (v0.8.6+) — lower bound for effective series reactance in per-unit.
+- `x_max_pu`: Float64, nullable (v0.8.6+) — upper bound for effective series reactance in per-unit.
+- `injected_voltage_mag_pu`: Float64, nullable (v0.8.6+) — injected series-voltage magnitude in per-unit.
+- `injected_voltage_angle_deg`: Float64, nullable (v0.8.6+) — injected series-voltage angle in degrees.
+- `facts_params`: Map<String, Float64>, nullable (v0.8.6+) — additive vendor or model-specific scalar parameters.
 
 ### generators
 
@@ -386,6 +406,55 @@ Dynamics population rules for downstream consumers:
 	- `source_dy = 1.0` for DY-linked rows
 	- `source_eq_fallback = 1.0` for EQ fallback rows
 	- `source_stub = 1.0` for placeholder rows
+
+### facts_devices
+
+- `device_id`: Dictionary<Int32, Utf8>, required
+- `branch_id`: Int32, nullable (null when bus-coupled)
+- `bus_id`: Int32, nullable (null when branch-coupled)
+- `device_type`: Dictionary<Int32, Utf8>, required
+- `status`: Boolean, required
+- `control_mode`: Dictionary<Int32, Utf8>, nullable
+- `target_flow_mw`: Float64, nullable
+- `x_min_pu`: Float64, nullable
+- `x_max_pu`: Float64, nullable
+- `voltage_injection_mag_pu`: Float64, nullable
+- `voltage_injection_angle_deg`: Float64, nullable
+- `response_time_ms`: Float64, nullable
+- `rating_mva`: Float64, nullable
+- `dynamics_model_ref`: Dictionary<Int32, Utf8>, nullable
+- `params`: Map<String, Float64>, nullable
+- `name`: Dictionary<Int32, Utf8>, nullable
+
+Token rules for `facts_devices.device_type` and `branches.device_type`:
+
+- Canonical SmartValve token: `smartvalve`.
+- Accepted ingestion alias: `SV` (case-insensitive).
+- Writers must emit canonical `smartvalve`.
+- Readers must normalize `SV` to `smartvalve`.
+
+### facts_solved
+
+- `device_id`: Dictionary<Int32, Utf8>, required
+- `effective_x_pu`: Float64, nullable
+- `injected_voltage_mag_pu`: Float64, nullable
+- `injected_voltage_angle_deg`: Float64, nullable
+- `p_effect_mw`: Float64, nullable
+- `q_effect_mvar`: Float64, nullable
+- `status`: Boolean, nullable
+
+Solved presence convention (v0.8.6+):
+
+- `rpf.facts_solved_state_presence = actual_solved` when `facts_solved` is emitted.
+- `rpf.facts_solved_state_presence = not_available` when `facts_devices` is emitted but solved replay values are not present.
+
+Schema-level example: parallel PST + SmartValve on one corridor
+
+- `transformers_2w` row carries the PST tap/phase state for the physical transformer branch.
+- `branches` row for the same electrical corridor may carry additive FACTS metadata (`device_type=smartvalve`, control/limits fields).
+- `facts_devices` carries the authoritative device identity, linkage (`branch_id` or `bus_id`), and richer control metadata.
+- `facts_solved` (when present) carries solved replay outputs (`effective_x_pu`, injected voltage, effective P/Q impact).
+- Loaders should treat PST and SmartValve effects as composable controls on the same path, not mutually exclusive equipment classes.
 
 ### connectivity_groups
 
@@ -623,7 +692,7 @@ Locked contract: v0.7.0 adds optional node-breaker detail tables (`node_breaker_
 An independent parser is considered compliant if it:
 
 1. Opens `.rpf` as Arrow IPC File format.
-2. Verifies `raptrix.version` is in the set of supported contract versions (current: `0.8.5`).
+2. Verifies `raptrix.version` is in the set of supported contract versions (current: `0.8.6`).
 3. Verifies required root columns appear in canonical order.
 4. Uses `rpf.rows.<table_name>` metadata to trim padded null tails.
 5. Treats the 15 required root columns as mandatory even when their logical row counts are zero.
@@ -634,6 +703,8 @@ An independent parser is considered compliant if it:
 10. When `case_mode` is a planning variant: treats `buses_solved`, `generators_solved`, and `switched_shunts_solved` as absent; if found, the file is malformed.
 11. Reads solver provenance keys (`rpf.solver.*`) only when `solved_state_presence = actual_solved`; ignores them otherwise.
 12. When `rpf.solver.solved_shunt_state_presence = not_available`: warns that switched-shunt solved state is absent; does not fail (v0.8.5+).
+13. When `facts_devices.device_type` or `branches.device_type` contains `SV` (case-insensitive), canonicalizes to `smartvalve`.
+14. Treats `facts_devices` and `facts_solved` as optional additive tables; if `rpf.facts_solved_state_presence = actual_solved`, expects `facts_solved` to be present.
 
 For a plain-English explanation of all fields see [rpf-field-guide.md](rpf-field-guide.md).
 

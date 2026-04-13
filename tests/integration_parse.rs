@@ -4,7 +4,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use arrow::array::{ArrayRef, BooleanArray, Float64Array, Int32Array, StringDictionaryBuilder};
+use arrow::array::{
+    ArrayRef, BooleanArray, Float64Array, Int32Array, StringDictionaryBuilder, new_null_array,
+};
 use arrow::datatypes::{Int32Type, UInt32Type};
 use arrow::record_batch::RecordBatch;
 use parquet::arrow::ArrowWriter;
@@ -110,6 +112,14 @@ fn parse_smallgrid_eq_aclinesegment() -> Result<()> {
         Arc::new(name.finish()) as ArrayRef,
         Arc::new(Float64Array::from(from_nominal_kv)) as ArrayRef,
         Arc::new(Float64Array::from(to_nominal_kv)) as ArrayRef,
+        new_null_array(&branch_schema().field(16).data_type().clone(), branch_rows.len()),
+        new_null_array(&branch_schema().field(17).data_type().clone(), branch_rows.len()),
+        new_null_array(&branch_schema().field(18).data_type().clone(), branch_rows.len()),
+        new_null_array(&branch_schema().field(19).data_type().clone(), branch_rows.len()),
+        new_null_array(&branch_schema().field(20).data_type().clone(), branch_rows.len()),
+        new_null_array(&branch_schema().field(21).data_type().clone(), branch_rows.len()),
+        new_null_array(&branch_schema().field(22).data_type().clone(), branch_rows.len()),
+        new_null_array(&branch_schema().field(23).data_type().clone(), branch_rows.len()),
     ];
 
     let schema = Arc::new(branch_schema());

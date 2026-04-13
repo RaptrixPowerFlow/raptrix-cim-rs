@@ -15,3 +15,9 @@ Cargo.lock
 
 # Internal-only marketing guide must never be committed.
 INTERNAL-MARKETING-GUIDE.md
+
+# Local Python virtual environment
+.venv/
+
+# Local temp outputs
+/tmp/
