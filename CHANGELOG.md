@@ -11,6 +11,37 @@ Copyright (c) 2026 Musto Technologies LLC
 
 ## [Schema Contract 0.8.4] - 2026-04-07
 ## [Schema Contract 0.8.5] - 2026-04-09
+## [Schema Contract 0.8.6] - 2026-04-13
+
+### Converter release: Crate version 0.2.5 (raptrix-cim-arrow) / 0.2.4 (raptrix-cim-rs) | Arrow schema v0.8.6
+
+### Added
+
+- Additive FACTS extension on `branches` with new nullable fields:
+  - `device_type`, `control_mode`, `control_target_flow_mw`
+  - `x_min_pu`, `x_max_pu`
+  - `injected_voltage_mag_pu`, `injected_voltage_angle_deg`
+  - `facts_params` (Map<String, Float64>)
+- New optional `facts_devices` table for device-level FACTS metadata and dynamics linkage.
+- New optional `facts_solved` table for solved snapshot replay.
+- New optional feature metadata keys:
+  - `raptrix.features.facts`
+  - `raptrix.features.facts_solved`
+  - `rpf.facts_solved_state_presence = actual_solved | not_available`
+- Canonical SmartValve token and alias handling in schema helpers:
+  - canonical: `smartvalve`
+  - accepted read alias: `SV` (case-insensitive)
+
+### Changed
+
+- Branding/schema constants bumped to v0.8.6.
+- `SUPPORTED_RPF_VERSIONS` now includes v0.8.6 as current.
+- Reader reconstruction now tolerates older table shapes missing additive trailing nullable columns (fills nulls), preserving v0.8.3-v0.8.5 compatibility for additive schema growth.
+
+### Migration note
+
+- v0.8.6 adds FACTS/SV fields and optional tables additively; old files still load.
+- Writers should emit v0.8.6 when FACTS data exists.
 
 ### Converter release: Crate version 0.2.4 (raptrix-cim-arrow) / 0.2.3 (raptrix-cim-rs) | Arrow schema v0.8.5
 

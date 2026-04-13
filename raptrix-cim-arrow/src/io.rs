@@ -26,12 +26,15 @@ use memmap2::MmapOptions;
 use crate::schema::{
     BRANDING, METADATA_KEY_BRANDING, METADATA_KEY_FEATURE_CONTINGENCIES_STUB,
     METADATA_KEY_FEATURE_DIAGRAM_LAYOUT, METADATA_KEY_FEATURE_DYNAMICS_STUB,
-    METADATA_KEY_FEATURE_NODE_BREAKER, METADATA_KEY_RPF_VERSION, METADATA_KEY_VERSION,
+    METADATA_KEY_FEATURE_FACTS, METADATA_KEY_FEATURE_FACTS_SOLVED,
+    METADATA_KEY_FACTS_SOLVED_STATE_PRESENCE, METADATA_KEY_FEATURE_NODE_BREAKER,
+    METADATA_KEY_RPF_VERSION, METADATA_KEY_VERSION,
     SCHEMA_VERSION, SUPPORTED_RPF_VERSIONS, TABLE_BRANCHES, TABLE_BUSES, TABLE_BUSES_SOLVED,
-    TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_GENERATORS, TABLE_GENERATORS_SOLVED,
-    TABLE_LOADS, TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, all_table_schemas,
-    diagram_layout_table_schemas, node_breaker_table_schemas, schema_metadata,
-    solved_state_table_schemas, table_schema,
+    TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED,
+    TABLE_GENERATORS, TABLE_GENERATORS_SOLVED, TABLE_LOADS, TABLE_TRANSFORMERS_2W,
+    TABLE_TRANSFORMERS_3W, all_table_schemas, diagram_layout_table_schemas,
+    facts_table_schemas, node_breaker_table_schemas, schema_metadata, solved_state_table_schemas,
+    table_schema,
 };
 
 /// Summary stats for a single logical table found in an `.rpf` file.
@@ -86,6 +89,11 @@ pub struct RootWriteOptions {
     /// When true, append optional solved-state tables (`buses_solved`,
     /// `generators_solved`) after all other root columns (v0.8.4+).
     pub include_solved_state: bool,
+    /// When true, append optional FACTS metadata table (`facts_devices`).
+    pub include_facts_devices: bool,
+    /// When true, append optional solved FACTS replay table (`facts_solved`).
+    /// Requires `include_facts_devices=true`.
+    pub include_facts_solved: bool,
 }
 
 /// Returns the metadata key used to store the logical row count for a table.
@@ -103,6 +111,9 @@ fn enabled_optional_table_schemas(options: &RootWriteOptions) -> Vec<(&'static s
     }
     if options.include_solved_state {
         optional.extend(solved_state_table_schemas());
+    }
+    if options.include_facts_devices {
+        optional.extend(facts_table_schemas(options.include_facts_solved));
     }
     optional
 }
@@ -177,6 +188,9 @@ pub fn root_rpf_schema_with_options(options: &RootWriteOptions) -> Schema {
     }
     if options.include_solved_state {
         table_schemas.extend(solved_state_table_schemas());
+    }
+    if options.include_facts_devices {
+        table_schemas.extend(facts_table_schemas(options.include_facts_solved));
     }
 
     let fields = table_schemas
@@ -263,12 +277,37 @@ pub fn read_rpf_tables(path: impl AsRef<Path>) -> Result<Vec<(String, RecordBatc
                     )
                 })?;
 
-            if struct_array.columns().len() != expected_schema.fields().len() {
+            let actual_fields = match reader_schema.field(column_idx).data_type() {
+                DataType::Struct(fields) => fields,
+                other => {
+                    bail!(
+                        "invalid root column '{table_name}': expected Struct field type, found {other:?}"
+                    )
+                }
+            };
+
+            if struct_array.columns().len() > expected_schema.fields().len() {
                 bail!(
-                    "invalid struct column '{table_name}': expected {} fields, found {}",
+                    "invalid struct column '{table_name}': expected at most {} fields, found {}",
                     expected_schema.fields().len(),
                     struct_array.columns().len()
                 );
+            }
+
+            for index in 0..struct_array.columns().len() {
+                let expected_field = expected_schema.field(index);
+                let actual_field = &actual_fields[index];
+                if actual_field.name() != expected_field.name()
+                    || actual_field.data_type() != expected_field.data_type()
+                {
+                    bail!(
+                        "invalid struct field in '{table_name}' at index {index}: expected '{}'/{:?}, found '{}'/{:?}",
+                        expected_field.name(),
+                        expected_field.data_type(),
+                        actual_field.name(),
+                        actual_field.data_type()
+                    );
+                }
             }
 
             let expected_rows = reader_schema
@@ -284,11 +323,22 @@ pub fn read_rpf_tables(path: impl AsRef<Path>) -> Result<Vec<(String, RecordBatc
                 );
             }
 
-            let trimmed_columns: Vec<ArrayRef> = struct_array
+            let mut trimmed_columns: Vec<ArrayRef> = struct_array
                 .columns()
                 .iter()
                 .map(|column| column.slice(0, expected_rows))
                 .collect();
+
+            for index in struct_array.columns().len()..expected_schema.fields().len() {
+                let expected_field = expected_schema.field(index);
+                if !expected_field.is_nullable() {
+                    bail!(
+                        "invalid struct column '{table_name}': missing non-nullable field '{}'",
+                        expected_field.name()
+                    );
+                }
+                trimmed_columns.push(new_null_array(expected_field.data_type(), expected_rows));
+            }
 
             let table_batch =
                 RecordBatch::try_new(Arc::new(expected_schema.clone()), trimmed_columns)
@@ -381,6 +431,12 @@ pub fn write_root_rpf_with_metadata(
 ) -> Result<()> {
     let output_path = output_path.as_ref();
 
+    if options.include_facts_solved && !options.include_facts_devices {
+        bail!(
+            "invalid RootWriteOptions: include_facts_solved=true requires include_facts_devices=true"
+        );
+    }
+
     let mut table_specs = all_table_schemas();
     table_specs.extend(enabled_optional_table_schemas(options));
 
@@ -425,6 +481,24 @@ pub fn write_root_rpf_with_metadata(
     if options.dynamics_are_stub {
         root_metadata.insert(
             METADATA_KEY_FEATURE_DYNAMICS_STUB.to_string(),
+            "true".to_string(),
+        );
+    }
+    if options.include_facts_devices {
+        root_metadata.insert(METADATA_KEY_FEATURE_FACTS.to_string(), "true".to_string());
+        let presence = if options.include_facts_solved {
+            "actual_solved"
+        } else {
+            "not_available"
+        };
+        root_metadata.insert(
+            METADATA_KEY_FACTS_SOLVED_STATE_PRESENCE.to_string(),
+            presence.to_string(),
+        );
+    }
+    if options.include_facts_solved {
+        root_metadata.insert(
+            METADATA_KEY_FEATURE_FACTS_SOLVED.to_string(),
             "true".to_string(),
         );
     }
@@ -664,24 +738,45 @@ pub fn validate_rpf_file(path: impl AsRef<Path>, options: &RootWriteOptions) -> 
         require_non_null_count_equals_len(TABLE_GENERATORS_SOLVED, generators_solved, "id")?;
     }
 
+    if options.include_facts_devices {
+        let facts_devices = by_name
+            .get(TABLE_FACTS_DEVICES)
+            .context("post-write contract violation: missing facts_devices table")?;
+        require_non_null_count_equals_len(TABLE_FACTS_DEVICES, facts_devices, "device_id")?;
+        require_non_null_count_equals_len(TABLE_FACTS_DEVICES, facts_devices, "device_type")?;
+        require_non_null_count_equals_len(TABLE_FACTS_DEVICES, facts_devices, "status")?;
+    }
+
+    if options.include_facts_solved {
+        let facts_solved = by_name
+            .get(TABLE_FACTS_SOLVED)
+            .context("post-write contract violation: missing facts_solved table")?;
+        require_non_null_count_equals_len(TABLE_FACTS_SOLVED, facts_solved, "device_id")?;
+    }
+
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::fs::File;
     use std::sync::Arc;
 
     use anyhow::{Context, Result};
-    use arrow::array::{Float32Array, Float64Array, Int32Array, StringArray};
+    use arrow::array::{ArrayRef, Float32Array, Float64Array, Int32Array, StringArray, StructArray};
+    use arrow::datatypes::{DataType, Field, Schema};
+    use arrow::ipc::writer::FileWriter;
     use arrow::record_batch::RecordBatch;
 
     use crate::schema::{
-        all_table_schemas, diagram_objects_schema, diagram_points_schema, TABLE_DIAGRAM_OBJECTS,
-        TABLE_DIAGRAM_POINTS,
+        METADATA_KEY_RPF_VERSION, METADATA_KEY_VERSION, SCHEMA_VERSION, all_table_schemas,
+        branches_schema, diagram_objects_schema, diagram_points_schema, facts_devices_schema,
+        facts_solved_schema, schema_metadata, TABLE_BRANCHES, TABLE_DIAGRAM_OBJECTS,
+        TABLE_DIAGRAM_POINTS, TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED,
     };
 
-    use super::{RootWriteOptions, read_rpf_tables, write_root_rpf};
+    use super::{RootWriteOptions, read_rpf_tables, row_count_metadata_key, rpf_file_metadata, write_root_rpf};
 
     #[test]
     fn round_trip_preserves_diagram_layout_optional_tables() -> Result<()> {
@@ -727,6 +822,9 @@ mod tests {
                 include_diagram_layout: true,
                 contingencies_are_stub: false,
                 dynamics_are_stub: false,
+                include_solved_state: false,
+                include_facts_devices: false,
+                include_facts_solved: false,
             },
         )?;
 
@@ -771,6 +869,131 @@ mod tests {
         assert_eq!(point_seq.value(1), 1);
         assert!((point_x.value(1) - 25.0).abs() < f64::EPSILON);
 
+        Ok(())
+    }
+
+    #[test]
+    fn facts_optional_tables_are_absent_when_not_enabled() -> Result<()> {
+        let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_facts_absent");
+        std::fs::create_dir_all(&tmp_dir)?;
+        let output_path = tmp_dir.join("facts_absent.rpf");
+
+        let table_batches: HashMap<&'static str, RecordBatch> = all_table_schemas()
+            .into_iter()
+            .map(|(name, schema)| (name, RecordBatch::new_empty(Arc::new(schema))))
+            .collect();
+
+        write_root_rpf(&output_path, &table_batches, &RootWriteOptions::default())?;
+        let tables = read_rpf_tables(&output_path)?;
+        assert!(!tables.iter().any(|(name, _)| name == TABLE_FACTS_DEVICES));
+        assert!(!tables.iter().any(|(name, _)| name == TABLE_FACTS_SOLVED));
+        Ok(())
+    }
+
+    #[test]
+    fn facts_optional_tables_round_trip_when_enabled() -> Result<()> {
+        let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_facts_present");
+        std::fs::create_dir_all(&tmp_dir)?;
+        let output_path = tmp_dir.join("facts_present.rpf");
+
+        let mut table_batches: HashMap<&'static str, RecordBatch> = all_table_schemas()
+            .into_iter()
+            .map(|(name, schema)| (name, RecordBatch::new_empty(Arc::new(schema))))
+            .collect();
+        table_batches.insert(
+            TABLE_FACTS_DEVICES,
+            RecordBatch::new_empty(Arc::new(facts_devices_schema())),
+        );
+        table_batches.insert(
+            TABLE_FACTS_SOLVED,
+            RecordBatch::new_empty(Arc::new(facts_solved_schema())),
+        );
+
+        write_root_rpf(
+            &output_path,
+            &table_batches,
+            &RootWriteOptions {
+                include_facts_devices: true,
+                include_facts_solved: true,
+                ..Default::default()
+            },
+        )?;
+
+        let tables = read_rpf_tables(&output_path)?;
+        assert!(tables.iter().any(|(name, _)| name == TABLE_FACTS_DEVICES));
+        assert!(tables.iter().any(|(name, _)| name == TABLE_FACTS_SOLVED));
+
+        let metadata = rpf_file_metadata(&output_path)?;
+        assert_eq!(
+            metadata.get("rpf.facts_solved_state_presence"),
+            Some(&"actual_solved".to_string())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn read_supports_older_branches_schema_with_missing_additive_columns() -> Result<()> {
+        let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_backward_read");
+        std::fs::create_dir_all(&tmp_dir)?;
+        let output_path = tmp_dir.join("v085_like_branches.rpf");
+
+        let mut table_batches: HashMap<&'static str, RecordBatch> = all_table_schemas()
+            .into_iter()
+            .map(|(name, schema)| (name, RecordBatch::new_empty(Arc::new(schema))))
+            .collect();
+
+        let old_branch_fields: Vec<Field> = branches_schema().fields()[0..16]
+            .iter()
+            .map(|field| field.as_ref().clone())
+            .collect();
+        let old_branches_schema = Schema::new_with_metadata(old_branch_fields, schema_metadata());
+        table_batches.insert(
+            TABLE_BRANCHES,
+            RecordBatch::new_empty(Arc::new(old_branches_schema.clone())),
+        );
+
+        let mut root_fields = Vec::new();
+        let mut root_columns: Vec<ArrayRef> = Vec::new();
+        for (name, _) in all_table_schemas() {
+            let table_batch = table_batches
+                .get(name)
+                .expect("table batch should exist for each required table");
+            let table_schema = table_batch.schema();
+            root_fields.push(Field::new(
+                name,
+                DataType::Struct(table_schema.fields().clone()),
+                true,
+            ));
+            root_columns.push(Arc::new(StructArray::new(
+                table_schema.fields().clone(),
+                table_batch.columns().to_vec(),
+                None,
+            )) as ArrayRef);
+        }
+
+        let mut root_meta = schema_metadata();
+        root_meta.insert(METADATA_KEY_VERSION.to_string(), "0.8.5".to_string());
+        root_meta.insert(METADATA_KEY_RPF_VERSION.to_string(), "0.8.5".to_string());
+        for (name, _) in all_table_schemas() {
+            root_meta.insert(row_count_metadata_key(name), "0".to_string());
+        }
+        let root_schema = Arc::new(Schema::new_with_metadata(root_fields, root_meta));
+        let root_batch = RecordBatch::try_new(root_schema.clone(), root_columns)?;
+
+        let mut out = File::create(&output_path)?;
+        let mut writer = FileWriter::try_new(&mut out, &root_schema)?;
+        writer.write_metadata(METADATA_KEY_VERSION, "0.8.5");
+        writer.write_metadata(METADATA_KEY_RPF_VERSION, "0.8.5");
+        writer.write(&root_batch)?;
+        writer.finish()?;
+
+        let tables = read_rpf_tables(&output_path)?;
+        let (_, branches) = tables
+            .iter()
+            .find(|(name, _)| name == TABLE_BRANCHES)
+            .context("missing branches table")?;
+        assert_eq!(branches.schema().fields().len(), branches_schema().fields().len());
+        assert_eq!(SCHEMA_VERSION, "0.8.6");
         Ok(())
     }
 }

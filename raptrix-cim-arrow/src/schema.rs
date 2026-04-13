@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.8.5 profile.
+//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.8.6 profile.
 //!
 //! **CGMES 3.0+ Only**: This module targets CGMES v3.0 and later (v17+ CIM) merged profiles.
 //! Support for legacy CGMES 2.4.x was dropped in this release for simplicity and performance.
@@ -17,12 +17,14 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, Schema};
 
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.8.5 - High-performance open CIM profile (CGMES 3.0+) by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.8.6 - High-performance open CIM profile (CGMES 3.0+) by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.";
 
 /// Canonical RPF format version tag embedded as file-level metadata.
-pub const RPF_VERSION: &str = "0.8.5";
+pub const RPF_VERSION: &str = "0.8.6";
 
 /// Supported RPF versions accepted by generic Arrow IPC readers.
+/// v0.8.6 adds additive FACTS fields on branches and optional facts_devices / facts_solved
+///   tables, plus FACTS feature metadata and smartvalve token normalization helpers.
 /// v0.8.5 adds switched-shunt stable identity, switched_shunts_solved table, extended
 ///   generators_solved (p_mw, q_mvar, status), angle-reference metadata
 ///   (slack_bus_id_solved, angle_reference_deg), and solved_shunt_state_presence.
@@ -34,8 +36,8 @@ pub const RPF_VERSION: &str = "0.8.5";
 /// v0.8.1 normalizes all power/admittance fields to per-unit on base_mva.
 /// v0.8.0 introduced diagram layout support and dropped CGMES 2.4.x compatibility.
 pub const SUPPORTED_RPF_VERSIONS: &[&str] = &[
-    "v0.8.5", "0.8.5", "v0.8.4", "0.8.4", "v0.8.3", "0.8.3", "v0.8.2", "0.8.2",
-    "v0.8.1", "0.8.1", "v0.8.0", "0.8.0", "0.7.1", "0.7.0",
+    "v0.8.6", "0.8.6", "v0.8.5", "0.8.5", "v0.8.4", "0.8.4", "v0.8.3", "0.8.3",
+    "v0.8.2", "0.8.2", "v0.8.1", "0.8.1", "v0.8.0", "0.8.0", "0.7.1", "0.7.0",
 ];
 
 /// Backward-compatible alias retained for older call sites.
@@ -59,6 +61,10 @@ pub const METADATA_KEY_FEATURE_DIAGRAM_LAYOUT: &str = "raptrix.features.diagram_
 pub const METADATA_KEY_FEATURE_CONTINGENCIES_STUB: &str = "raptrix.features.contingencies_stub";
 /// Optional metadata key indicating dynamics_models table uses placeholder rows.
 pub const METADATA_KEY_FEATURE_DYNAMICS_STUB: &str = "raptrix.features.dynamics_stub";
+/// Optional metadata key indicating FACTS metadata tables are emitted.
+pub const METADATA_KEY_FEATURE_FACTS: &str = "raptrix.features.facts";
+/// Optional metadata key indicating facts_solved table is emitted.
+pub const METADATA_KEY_FEATURE_FACTS_SOLVED: &str = "raptrix.features.facts_solved";
 /// Optional metadata key indicating export is a topology-only snapshot.
 pub const METADATA_KEY_FEATURE_TOPOLOGY_ONLY: &str = "rpf.features.topology_only";
 /// Optional metadata key indicating all injections were zeroed by export.
@@ -86,6 +92,9 @@ pub const METADATA_KEY_SOLVER_ANGLE_REFERENCE_DEG: &str = "rpf.solver.angle_refe
 /// Optional metadata key indicating solved shunt switching state presence.
 /// Values: actual_solved | not_available. Written when solved_state_presence=actual_solved.
 pub const METADATA_KEY_SOLVED_SHUNT_STATE_PRESENCE: &str = "rpf.solver.solved_shunt_state_presence";
+/// Optional metadata key indicating facts_solved table presence/provenance.
+/// Values: actual_solved | not_available.
+pub const METADATA_KEY_FACTS_SOLVED_STATE_PRESENCE: &str = "rpf.facts_solved_state_presence";
 /// Optional metadata key indicating total electrical island count.
 pub const METADATA_KEY_TOPOLOGY_ISLAND_COUNT: &str = "rpf.topology.island_count";
 /// Optional metadata key indicating largest-island bus count.
@@ -134,6 +143,8 @@ pub const TABLE_CONTINGENCIES: &str = "contingencies";
 pub const TABLE_INTERFACES: &str = "interfaces";
 /// Canonical dynamics models table name.
 pub const TABLE_DYNAMICS_MODELS: &str = "dynamics_models";
+/// Optional FACTS devices table name.
+pub const TABLE_FACTS_DEVICES: &str = "facts_devices";
 /// Optional detail table emitted only when connectivity-detail mode is enabled.
 pub const TABLE_CONNECTIVITY_GROUPS: &str = "connectivity_groups";
 /// Optional detail table emitted only when node-breaker detail mode is enabled.
@@ -157,9 +168,26 @@ pub const TABLE_GENERATORS_SOLVED: &str = "generators_solved";
 /// Optional solved-state table emitted only when case_mode=solved_snapshot.
 /// Contains per-bank post-solve switched-shunt step and susceptance (v0.8.5+).
 pub const TABLE_SWITCHED_SHUNTS_SOLVED: &str = "switched_shunts_solved";
+/// Optional solved-state FACTS table emitted for solved snapshot replay (v0.8.6+).
+pub const TABLE_FACTS_SOLVED: &str = "facts_solved";
 
 /// Optional column required on export-side solved-result tables.
 pub const COLUMN_CONTINGENCY_ID: &str = "contingency_id";
+
+/// Canonical FACTS device token for SmartValve devices.
+pub const FACTS_DEVICE_TYPE_SMARTVALVE: &str = "smartvalve";
+
+/// Accepts FACTS device aliases and returns the canonical token.
+pub fn normalize_facts_device_type(value: &str) -> Option<&'static str> {
+    let token = value.trim();
+    if token.eq_ignore_ascii_case(FACTS_DEVICE_TYPE_SMARTVALVE)
+        || token.eq_ignore_ascii_case("smart_valve")
+        || token.eq_ignore_ascii_case("sv")
+    {
+        return Some(FACTS_DEVICE_TYPE_SMARTVALVE);
+    }
+    None
+}
 
 fn dict_utf8() -> DataType {
     DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8))
@@ -332,6 +360,15 @@ pub fn branches_schema() -> Schema {
             Field::new("name", dict_utf8_u32(), true),
             Field::new("from_nominal_kv", DataType::Float64, true),
             Field::new("to_nominal_kv", DataType::Float64, true),
+            // v0.8.6: additive generic FACTS control metadata.
+            Field::new("device_type", dict_utf8(), true),
+            Field::new("control_mode", dict_utf8(), true),
+            Field::new("control_target_flow_mw", DataType::Float64, true),
+            Field::new("x_min_pu", DataType::Float64, true),
+            Field::new("x_max_pu", DataType::Float64, true),
+            Field::new("injected_voltage_mag_pu", DataType::Float64, true),
+            Field::new("injected_voltage_angle_deg", DataType::Float64, true),
+            Field::new("facts_params", map_string_f64(), true),
         ],
         schema_metadata(),
     )
@@ -555,6 +592,31 @@ pub fn dynamics_models_schema() -> Schema {
     )
 }
 
+/// Optional `facts_devices` table schema (v0.8.6+).
+pub fn facts_devices_schema() -> Schema {
+    Schema::new_with_metadata(
+        vec![
+            Field::new("device_id", dict_utf8(), false),
+            Field::new("branch_id", DataType::Int32, true),
+            Field::new("bus_id", DataType::Int32, true),
+            Field::new("device_type", dict_utf8(), false),
+            Field::new("status", DataType::Boolean, false),
+            Field::new("control_mode", dict_utf8(), true),
+            Field::new("target_flow_mw", DataType::Float64, true),
+            Field::new("x_min_pu", DataType::Float64, true),
+            Field::new("x_max_pu", DataType::Float64, true),
+            Field::new("voltage_injection_mag_pu", DataType::Float64, true),
+            Field::new("voltage_injection_angle_deg", DataType::Float64, true),
+            Field::new("response_time_ms", DataType::Float64, true),
+            Field::new("rating_mva", DataType::Float64, true),
+            Field::new("dynamics_model_ref", dict_utf8(), true),
+            Field::new("params", map_string_f64(), true),
+            Field::new("name", dict_utf8(), true),
+        ],
+        schema_metadata(),
+    )
+}
+
 /// Optional `connectivity_groups` table schema.
 pub fn connectivity_groups_schema() -> Schema {
     Schema::new_with_metadata(
@@ -754,6 +816,31 @@ pub fn switched_shunts_solved_schema() -> Schema {
     )
 }
 
+/// Optional `facts_solved` table schema (v0.8.6+).
+pub fn facts_solved_schema() -> Schema {
+    Schema::new_with_metadata(
+        vec![
+            Field::new("device_id", dict_utf8(), false),
+            Field::new("effective_x_pu", DataType::Float64, true),
+            Field::new("injected_voltage_mag_pu", DataType::Float64, true),
+            Field::new("injected_voltage_angle_deg", DataType::Float64, true),
+            Field::new("p_effect_mw", DataType::Float64, true),
+            Field::new("q_effect_mvar", DataType::Float64, true),
+            Field::new("status", DataType::Boolean, true),
+        ],
+        schema_metadata(),
+    )
+}
+
+/// Returns optional FACTS table schemas in deterministic order (v0.8.6+).
+pub fn facts_table_schemas(include_facts_solved: bool) -> Vec<(&'static str, Schema)> {
+    let mut tables = vec![(TABLE_FACTS_DEVICES, facts_devices_schema())];
+    if include_facts_solved {
+        tables.push((TABLE_FACTS_SOLVED, facts_solved_schema()));
+    }
+    tables
+}
+
 /// Returns optional solved-state table schemas in deterministic order (v0.8.4+).
 ///
 /// These tables are appended after all other optional root columns when
@@ -805,6 +892,7 @@ pub fn table_schema(table_name: &str) -> Option<Schema> {
         TABLE_CONTINGENCIES => Some(contingencies_schema()),
         TABLE_INTERFACES => Some(interfaces_schema()),
         TABLE_DYNAMICS_MODELS => Some(dynamics_models_schema()),
+        TABLE_FACTS_DEVICES => Some(facts_devices_schema()),
         TABLE_CONNECTIVITY_GROUPS => Some(connectivity_groups_schema()),
         TABLE_NODE_BREAKER_DETAIL => Some(node_breaker_detail_schema()),
         TABLE_SWITCH_DETAIL => Some(switch_detail_schema()),
@@ -815,6 +903,7 @@ pub fn table_schema(table_name: &str) -> Option<Schema> {
         TABLE_BUSES_SOLVED => Some(buses_solved_schema()),
         TABLE_GENERATORS_SOLVED => Some(generators_solved_schema()),
         TABLE_SWITCHED_SHUNTS_SOLVED => Some(switched_shunts_solved_schema()),
+        TABLE_FACTS_SOLVED => Some(facts_solved_schema()),
         _ => None,
     }
 }
@@ -836,7 +925,10 @@ pub fn branch_schema() -> Schema {
 
 #[cfg(test)]
 mod tests {
-    use super::{diagram_objects_schema, diagram_points_schema};
+    use super::{
+        branches_schema, contingencies_schema, diagram_objects_schema, diagram_points_schema,
+        facts_devices_schema, facts_solved_schema, normalize_facts_device_type,
+    };
     use arrow::datatypes::DataType;
 
     #[test]
@@ -879,5 +971,58 @@ mod tests {
         assert_eq!(points.field(4).name(), "y");
         assert_eq!(points.field(4).data_type(), &DataType::Float64);
         assert!(!points.field(4).is_nullable());
+    }
+
+    #[test]
+    fn branches_schema_appends_facts_columns() {
+        let branches = branches_schema();
+        assert_eq!(branches.fields().len(), 24);
+        assert_eq!(branches.field(16).name(), "device_type");
+        assert_eq!(branches.field(17).name(), "control_mode");
+        assert_eq!(branches.field(18).name(), "control_target_flow_mw");
+        assert_eq!(branches.field(19).name(), "x_min_pu");
+        assert_eq!(branches.field(20).name(), "x_max_pu");
+        assert_eq!(branches.field(21).name(), "injected_voltage_mag_pu");
+        assert_eq!(branches.field(22).name(), "injected_voltage_angle_deg");
+        assert_eq!(branches.field(23).name(), "facts_params");
+    }
+
+    #[test]
+    fn facts_tables_match_contract() {
+        let devices = facts_devices_schema();
+        assert_eq!(devices.fields().len(), 16);
+        assert_eq!(devices.field(0).name(), "device_id");
+        assert!(!devices.field(0).is_nullable());
+        assert_eq!(devices.field(3).name(), "device_type");
+        assert!(!devices.field(3).is_nullable());
+
+        let solved = facts_solved_schema();
+        assert_eq!(solved.fields().len(), 7);
+        assert_eq!(solved.field(0).name(), "device_id");
+        assert_eq!(solved.field(1).name(), "effective_x_pu");
+        assert_eq!(solved.field(6).name(), "status");
+    }
+
+    #[test]
+    fn contingency_elements_include_generic_equipment_identity() {
+        let contingencies = contingencies_schema();
+        let elements_field = contingencies.field(1);
+        let DataType::List(element_field) = elements_field.data_type() else {
+            panic!("contingencies.elements must be a list");
+        };
+        let DataType::Struct(child_fields) = element_field.data_type() else {
+            panic!("contingencies.elements child must be a struct");
+        };
+        assert!(child_fields.iter().any(|field| field.name() == "equipment_kind"));
+        assert!(child_fields.iter().any(|field| field.name() == "equipment_id"));
+    }
+
+    #[test]
+    fn smartvalve_alias_normalization_is_canonical() {
+        assert_eq!(normalize_facts_device_type("smartvalve"), Some("smartvalve"));
+        assert_eq!(normalize_facts_device_type("SV"), Some("smartvalve"));
+        assert_eq!(normalize_facts_device_type("sv"), Some("smartvalve"));
+        assert_eq!(normalize_facts_device_type("smart_valve"), Some("smartvalve"));
+        assert_eq!(normalize_facts_device_type("svc"), None);
     }
 }
