@@ -24,15 +24,14 @@ use arrow::record_batch::RecordBatch;
 use memmap2::MmapOptions;
 
 use crate::schema::{
-    BRANDING, METADATA_KEY_BRANDING, METADATA_KEY_FEATURE_CONTINGENCIES_STUB,
-    METADATA_KEY_FEATURE_DIAGRAM_LAYOUT, METADATA_KEY_FEATURE_DYNAMICS_STUB,
-    METADATA_KEY_FEATURE_FACTS, METADATA_KEY_FEATURE_FACTS_SOLVED,
-    METADATA_KEY_FACTS_SOLVED_STATE_PRESENCE, METADATA_KEY_FEATURE_NODE_BREAKER,
-    METADATA_KEY_RPF_VERSION, METADATA_KEY_VERSION,
-    SCHEMA_VERSION, SUPPORTED_RPF_VERSIONS, TABLE_BRANCHES, TABLE_BUSES, TABLE_BUSES_SOLVED,
-    TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED,
-    TABLE_GENERATORS, TABLE_GENERATORS_SOLVED, TABLE_LOADS, TABLE_TRANSFORMERS_2W,
-    TABLE_TRANSFORMERS_3W, all_table_schemas, diagram_layout_table_schemas,
+    BRANDING, METADATA_KEY_BRANDING, METADATA_KEY_FACTS_SOLVED_STATE_PRESENCE,
+    METADATA_KEY_FEATURE_CONTINGENCIES_STUB, METADATA_KEY_FEATURE_DIAGRAM_LAYOUT,
+    METADATA_KEY_FEATURE_DYNAMICS_STUB, METADATA_KEY_FEATURE_FACTS,
+    METADATA_KEY_FEATURE_FACTS_SOLVED, METADATA_KEY_FEATURE_NODE_BREAKER, METADATA_KEY_RPF_VERSION,
+    METADATA_KEY_VERSION, SCHEMA_VERSION, SUPPORTED_RPF_VERSIONS, TABLE_BRANCHES, TABLE_BUSES,
+    TABLE_BUSES_SOLVED, TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_FACTS_DEVICES,
+    TABLE_FACTS_SOLVED, TABLE_GENERATORS, TABLE_GENERATORS_SOLVED, TABLE_LOADS,
+    TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, all_table_schemas, diagram_layout_table_schemas,
     facts_table_schemas, node_breaker_table_schemas, schema_metadata, solved_state_table_schemas,
     table_schema,
 };
@@ -764,19 +763,24 @@ mod tests {
     use std::sync::Arc;
 
     use anyhow::{Context, Result};
-    use arrow::array::{ArrayRef, Float32Array, Float64Array, Int32Array, StringArray, StructArray};
+    use arrow::array::{
+        ArrayRef, Float32Array, Float64Array, Int32Array, StringArray, StructArray,
+    };
     use arrow::datatypes::{DataType, Field, Schema};
     use arrow::ipc::writer::FileWriter;
     use arrow::record_batch::RecordBatch;
 
     use crate::schema::{
-        METADATA_KEY_RPF_VERSION, METADATA_KEY_VERSION, SCHEMA_VERSION, all_table_schemas,
-        branches_schema, diagram_objects_schema, diagram_points_schema, facts_devices_schema,
-        facts_solved_schema, schema_metadata, TABLE_BRANCHES, TABLE_DIAGRAM_OBJECTS,
-        TABLE_DIAGRAM_POINTS, TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED,
+        METADATA_KEY_RPF_VERSION, METADATA_KEY_VERSION, SCHEMA_VERSION, TABLE_BRANCHES,
+        TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED,
+        all_table_schemas, branches_schema, diagram_objects_schema, diagram_points_schema,
+        facts_devices_schema, facts_solved_schema, schema_metadata,
     };
 
-    use super::{RootWriteOptions, read_rpf_tables, row_count_metadata_key, rpf_file_metadata, write_root_rpf};
+    use super::{
+        RootWriteOptions, read_rpf_tables, row_count_metadata_key, rpf_file_metadata,
+        write_root_rpf,
+    };
 
     #[test]
     fn round_trip_preserves_diagram_layout_optional_tables() -> Result<()> {
@@ -992,9 +996,11 @@ mod tests {
             .iter()
             .find(|(name, _)| name == TABLE_BRANCHES)
             .context("missing branches table")?;
-        assert_eq!(branches.schema().fields().len(), branches_schema().fields().len());
+        assert_eq!(
+            branches.schema().fields().len(),
+            branches_schema().fields().len()
+        );
         assert_eq!(SCHEMA_VERSION, "0.8.6");
         Ok(())
     }
 }
-

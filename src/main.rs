@@ -19,8 +19,8 @@ use anyhow::{Context, Result, bail};
 use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 
 use raptrix_cim_rs::arrow_schema::{
-    BRANDING, METADATA_KEY_FEATURE_CONTINGENCIES_STUB, METADATA_KEY_FEATURE_DYNAMICS_STUB,
-    METADATA_KEY_FEATURE_DIAGRAM_LAYOUT, METADATA_KEY_FEATURE_NODE_BREAKER,
+    BRANDING, METADATA_KEY_FEATURE_CONTINGENCIES_STUB, METADATA_KEY_FEATURE_DIAGRAM_LAYOUT,
+    METADATA_KEY_FEATURE_DYNAMICS_STUB, METADATA_KEY_FEATURE_NODE_BREAKER,
 };
 use raptrix_cim_rs::rpf_writer::{
     BusResolutionMode, DetachedIslandPolicy, WriteOptions, rpf_file_metadata, summarize_rpf,
@@ -370,7 +370,8 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
         3
     } else {
         0
-    } + if write_options.emit_diagram_layout && summary.diagram_object_rows > 0 {
+    } + if write_options.emit_diagram_layout && summary.diagram_object_rows > 0
+    {
         2
     } else {
         0
@@ -471,7 +472,7 @@ fn has_explicit_profiles(args: &ConvertArgs) -> bool {
         || args.sv.is_some()
         || args.ssh.is_some()
         || args.dy.is_some()
-    || args.dl.is_some()
+        || args.dl.is_some()
 }
 
 fn explicit_profiles(args: &ConvertArgs, cwd: &Path) -> Result<Vec<(String, PathBuf)>> {
@@ -680,4 +681,3 @@ mod tests {
         Ok(())
     }
 }
-

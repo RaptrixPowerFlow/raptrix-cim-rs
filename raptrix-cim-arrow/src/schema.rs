@@ -36,8 +36,8 @@ pub const RPF_VERSION: &str = "0.8.6";
 /// v0.8.1 normalizes all power/admittance fields to per-unit on base_mva.
 /// v0.8.0 introduced diagram layout support and dropped CGMES 2.4.x compatibility.
 pub const SUPPORTED_RPF_VERSIONS: &[&str] = &[
-    "v0.8.6", "0.8.6", "v0.8.5", "0.8.5", "v0.8.4", "0.8.4", "v0.8.3", "0.8.3",
-    "v0.8.2", "0.8.2", "v0.8.1", "0.8.1", "v0.8.0", "0.8.0", "0.7.1", "0.7.0",
+    "v0.8.6", "0.8.6", "v0.8.5", "0.8.5", "v0.8.4", "0.8.4", "v0.8.3", "0.8.3", "v0.8.2", "0.8.2",
+    "v0.8.1", "0.8.1", "v0.8.0", "0.8.0", "0.7.1", "0.7.0",
 ];
 
 /// Backward-compatible alias retained for older call sites.
@@ -98,8 +98,7 @@ pub const METADATA_KEY_FACTS_SOLVED_STATE_PRESENCE: &str = "rpf.facts_solved_sta
 /// Optional metadata key indicating total electrical island count.
 pub const METADATA_KEY_TOPOLOGY_ISLAND_COUNT: &str = "rpf.topology.island_count";
 /// Optional metadata key indicating largest-island bus count.
-pub const METADATA_KEY_TOPOLOGY_MAIN_ISLAND_BUS_COUNT: &str =
-    "rpf.topology.main_island_bus_count";
+pub const METADATA_KEY_TOPOLOGY_MAIN_ISLAND_BUS_COUNT: &str = "rpf.topology.main_island_bus_count";
 /// Optional metadata key indicating if detached islands exist.
 pub const METADATA_KEY_TOPOLOGY_DETACHED_ISLANDS_PRESENT: &str =
     "rpf.topology.detached_islands_present";
@@ -849,7 +848,10 @@ pub fn solved_state_table_schemas() -> Vec<(&'static str, Schema)> {
     vec![
         (TABLE_BUSES_SOLVED, buses_solved_schema()),
         (TABLE_GENERATORS_SOLVED, generators_solved_schema()),
-        (TABLE_SWITCHED_SHUNTS_SOLVED, switched_shunts_solved_schema()),
+        (
+            TABLE_SWITCHED_SHUNTS_SOLVED,
+            switched_shunts_solved_schema(),
+        ),
     ]
 }
 
@@ -1013,17 +1015,30 @@ mod tests {
         let DataType::Struct(child_fields) = element_field.data_type() else {
             panic!("contingencies.elements child must be a struct");
         };
-        assert!(child_fields.iter().any(|field| field.name() == "equipment_kind"));
-        assert!(child_fields.iter().any(|field| field.name() == "equipment_id"));
+        assert!(
+            child_fields
+                .iter()
+                .any(|field| field.name() == "equipment_kind")
+        );
+        assert!(
+            child_fields
+                .iter()
+                .any(|field| field.name() == "equipment_id")
+        );
     }
 
     #[test]
     fn smartvalve_alias_normalization_is_canonical() {
-        assert_eq!(normalize_facts_device_type("smartvalve"), Some("smartvalve"));
+        assert_eq!(
+            normalize_facts_device_type("smartvalve"),
+            Some("smartvalve")
+        );
         assert_eq!(normalize_facts_device_type("SV"), Some("smartvalve"));
         assert_eq!(normalize_facts_device_type("sv"), Some("smartvalve"));
-        assert_eq!(normalize_facts_device_type("smart_valve"), Some("smartvalve"));
+        assert_eq!(
+            normalize_facts_device_type("smart_valve"),
+            Some("smartvalve")
+        );
         assert_eq!(normalize_facts_device_type("svc"), None);
     }
 }
-

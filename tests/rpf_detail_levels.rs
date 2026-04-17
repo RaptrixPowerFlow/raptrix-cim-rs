@@ -7,13 +7,12 @@ use arrow::array::{Array, DictionaryArray, MapArray, StringArray};
 use arrow::datatypes::Int32Type;
 use raptrix_cim_rs::arrow_schema::{
     SCHEMA_VERSION, SUPPORTED_RPF_VERSIONS, TABLE_CONNECTIVITY_GROUPS, TABLE_CONNECTIVITY_NODES,
-    TABLE_DYNAMICS_MODELS,
-    TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_NODE_BREAKER_DETAIL, TABLE_SWITCH_DETAIL,
+    TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_DYNAMICS_MODELS, TABLE_NODE_BREAKER_DETAIL,
+    TABLE_SWITCH_DETAIL,
 };
 use raptrix_cim_rs::rpf_writer::{
     BusResolutionMode, DetachedIslandPolicy, WriteOptions, read_rpf_tables, rpf_file_metadata,
-    summarize_rpf,
-    write_complete_rpf_with_options,
+    summarize_rpf, write_complete_rpf_with_options,
 };
 
 static OUTPUT_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -28,7 +27,11 @@ fn fixture_path(relative: &str) -> PathBuf {
 
 fn unique_temp_rpf_path(label: &str) -> PathBuf {
     let seq = OUTPUT_COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("raptrix_cim_rs_{label}_{}_{}.rpf", std::process::id(), seq))
+    std::env::temp_dir().join(format!(
+        "raptrix_cim_rs_{label}_{}_{}.rpf",
+        std::process::id(),
+        seq
+    ))
 }
 
 fn write_eq_fixture_with_breaker() -> Result<PathBuf> {
@@ -52,7 +55,11 @@ fn write_eq_fixture_with_breaker() -> Result<PathBuf> {
 }
 
 fn table_names(path: &Path) -> Result<Vec<String>> {
-    Ok(summarize_rpf(path)?.tables.into_iter().map(|t| t.table_name).collect())
+    Ok(summarize_rpf(path)?
+        .tables
+        .into_iter()
+        .map(|t| t.table_name)
+        .collect())
 }
 
 fn dictionary_value_at_int32(array: &DictionaryArray<Int32Type>, row: usize) -> String {
@@ -69,7 +76,10 @@ fn dictionary_value_at_int32(array: &DictionaryArray<Int32Type>, row: usize) -> 
 #[test]
 fn legacy_v060_fixtures_are_rejected_with_clear_error() {
     let mut observed_any_fixture = false;
-    for file_name in ["realgrid_rpf_v0.6.0.rpf", "realgrid_rpf_v0.6.0_node_breaker.rpf"] {
+    for file_name in [
+        "realgrid_rpf_v0.6.0.rpf",
+        "realgrid_rpf_v0.6.0_node_breaker.rpf",
+    ] {
         let path = fixture_path(&format!("tests/data/external/{file_name}"));
         if !path.is_file() {
             continue;
@@ -88,7 +98,9 @@ fn legacy_v060_fixtures_are_rejected_with_clear_error() {
         );
     }
     if !observed_any_fixture {
-        eprintln!("Skipping legacy fixture assertions: no v0.6.0 fixtures found in tests/data/external");
+        eprintln!(
+            "Skipping legacy fixture assertions: no v0.6.0 fixtures found in tests/data/external"
+        );
     }
 }
 
@@ -125,7 +137,11 @@ fn supported_external_v3_fixtures_match_expected_optional_tables() -> Result<()>
             version
         );
 
-        let names: Vec<&str> = summary.tables.iter().map(|table| table.table_name.as_str()).collect();
+        let names: Vec<&str> = summary
+            .tables
+            .iter()
+            .map(|table| table.table_name.as_str())
+            .collect();
         assert_eq!(
             names.contains(&TABLE_CONNECTIVITY_GROUPS),
             false,
@@ -204,12 +220,36 @@ fn generated_v080_outputs_make_detail_levels_explicit() -> Result<()> {
     )?;
     let topological_tables = table_names(&topological_output)?;
     assert_eq!(topological_tables.len(), 15);
-    assert!(!topological_tables.iter().any(|name| name == TABLE_CONNECTIVITY_GROUPS));
-    assert!(!topological_tables.iter().any(|name| name == TABLE_NODE_BREAKER_DETAIL));
-    assert!(!topological_tables.iter().any(|name| name == TABLE_SWITCH_DETAIL));
-    assert!(!topological_tables.iter().any(|name| name == TABLE_CONNECTIVITY_NODES));
-    assert!(!topological_tables.iter().any(|name| name == TABLE_DIAGRAM_OBJECTS));
-    assert!(!topological_tables.iter().any(|name| name == TABLE_DIAGRAM_POINTS));
+    assert!(
+        !topological_tables
+            .iter()
+            .any(|name| name == TABLE_CONNECTIVITY_GROUPS)
+    );
+    assert!(
+        !topological_tables
+            .iter()
+            .any(|name| name == TABLE_NODE_BREAKER_DETAIL)
+    );
+    assert!(
+        !topological_tables
+            .iter()
+            .any(|name| name == TABLE_SWITCH_DETAIL)
+    );
+    assert!(
+        !topological_tables
+            .iter()
+            .any(|name| name == TABLE_CONNECTIVITY_NODES)
+    );
+    assert!(
+        !topological_tables
+            .iter()
+            .any(|name| name == TABLE_DIAGRAM_OBJECTS)
+    );
+    assert!(
+        !topological_tables
+            .iter()
+            .any(|name| name == TABLE_DIAGRAM_POINTS)
+    );
     assert_eq!(topological_summary.connectivity_groups_rows, 0);
     assert_eq!(topological_summary.node_breaker_rows, 1);
 
@@ -234,10 +274,26 @@ fn generated_v080_outputs_make_detail_levels_explicit() -> Result<()> {
     )?;
     let connectivity_tables = table_names(&connectivity_output)?;
     assert_eq!(connectivity_tables.len(), 15);
-    assert!(!connectivity_tables.iter().any(|name| name == TABLE_CONNECTIVITY_GROUPS));
-    assert!(!connectivity_tables.iter().any(|name| name == TABLE_NODE_BREAKER_DETAIL));
-    assert!(!connectivity_tables.iter().any(|name| name == TABLE_SWITCH_DETAIL));
-    assert!(!connectivity_tables.iter().any(|name| name == TABLE_CONNECTIVITY_NODES));
+    assert!(
+        !connectivity_tables
+            .iter()
+            .any(|name| name == TABLE_CONNECTIVITY_GROUPS)
+    );
+    assert!(
+        !connectivity_tables
+            .iter()
+            .any(|name| name == TABLE_NODE_BREAKER_DETAIL)
+    );
+    assert!(
+        !connectivity_tables
+            .iter()
+            .any(|name| name == TABLE_SWITCH_DETAIL)
+    );
+    assert!(
+        !connectivity_tables
+            .iter()
+            .any(|name| name == TABLE_CONNECTIVITY_NODES)
+    );
     assert!(
         connectivity_summary.final_bus_count >= topological_summary.final_bus_count,
         "connectivity detail should not reduce bus count"
@@ -264,25 +320,45 @@ fn generated_v080_outputs_make_detail_levels_explicit() -> Result<()> {
     )?;
     let node_breaker_tables = table_names(&node_breaker_output)?;
     assert_eq!(node_breaker_tables.len(), 18);
-    assert!(!node_breaker_tables.iter().any(|name| name == TABLE_CONNECTIVITY_GROUPS));
-    assert!(node_breaker_tables.iter().any(|name| name == TABLE_NODE_BREAKER_DETAIL));
-    assert!(node_breaker_tables.iter().any(|name| name == TABLE_SWITCH_DETAIL));
-    assert!(node_breaker_tables.iter().any(|name| name == TABLE_CONNECTIVITY_NODES));
+    assert!(
+        !node_breaker_tables
+            .iter()
+            .any(|name| name == TABLE_CONNECTIVITY_GROUPS)
+    );
+    assert!(
+        node_breaker_tables
+            .iter()
+            .any(|name| name == TABLE_NODE_BREAKER_DETAIL)
+    );
+    assert!(
+        node_breaker_tables
+            .iter()
+            .any(|name| name == TABLE_SWITCH_DETAIL)
+    );
+    assert!(
+        node_breaker_tables
+            .iter()
+            .any(|name| name == TABLE_CONNECTIVITY_NODES)
+    );
     assert_eq!(
-        node_breaker_summary.node_breaker_rows,
-        node_breaker_summary.switch_detail_rows,
+        node_breaker_summary.node_breaker_rows, node_breaker_summary.switch_detail_rows,
         "node breaker and switch detail rows should stay aligned"
     );
     assert_eq!(
-        node_breaker_summary.connectivity_node_rows,
-        node_breaker_summary.final_bus_count,
+        node_breaker_summary.connectivity_node_rows, node_breaker_summary.final_bus_count,
         "connectivity-detail mode should expose one connectivity_nodes row per final bus in this fixture"
     );
 
     for output in [topological_output, connectivity_output, node_breaker_output] {
         let metadata = rpf_file_metadata(&output)?;
-        assert_eq!(metadata.get("rpf_version"), Some(&SCHEMA_VERSION.to_string()));
-        assert_eq!(metadata.get("raptrix.version"), Some(&SCHEMA_VERSION.to_string()));
+        assert_eq!(
+            metadata.get("rpf_version"),
+            Some(&SCHEMA_VERSION.to_string())
+        );
+        assert_eq!(
+            metadata.get("raptrix.version"),
+            Some(&SCHEMA_VERSION.to_string())
+        );
         let _ = fs::remove_file(output);
     }
     let _ = fs::remove_file(eq_path);

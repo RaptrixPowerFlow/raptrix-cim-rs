@@ -30,13 +30,22 @@ fn parse_args(args: Vec<String>) -> (Option<String>, Vec<String>) {
     }
 
     if forwarded.is_empty() {
-        forwarded = vec!["--profiles".to_string(), "both".to_string(), "--clean".to_string()];
+        forwarded = vec![
+            "--profiles".to_string(),
+            "both".to_string(),
+            "--clean".to_string(),
+        ];
     }
 
     (data_root, forwarded)
 }
 
-fn run_python(python_cmd: &str, script: &PathBuf, forwarded: &[String], data_root: &str) -> std::io::Result<std::process::ExitStatus> {
+fn run_python(
+    python_cmd: &str,
+    script: &PathBuf,
+    forwarded: &[String],
+    data_root: &str,
+) -> std::io::Result<std::process::ExitStatus> {
     Command::new(python_cmd)
         .arg(script)
         .args(forwarded)
