@@ -32,6 +32,8 @@ for file in "${files[@]}"; do
   esac
 
   case "$file" in
+    tests/data/external/.gitkeep)
+      ;;
     tests/data/external/*|tests/data/large/*|data/*)
       echo "[public-safety] blocked sensitive data path: $file"
       bad=1
@@ -67,13 +69,13 @@ for file in "${files[@]}"; do
   fi
 
   if [[ "$MODE" == "staged" ]]; then
-    if git show ":$file" 2>/dev/null | grep -I -n -E --quiet "$pattern"; then
+    if [[ "$file" != "scripts/public-safety-check.sh" ]] && git show ":$file" 2>/dev/null | grep -I -n -E --quiet "$pattern"; then
       echo "[public-safety] potential secret in staged file: $file"
       git show ":$file" 2>/dev/null | grep -I -n -E "$pattern" | sed -n '1,5p'
       bad=1
     fi
   else
-    if [[ -f "$file" ]] && grep -I -n -E --quiet "$pattern" "$file"; then
+    if [[ "$file" != "scripts/public-safety-check.sh" ]] && [[ -f "$file" ]] && grep -I -n -E --quiet "$pattern" "$file"; then
       echo "[public-safety] potential secret in tracked file: $file"
       grep -I -n -E "$pattern" "$file" | sed -n '1,5p'
       bad=1

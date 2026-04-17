@@ -21,39 +21,35 @@ use std::sync::Arc;
 use anyhow::{Context, Result, bail};
 use arrow::array::{
     ArrayBuilder, ArrayRef, BooleanBuilder, Float32Builder, Float64Builder, Int8Builder,
-    Int32Builder, ListBuilder, MapBuilder, MapFieldNames, StringBuilder,
-    StringDictionaryBuilder, StructBuilder, new_null_array,
+    Int32Builder, ListBuilder, MapBuilder, MapFieldNames, StringBuilder, StringDictionaryBuilder,
+    StructBuilder, new_null_array,
 };
 use arrow::datatypes::{DataType, Field, Int32Type, UInt32Type};
 use arrow::record_batch::RecordBatch;
 use chrono::Utc;
 use raptrix_cim_arrow::{RootWriteOptions, write_root_rpf_with_metadata};
-use sha2::{Digest, Sha256};
 pub use raptrix_cim_arrow::{
     RpfSummary, TableSummary, read_rpf_tables, rpf_file_metadata, summarize_rpf,
 };
+use sha2::{Digest, Sha256};
 
 use crate::arrow_schema::{
-    METADATA_KEY_CASE_FINGERPRINT, METADATA_KEY_CASE_MODE,
-    METADATA_KEY_FEATURE_TOPOLOGY_ONLY,
-    METADATA_KEY_FEATURE_ZERO_INJECTION_STUB,
-    METADATA_KEY_SOLVED_STATE_PRESENCE,
-    METADATA_KEY_SOLVER_ACCURACY, METADATA_KEY_SOLVER_ITERATIONS,
-    METADATA_KEY_SOLVER_MODE, METADATA_KEY_SOLVER_VERSION,
-    METADATA_KEY_SOLVER_SLACK_BUS_ID, METADATA_KEY_SOLVER_ANGLE_REFERENCE_DEG,
-    METADATA_KEY_SOLVED_SHUNT_STATE_PRESENCE,
+    METADATA_KEY_CASE_FINGERPRINT, METADATA_KEY_CASE_MODE, METADATA_KEY_FEATURE_TOPOLOGY_ONLY,
+    METADATA_KEY_FEATURE_ZERO_INJECTION_STUB, METADATA_KEY_SOLVED_SHUNT_STATE_PRESENCE,
+    METADATA_KEY_SOLVED_STATE_PRESENCE, METADATA_KEY_SOLVER_ACCURACY,
+    METADATA_KEY_SOLVER_ANGLE_REFERENCE_DEG, METADATA_KEY_SOLVER_ITERATIONS,
+    METADATA_KEY_SOLVER_MODE, METADATA_KEY_SOLVER_SLACK_BUS_ID, METADATA_KEY_SOLVER_VERSION,
     METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_GENERATION_ISLAND_COUNT,
     METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_LOAD_ISLAND_COUNT,
     METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_NETWORK_ISLAND_COUNT,
     METADATA_KEY_TOPOLOGY_DETACHED_ISLANDS_PRESENT, METADATA_KEY_TOPOLOGY_ISLAND_COUNT,
-    METADATA_KEY_TOPOLOGY_MAIN_ISLAND_BUS_COUNT,
-    METADATA_KEY_VALIDATION_MODE,
-    SCHEMA_VERSION, TABLE_AREAS, TABLE_BRANCHES, TABLE_BUSES, TABLE_CONNECTIVITY_NODES,
-    TABLE_CONTINGENCIES, TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_DYNAMICS_MODELS,
-    TABLE_FIXED_SHUNTS, TABLE_GENERATORS, TABLE_INTERFACES, TABLE_LOADS, TABLE_METADATA,
-    TABLE_NODE_BREAKER_DETAIL, TABLE_OWNERS, TABLE_SWITCH_DETAIL, TABLE_SWITCHED_SHUNTS,
-    TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, TABLE_ZONES, areas_schema, branches_schema,
-    buses_schema, connectivity_groups_schema, connectivity_nodes_schema, contingencies_schema,
+    METADATA_KEY_TOPOLOGY_MAIN_ISLAND_BUS_COUNT, METADATA_KEY_VALIDATION_MODE, SCHEMA_VERSION,
+    TABLE_AREAS, TABLE_BRANCHES, TABLE_BUSES, TABLE_CONNECTIVITY_NODES, TABLE_CONTINGENCIES,
+    TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_DYNAMICS_MODELS, TABLE_FIXED_SHUNTS,
+    TABLE_GENERATORS, TABLE_INTERFACES, TABLE_LOADS, TABLE_METADATA, TABLE_NODE_BREAKER_DETAIL,
+    TABLE_OWNERS, TABLE_SWITCH_DETAIL, TABLE_SWITCHED_SHUNTS, TABLE_TRANSFORMERS_2W,
+    TABLE_TRANSFORMERS_3W, TABLE_ZONES, areas_schema, branches_schema, buses_schema,
+    connectivity_groups_schema, connectivity_nodes_schema, contingencies_schema,
     diagram_objects_schema, diagram_points_schema, dynamics_models_schema, fixed_shunts_schema,
     generators_schema, interfaces_schema, loads_schema, metadata_schema,
     node_breaker_detail_schema, owners_schema, switch_detail_schema, switched_shunts_schema,
@@ -969,8 +965,7 @@ fn classify_islands(
         let mut class = IslandClassification::default();
 
         class.has_in_service_load = bus_set.iter().any(|bus_id| load_buses.contains(bus_id));
-        class.has_in_service_generation =
-            bus_set.iter().any(|bus_id| gen_buses.contains(bus_id));
+        class.has_in_service_generation = bus_set.iter().any(|bus_id| gen_buses.contains(bus_id));
         class.has_in_service_network = network_pairs
             .iter()
             .any(|(left, right)| bus_set.contains(left) && bus_set.contains(right));
@@ -1044,7 +1039,8 @@ fn enforce_detached_island_policy(
     let main_set: HashSet<i32> = main_island.iter().copied().collect();
 
     bus_rows.retain(|row| main_set.contains(&row.bus_id));
-    branch_rows.retain(|row| main_set.contains(&row.from_bus_id) && main_set.contains(&row.to_bus_id));
+    branch_rows
+        .retain(|row| main_set.contains(&row.from_bus_id) && main_set.contains(&row.to_bus_id));
     gen_rows.retain(|row| main_set.contains(&row.bus_id));
     load_rows.retain(|row| main_set.contains(&row.bus_id));
     transformer_2w_rows
@@ -1057,11 +1053,24 @@ fn enforce_detached_island_policy(
     fixed_shunt_rows.retain(|row| main_set.contains(&row.bus_id));
     switched_shunt_rows.retain(|row| main_set.contains(&row.bus_id));
     node_breaker_rows.retain(|row| {
-        row.from_bus_id.map(|bus_id| main_set.contains(&bus_id)).unwrap_or(true)
-            && row.to_bus_id.map(|bus_id| main_set.contains(&bus_id)).unwrap_or(true)
+        row.from_bus_id
+            .map(|bus_id| main_set.contains(&bus_id))
+            .unwrap_or(true)
+            && row
+                .to_bus_id
+                .map(|bus_id| main_set.contains(&bus_id))
+                .unwrap_or(true)
     });
-    connectivity_node_rows.retain(|row| row.bus_id.map(|bus_id| main_set.contains(&bus_id)).unwrap_or(true));
-    split_bus_stub_elements.retain(|row| row.bus_id.map(|bus_id| main_set.contains(&bus_id)).unwrap_or(true));
+    connectivity_node_rows.retain(|row| {
+        row.bus_id
+            .map(|bus_id| main_set.contains(&bus_id))
+            .unwrap_or(true)
+    });
+    split_bus_stub_elements.retain(|row| {
+        row.bus_id
+            .map(|bus_id| main_set.contains(&bus_id))
+            .unwrap_or(true)
+    });
 
     Ok(())
 }
@@ -1116,18 +1125,17 @@ pub fn write_complete_rpf_with_options(
         bail!("output_path must end with .rpf for Arrow IPC interchange output; got {output_path}");
     }
 
-    let topology =
-        parse_eq_topology_rows(
-            cgmes_paths,
-            options.bus_resolution_mode,
-            options.emit_node_breaker_detail,
+    let topology = parse_eq_topology_rows(
+        cgmes_paths,
+        options.bus_resolution_mode,
+        options.emit_node_breaker_detail,
+    )
+    .with_context(|| {
+        format!(
+            "failed while parsing profile-aware CGMES content from {} input path(s)",
+            cgmes_paths.len()
         )
-        .with_context(|| {
-            format!(
-                "failed while parsing profile-aware CGMES content from {} input path(s)",
-                cgmes_paths.len()
-            )
-        })?;
+    })?;
     let (
         mut bus_rows,
         mut branch_rows,
@@ -1223,21 +1231,28 @@ pub fn write_complete_rpf_with_options(
 
     // v0.8.4: extract solver provenance fields (all None for planning cases).
     // v0.8.5: also extract angle-reference and shunt state provenance.
-    let (sv_version, sv_iterations, sv_accuracy, sv_mode,
-         sv_slack_bus_id, sv_angle_ref_deg, sv_shunt_state_presence) =
-        if let Some(ref prov) = options.solver_provenance {
-            (
-                prov.solver_version.as_deref().map(Cow::Borrowed),
-                prov.solver_iterations,
-                prov.solver_accuracy,
-                prov.solver_mode.as_deref().map(Cow::Borrowed),
-                prov.slack_bus_id_solved,
-                prov.angle_reference_deg,
-                prov.solved_shunt_state_presence.map(|s| Cow::Borrowed(s.as_str())),
-            )
-        } else {
-            (None, None, None, None, None, None, None)
-        };
+    let (
+        sv_version,
+        sv_iterations,
+        sv_accuracy,
+        sv_mode,
+        sv_slack_bus_id,
+        sv_angle_ref_deg,
+        sv_shunt_state_presence,
+    ) = if let Some(ref prov) = options.solver_provenance {
+        (
+            prov.solver_version.as_deref().map(Cow::Borrowed),
+            prov.solver_iterations,
+            prov.solver_accuracy,
+            prov.solver_mode.as_deref().map(Cow::Borrowed),
+            prov.slack_bus_id_solved,
+            prov.angle_reference_deg,
+            prov.solved_shunt_state_presence
+                .map(|s| Cow::Borrowed(s.as_str())),
+        )
+    } else {
+        (None, None, None, None, None, None, None)
+    };
 
     let metadata_row = MetadataRow {
         base_mva: options.base_mva,
@@ -1351,7 +1366,9 @@ pub fn write_complete_rpf_with_options(
     );
     additional_root_metadata.insert(
         METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_LOAD_ISLAND_COUNT.to_string(),
-        topology_diagnostics.detached_active_load_island_count.to_string(),
+        topology_diagnostics
+            .detached_active_load_island_count
+            .to_string(),
     );
     additional_root_metadata.insert(
         METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_GENERATION_ISLAND_COUNT.to_string(),
@@ -1383,20 +1400,20 @@ pub fn write_complete_rpf_with_options(
     );
     if let Some(ref prov) = options.solver_provenance {
         if let Some(ref ver) = prov.solver_version {
-            additional_root_metadata
-                .insert(METADATA_KEY_SOLVER_VERSION.to_string(), ver.clone());
+            additional_root_metadata.insert(METADATA_KEY_SOLVER_VERSION.to_string(), ver.clone());
         }
         if let Some(iters) = prov.solver_iterations {
-            additional_root_metadata
-                .insert(METADATA_KEY_SOLVER_ITERATIONS.to_string(), iters.to_string());
+            additional_root_metadata.insert(
+                METADATA_KEY_SOLVER_ITERATIONS.to_string(),
+                iters.to_string(),
+            );
         }
         if let Some(acc) = prov.solver_accuracy {
             additional_root_metadata
                 .insert(METADATA_KEY_SOLVER_ACCURACY.to_string(), acc.to_string());
         }
         if let Some(ref mode) = prov.solver_mode {
-            additional_root_metadata
-                .insert(METADATA_KEY_SOLVER_MODE.to_string(), mode.clone());
+            additional_root_metadata.insert(METADATA_KEY_SOLVER_MODE.to_string(), mode.clone());
         }
         // v0.8.5: angle-reference and shunt-state provenance keys.
         if let Some(slack_id) = prov.slack_bus_id_solved {
@@ -1567,7 +1584,8 @@ fn dynamics_rows_from_generators_and_dy(
         }
 
         let mut rows = Vec::new();
-        let mut matched_generators: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let mut matched_generators: std::collections::HashSet<&str> =
+            std::collections::HashSet::new();
         for spec in dy_specs {
             let Some(bus_id) = bus_by_gen_id.get(spec.equipment_mrid.as_str()).copied() else {
                 continue;
@@ -1763,9 +1781,12 @@ fn parse_eq_components_for_path(
             machines = parsed_machines;
             terminals = parsed_terminals;
 
-            loads = parser::energy_consumers_from_reader(Cursor::new(&bytes)).with_context(|| {
-                format!("failed to extract EnergyConsumer elements from CGMES input file at {path}")
-            })?;
+            loads =
+                parser::energy_consumers_from_reader(Cursor::new(&bytes)).with_context(|| {
+                    format!(
+                        "failed to extract EnergyConsumer elements from CGMES input file at {path}"
+                    )
+                })?;
 
             transformers =
                 parser::power_transformers_from_reader(Cursor::new(&bytes)).with_context(|| {
@@ -1793,9 +1814,10 @@ fn parse_eq_components_for_path(
                     )
                 })?;
 
-            switches = parser::switch_specs_from_reader(Cursor::new(&bytes)).with_context(|| {
-                format!("failed to extract switch elements from CGMES input file at {path}")
-            })?;
+            switches =
+                parser::switch_specs_from_reader(Cursor::new(&bytes)).with_context(|| {
+                    format!("failed to extract switch elements from CGMES input file at {path}")
+                })?;
 
             connectivity_nodes =
                 parser::connectivity_nodes_from_reader(Cursor::new(&bytes)).with_context(|| {
@@ -1804,9 +1826,11 @@ fn parse_eq_components_for_path(
                     )
                 })?;
 
-            base_voltages =
-                parser::base_voltage_specs_from_reader(Cursor::new(&bytes)).with_context(|| {
-                    format!("failed to extract BaseVoltage elements from CGMES input file at {path}")
+            base_voltages = parser::base_voltage_specs_from_reader(Cursor::new(&bytes))
+                .with_context(|| {
+                    format!(
+                        "failed to extract BaseVoltage elements from CGMES input file at {path}"
+                    )
                 })?;
 
             equipment_base_voltage_refs = parser::equipment_base_voltage_refs_from_reader(
@@ -1826,9 +1850,11 @@ fn parse_eq_components_for_path(
                         "failed to extract TopologicalNode/ConnectivityNode group links from CGMES input file at {path}"
                     )
                 })?;
-            topological_nodes =
-                parser::topological_nodes_from_reader(Cursor::new(&bytes)).with_context(|| {
-                    format!("failed to extract TopologicalNode elements from CGMES input file at {path}")
+            topological_nodes = parser::topological_nodes_from_reader(Cursor::new(&bytes))
+                .with_context(|| {
+                    format!(
+                        "failed to extract TopologicalNode elements from CGMES input file at {path}"
+                    )
                 })?;
 
             let (parsed_diagrams, parsed_diagram_objects, parsed_diagram_points) =
@@ -1849,9 +1875,11 @@ fn parse_eq_components_for_path(
                     )
                 })?;
 
-            topological_nodes =
-                parser::topological_nodes_from_reader(Cursor::new(&bytes)).with_context(|| {
-                    format!("failed to extract TopologicalNode elements from CGMES input file at {path}")
+            topological_nodes = parser::topological_nodes_from_reader(Cursor::new(&bytes))
+                .with_context(|| {
+                    format!(
+                        "failed to extract TopologicalNode elements from CGMES input file at {path}"
+                    )
                 })?;
         }
         CgmesProfileKind::Sv => {
@@ -1879,13 +1907,14 @@ fn parse_eq_components_for_path(
                     "failed to extract LinearShuntCompensator elements from CGMES input file at {path}"
                 )
             })?;
-            switches = parser::switch_specs_from_reader(Cursor::new(&bytes)).with_context(|| {
-                format!("failed to extract switch elements from CGMES input file at {path}")
-            })?;
+            switches =
+                parser::switch_specs_from_reader(Cursor::new(&bytes)).with_context(|| {
+                    format!("failed to extract switch elements from CGMES input file at {path}")
+                })?;
         }
         CgmesProfileKind::Dy => {
-            dy_model_specs = parser::dy_model_specs_from_reader(Cursor::new(&bytes))
-                .with_context(|| {
+            dy_model_specs =
+                parser::dy_model_specs_from_reader(Cursor::new(&bytes)).with_context(|| {
                     format!(
                         "failed to extract dynamic model payload from CGMES input file at {path}"
                     )
@@ -2078,7 +2107,8 @@ fn parse_eq_topology_rows(
     for load in loads {
         load_by_mrid.insert(load.base.m_rid.as_ref().to_owned(), load);
     }
-    let mut loads: Vec<crate::models::EnergyConsumer<'static>> = load_by_mrid.into_values().collect();
+    let mut loads: Vec<crate::models::EnergyConsumer<'static>> =
+        load_by_mrid.into_values().collect();
 
     let mut fixed_shunt_by_mrid: HashMap<String, parser::FixedShuntSpec> = HashMap::new();
     for shunt in fixed_shunts {
@@ -2189,8 +2219,7 @@ fn parse_eq_topology_rows(
         bus_key_to_bus_id.insert(*bus_key, (idx as i32) + 1);
     }
 
-    let mut diagram_element_by_cim_mrid: HashMap<String, DiagramElementResolution> =
-        HashMap::new();
+    let mut diagram_element_by_cim_mrid: HashMap<String, DiagramElementResolution> = HashMap::new();
     if use_topological {
         for (bus_key, bus_id) in &bus_key_to_bus_id {
             diagram_element_by_cim_mrid.insert(
@@ -3111,10 +3140,7 @@ fn parse_eq_topology_rows(
                     connectivity_key.clone(),
                     DiagramElementResolution {
                         element_type: "connectivity_node",
-                        element_id: make_diagram_element_id(
-                            "connectivity_node",
-                            &connectivity_key,
-                        ),
+                        element_id: make_diagram_element_id("connectivity_node", &connectivity_key),
                     },
                 );
             }
@@ -3148,7 +3174,8 @@ fn parse_eq_topology_rows(
         let Some(diagram_id) = diagram_name_by_rdf_id.get(&object.diagram_rdf_id) else {
             continue;
         };
-        let Some(resolution) = diagram_element_by_cim_mrid.get(object.identified_object_rdf_id.as_str())
+        let Some(resolution) =
+            diagram_element_by_cim_mrid.get(object.identified_object_rdf_id.as_str())
         else {
             continue;
         };
@@ -3261,7 +3288,9 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
     // v0.8.4
     case_mode_b.append(row.case_mode.as_ref())?;
     match &row.solved_state_presence {
-        Some(v) => { solved_state_presence_b.append(v.as_ref())?; }
+        Some(v) => {
+            solved_state_presence_b.append(v.as_ref())?;
+        }
         None => solved_state_presence_b.append_null(),
     }
     match &row.solver_version {
@@ -3277,7 +3306,9 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
         None => solver_accuracy_b.append_null(),
     }
     match &row.solver_mode {
-        Some(v) => { solver_mode_b.append(v.as_ref())?; }
+        Some(v) => {
+            solver_mode_b.append(v.as_ref())?;
+        }
         None => solver_mode_b.append_null(),
     }
     // v0.8.5
@@ -3290,7 +3321,9 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
         None => angle_reference_deg_b.append_null(),
     }
     match &row.solved_shunt_state_presence {
-        Some(v) => { solved_shunt_state_presence_b.append(v.as_ref())?; }
+        Some(v) => {
+            solved_shunt_state_presence_b.append(v.as_ref())?;
+        }
         None => solved_shunt_state_presence_b.append_null(),
     }
 
@@ -3887,7 +3920,9 @@ fn build_switched_shunts_batch(rows: &[SwitchedShuntRow]) -> Result<RecordBatch>
         current_step_b.append_value(row.current_step.max(0));
         b_init_pu_b.append_value(row.b_init_pu);
         match row.shunt_id.as_deref() {
-            Some(id) => { shunt_id_b.append(id)?; }
+            Some(id) => {
+                shunt_id_b.append(id)?;
+            }
             None => shunt_id_b.append_null(),
         }
     }
@@ -4375,14 +4410,14 @@ mod tests {
     use crate::arrow_schema::{
         BRANDING, SCHEMA_VERSION, all_table_schemas, branches_schema, buses_schema,
         connectivity_nodes_schema, contingencies_schema, diagram_objects_schema,
-        diagram_points_schema, dynamics_models_schema, metadata_schema,
-        node_breaker_detail_schema, switch_detail_schema,
+        diagram_points_schema, dynamics_models_schema, metadata_schema, node_breaker_detail_schema,
+        switch_detail_schema,
     };
 
     use super::{
         BusResolutionMode, DetachedIslandPolicy, GenRow, WriteOptions, infer_dynamics_model_type,
-        read_rpf_tables,
-        rpf_file_metadata, summarize_rpf, write_complete_rpf, write_complete_rpf_with_options,
+        read_rpf_tables, rpf_file_metadata, summarize_rpf, write_complete_rpf,
+        write_complete_rpf_with_options,
     };
 
     fn assert_schema_shape_matches(actual: &Schema, expected: &Schema) {

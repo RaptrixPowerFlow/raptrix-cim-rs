@@ -47,9 +47,9 @@ use std::io::Read;
 use std::sync::OnceLock;
 
 use anyhow::{Result, bail};
+use quick_xml::Reader;
 use quick_xml::de::from_str;
 use quick_xml::events::Event;
-use quick_xml::Reader;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
@@ -879,7 +879,10 @@ pub fn diagram_layout_from_reader<R: Read>(
     objects.sort_unstable_by(|left, right| {
         left.diagram_rdf_id
             .cmp(&right.diagram_rdf_id)
-            .then_with(|| left.identified_object_rdf_id.cmp(&right.identified_object_rdf_id))
+            .then_with(|| {
+                left.identified_object_rdf_id
+                    .cmp(&right.identified_object_rdf_id)
+            })
             .then_with(|| left.obj_rdf_id.cmp(&right.obj_rdf_id))
     });
     objects.dedup_by(|left, right| left.obj_rdf_id == right.obj_rdf_id);
@@ -914,7 +917,10 @@ pub fn dy_model_specs_from_reader<R: Read>(mut reader: R) -> Result<Vec<DyModelS
         ),
         ("cim:ExcitationSystemDynamics", "ExcitationSystemDynamics"),
         ("cim:TurbineGovernorDynamics", "TurbineGovernorDynamics"),
-        ("cim:PowerSystemStabilizerDynamics", "PowerSystemStabilizerDynamics"),
+        (
+            "cim:PowerSystemStabilizerDynamics",
+            "PowerSystemStabilizerDynamics",
+        ),
         // Extension example: Studio-originated custom dynamic model family.
         ("cim:RaptrixSmartValveDynamics", "raptrix.smart_valve.v1"),
     ] {

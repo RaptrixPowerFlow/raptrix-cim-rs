@@ -112,14 +112,38 @@ fn parse_smallgrid_eq_aclinesegment() -> Result<()> {
         Arc::new(name.finish()) as ArrayRef,
         Arc::new(Float64Array::from(from_nominal_kv)) as ArrayRef,
         Arc::new(Float64Array::from(to_nominal_kv)) as ArrayRef,
-        new_null_array(&branch_schema().field(16).data_type().clone(), branch_rows.len()),
-        new_null_array(&branch_schema().field(17).data_type().clone(), branch_rows.len()),
-        new_null_array(&branch_schema().field(18).data_type().clone(), branch_rows.len()),
-        new_null_array(&branch_schema().field(19).data_type().clone(), branch_rows.len()),
-        new_null_array(&branch_schema().field(20).data_type().clone(), branch_rows.len()),
-        new_null_array(&branch_schema().field(21).data_type().clone(), branch_rows.len()),
-        new_null_array(&branch_schema().field(22).data_type().clone(), branch_rows.len()),
-        new_null_array(&branch_schema().field(23).data_type().clone(), branch_rows.len()),
+        new_null_array(
+            &branch_schema().field(16).data_type().clone(),
+            branch_rows.len(),
+        ),
+        new_null_array(
+            &branch_schema().field(17).data_type().clone(),
+            branch_rows.len(),
+        ),
+        new_null_array(
+            &branch_schema().field(18).data_type().clone(),
+            branch_rows.len(),
+        ),
+        new_null_array(
+            &branch_schema().field(19).data_type().clone(),
+            branch_rows.len(),
+        ),
+        new_null_array(
+            &branch_schema().field(20).data_type().clone(),
+            branch_rows.len(),
+        ),
+        new_null_array(
+            &branch_schema().field(21).data_type().clone(),
+            branch_rows.len(),
+        ),
+        new_null_array(
+            &branch_schema().field(22).data_type().clone(),
+            branch_rows.len(),
+        ),
+        new_null_array(
+            &branch_schema().field(23).data_type().clone(),
+            branch_rows.len(),
+        ),
     ];
 
     let schema = Arc::new(branch_schema());
@@ -275,7 +299,7 @@ fn test_smallgrid_diagram_roundtrip() -> Result<()> {
     }
 
     let output_path = std::env::temp_dir().join("smallgrid_v0.7.1_diagram_test.rpf");
-    
+
     let mut owned_paths = vec![eq_path.to_string_lossy().into_owned()];
     let tp_path = eq_path.with_file_name("SmallGrid_TP.xml");
     if tp_path.is_file() {
@@ -291,7 +315,7 @@ fn test_smallgrid_diagram_roundtrip() -> Result<()> {
             detached_island_policy: DetachedIslandPolicy::Permissive,
             emit_connectivity_groups: false,
             emit_node_breaker_detail: false,
-            emit_diagram_layout: true,  // Enable diagram layout emission
+            emit_diagram_layout: true, // Enable diagram layout emission
             contingencies_are_stub: false,
             dynamics_are_stub: false,
             base_mva: 100.0,
@@ -304,7 +328,7 @@ fn test_smallgrid_diagram_roundtrip() -> Result<()> {
 
     let tables = read_rpf_tables(&output_path)?;
     let table_names: Vec<&str> = tables.iter().map(|(name, _)| name.as_str()).collect();
-    
+
     // Verify diagram tables are present when DL profile is available
     if summary.diagram_object_rows > 0 {
         assert!(

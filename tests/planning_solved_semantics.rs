@@ -20,8 +20,8 @@ use raptrix_cim_rs::arrow_schema::{
     TABLE_GENERATORS_SOLVED,
 };
 use raptrix_cim_rs::rpf_writer::{
-    CaseMode, SolvedStatePresence, SolverProvenance,
-    WriteOptions, rpf_file_metadata, summarize_rpf, write_complete_rpf_with_options,
+    CaseMode, SolvedStatePresence, SolverProvenance, WriteOptions, rpf_file_metadata,
+    summarize_rpf, write_complete_rpf_with_options,
 };
 
 static OUTPUT_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -75,7 +75,11 @@ fn write_minimal_eq_rpf(label: &str, options: &WriteOptions) -> Result<PathBuf> 
     fs::write(&xml_path, xml)?;
 
     let out = unique_temp_rpf_path(label);
-    write_complete_rpf_with_options(&[xml_path.to_str().unwrap()], out.to_str().unwrap(), options)?;
+    write_complete_rpf_with_options(
+        &[xml_path.to_str().unwrap()],
+        out.to_str().unwrap(),
+        options,
+    )?;
     let _ = fs::remove_file(&xml_path);
     Ok(out)
 }
@@ -153,7 +157,11 @@ fn planning_only_export_has_no_solved_state_tables() -> Result<()> {
     let out = write_minimal_eq_rpf("no_solved_tables", &options)?;
 
     let summary = summarize_rpf(&out)?;
-    let table_names: Vec<&str> = summary.tables.iter().map(|t| t.table_name.as_str()).collect();
+    let table_names: Vec<&str> = summary
+        .tables
+        .iter()
+        .map(|t| t.table_name.as_str())
+        .collect();
 
     assert!(
         !table_names.contains(&TABLE_BUSES_SOLVED),
