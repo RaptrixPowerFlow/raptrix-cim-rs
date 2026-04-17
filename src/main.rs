@@ -44,7 +44,7 @@ impl From<DetachedIslandPolicyArg> for DetachedIslandPolicy {
     }
 }
 
-const COPYRIGHT: &str = "Copyright (c) 2026 Musto Technologies LLC";
+const COPYRIGHT: &str = "Copyright (c) 2026 Raptrix PowerFlow";
 const CANONICAL_TABLE_COUNT: usize = 15;
 
 /// Command-line interface for Raptrix CIM-Arrow conversion.
@@ -680,3 +680,4 @@ mod tests {
         Ok(())
     }
 }
+

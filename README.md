@@ -1,6 +1,8 @@
 # raptrix-cim-rs
 raptrix-cim-rs - the world's first high-performance zero-copy Rust implementation of IEC 61970 CIM optimized for real-time power flow and SCED.
 
+We close the physics gap - planning to real time.
+
 Part of the Raptrix Powerflow ecosystem.
 
 Related repositories:
@@ -14,27 +16,20 @@ Quick start:
 cargo run --release -- convert --input-dir cgmes_case/ --output case.rpf
 ```
 
+## Precompiled Releases
+
+Most users should start with precompiled binaries instead of building from source.
+
+- Latest binaries: https://github.com/RaptrixPowerFlow/raptrix-cim-rs/releases
+- Current release targets: Windows x86_64, Linux x86_64, macOS arm64 (Apple Silicon)
+- Use source builds only when you need local development changes or custom tooling integration.
+
 ![License: MPL-2.0](https://img.shields.io/badge/License-MPL%202.0-brightgreen.svg)
 MPL 2.0 - free to use, modify, and distribute.
 
 Production-grid usage is supported through the commercial Raptrix core platform: [raptrix-core](https://github.com/RaptrixPowerFlow/raptrix-core).
 
 Enterprise and academic options: Flexible commercial licensing - contact us for seats, enterprise, or cloud options via [Raptrix website](https://www.raptrixpowerflow.com/) or [RaptrixPowerFlow on GitHub](https://github.com/RaptrixPowerFlow/).
-
-## Public Release Safety
-
-Before publishing a branch or tag, run the repository safety checks to prevent accidental release of confidential model data or secrets.
-
-- Local pre-commit hook support lives in `.githooks/` and can be enabled with `git config core.hooksPath .githooks`.
-- `scripts/public-safety-check.sh` blocks sensitive file patterns, common secret signatures, and large tracked payloads.
-- `.github/workflows/public-safety.yml` enforces the same checks on push and pull requests.
-- External or licensed CIM data should stay under ignored paths such as `tests/data/external/` and must never be committed.
-
-Manual scan command:
-
-```bash
-./scripts/public-safety-check.sh --mode tracked
-```
 
 ## Why RPF? CIM Direct to Power Flow, No Vendor Detour
 
@@ -55,7 +50,7 @@ CIM/XML profile exchange is rich and interoperable, but it was not designed as a
 
 In short: this converter takes IEC 61970 CIM exchange data directly into Raptrix PowerFlow Interchange (`.rpf`) so power-flow workflows can run without a PSS/E-in-the-middle dependency.
 
-Copyright (c) 2026 Musto Technologies LLC
+Copyright (c) 2026 Raptrix PowerFlow
 
 ## Workspace Layout
 
@@ -100,7 +95,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 | Connectivity detail | `--connectivity-detail` | Granular ConnectivityNode bus mapping; emits optional `connectivity_groups` table |
 | Node-breaker | `--connectivity-detail --node-breaker` | Adds switch-topology detail tables for operational and viewer workflows |
 
-### Output tables (schema contract v0.8.5)
+### Output tables (schema contract v0.8.6)
 
 **15 canonical tables (always emitted):** `metadata`, `buses`, `branches`, `generators`, `loads`, `fixed_shunts`, `switched_shunts`, `transformers_2w`, `transformers_3w`, `areas`, `zones`, `owners`, `contingencies`, `interfaces`, `dynamics_models`
 
@@ -109,6 +104,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 - `node_breaker_detail`, `switch_detail`, `connectivity_nodes` — with `--node-breaker`
 - `diagram_objects`, `diagram_points` — when DL profile is present (suppress with `--no-diagram`)
 - `buses_solved`, `generators_solved`, `switched_shunts_solved` — when `case_mode = solved_snapshot` (v0.8.5+)
+- `facts_devices`, `facts_solved` — optional FACTS extension tables (v0.8.6+)
 
 ### Detached island policy
 
@@ -134,20 +130,29 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 
 ## Data Contract (Locked)
 
-- Current schema contract: v0.8.5 (CGMES 3.0+ only)
+- Current schema contract: v0.8.6 (CGMES 3.0+ only)
 - Canonical source: raptrix-cim-arrow/src/schema.rs
 - Contract policy and semantics: docs/schema-contract.md
 - Plain-English field guide: [docs/rpf-field-guide.md](docs/rpf-field-guide.md)
 - Cross-repo propagation workflow: docs/release-sync-workflow.md
 - **CGMES Ingest Target**: v3.0+ and later only (complete merged profiles; auto-detect and explicit mode supported)
 
+This repository is the source of truth for the RPF file standard. The canonical wire contract lives in `docs/schema-contract.md` and `raptrix-cim-arrow/src/schema.rs`, with `docs/rpf-field-guide.md` as the human-readable companion.
+
+RPF standardization here is intentional: it enables direct CIM-to-powerflow interchange without requiring a PSS/E conversion hop in the critical data path.
+
 ### Versioning Policy
 
-Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is now locked at schema `v0.8.5` for interoperability and deterministic CGMES 3.0+ ingest behavior, while the converter crate release tracks implementation maturity and is currently `0.2.2`.
+Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is now locked at schema `v0.8.6` for interoperability and deterministic CGMES 3.0+ ingest behavior, while the converter crate release tracks implementation maturity and is currently `0.2.6`.
 
 This split preserves compatibility guarantees for downstream tools: existing `v0.5.2` Parquet artifacts remain valid to read on the core path, and new `v0.8.0` optional features (diagram layout via DL profile) are additive only. **Breaking change in v0.8.0**: CGMES 2.4.x support was removed. All ingest is now CGMES 3.0+ only.
 
-**v0.8.5**: Adds solved shunt-state round-trip (`switched_shunts_solved`) and explicit solved angle-reference metadata (`slack_bus_id_solved`, `angle_reference_deg`) while preserving strict planning-vs-solved semantics from v0.8.4.
+**v0.8.6**: Adds additive FACTS support (`facts_devices`, optional `facts_solved`, branch FACTS control fields, and FACTS feature metadata) while preserving compatibility with v0.8.5 readers and writers.
+
+To keep crate and documentation versions consistent, use the version sync helper:
+
+- `./scripts/sync-versions.ps1 -Version 0.2.6`
+- CI also enforces this via `.github/workflows/version-consistency.yml`.
 
 For third-party implementers, [docs/schema-contract.md](docs/schema-contract.md) is the authoritative reader/writer contract. It now documents the `.rpf` Arrow IPC container layout, canonical root column ordering, row-count metadata trimming rules, optional table detection, and full column/type references needed to build a compatible parser.
 
@@ -213,13 +218,19 @@ All conversions are zero-copy headless — no readback or post-write validation 
 
 ## Project Layout
 
-- raptrix-cim-arrow/src/schema.rs: v0.8.5 table schemas, metadata constants, and schema registry helpers
+- raptrix-cim-arrow/src/schema.rs: v0.8.6 table schemas, metadata constants, and schema registry helpers
 - raptrix-cim-arrow/src/io.rs: generic root `.rpf` assembly, validation, readback, and summary helpers
 - src/models: CIM data structures and traits
 - src/parser.rs: parse helpers and EQ-to-branch mapping
 - src/rpf_writer.rs: CIM-specific mapping from parsed CGMES content into canonical table batches
 
 ### Locked contract: v0.8.x notable fields
+
+
+- v0.8.6 additions:
+	- Optional `facts_devices` table for explicit FACTS device identity and control metadata
+	- Optional `facts_solved` table for solved FACTS replay semantics
+	- FACTS branch control columns and metadata feature flags (`raptrix.features.facts`, `raptrix.features.facts_solved`)
 
 - v0.8.5 additions:
 	- Optional `switched_shunts_solved` table for solved shunt switching state round-trip
@@ -440,6 +451,11 @@ Expected SmallGrid EQ location pattern:
 
 If RAPTRIX_TEST_DATA_ROOT is not set, ignored integration tests can be skipped safely.
 
+Redistribution note:
+
+- The ENTSO-E datasets referenced above are external source data and are not redistributed in this repository.
+- Keep test datasets local and out of source control to respect source licensing and repository policy.
+
 ## Test Data Policy
 
 - tests/data/fixtures: tiny committed XML snippets only
@@ -498,7 +514,8 @@ to implementation tasks with much less ambiguity.
 
 ## Branding
 
-Raptrix CIM-Arrow — High-performance open CIM profile by Musto Technologies LLC
+Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
 
-Copyright (c) 2026 Musto Technologies LLC
+Copyright (c) 2026 Raptrix PowerFlow
+
 

@@ -4,9 +4,9 @@
 
 //! # raptrix-cim-arrow
 //!
-//! Raptrix CIM-Arrow — High-performance open CIM profile by Musto Technologies LLC
+//! Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
 //!
-//! Copyright (c) 2026 Musto Technologies LLC
+//! Copyright (c) 2026 Raptrix PowerFlow
 //!
 //! This crate is the shared home for the locked Raptrix PowerFlow Interchange
 //! schema contract and generic Arrow IPC infrastructure.
@@ -36,3 +36,4 @@ pub use io::{
     write_root_rpf_with_metadata,
 };
 pub use schema::*;
+

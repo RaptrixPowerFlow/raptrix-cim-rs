@@ -33,6 +33,8 @@ INTERNAL-MARKETING-GUIDE.md
 
 # Local Python virtual environment
 .venv/
+__pycache__/
+*.pyc
 
 # Local temp outputs
 /tmp/

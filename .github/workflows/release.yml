@@ -30,12 +30,6 @@ jobs:
             extension: tar.gz
 
           - os: macos-latest
-            target: x86_64-apple-darwin
-            os_label: macos
-            arch_label: x86_64
-            extension: tar.gz
-
-          - os: macos-latest
             target: aarch64-apple-darwin
             os_label: macos
             arch_label: arm64

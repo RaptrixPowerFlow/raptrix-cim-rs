@@ -1,8 +1,8 @@
 # Workspace Migration
 
-Raptrix CIM-Arrow — High-performance open CIM profile by Musto Technologies LLC
+Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
 
-Copyright (c) 2026 Musto Technologies LLC
+Copyright (c) 2026 Raptrix PowerFlow
 
 ## What Changed
 
