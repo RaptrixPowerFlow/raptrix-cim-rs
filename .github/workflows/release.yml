@@ -97,6 +97,8 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     if: github.ref_type == 'tag' || github.event.inputs.publish_release == 'true'
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
     steps:
       - uses: actions/checkout@v6
 
@@ -135,5 +137,5 @@ jobs:
           name: ${{ steps.release_meta.outputs.release_name }}
           target_commitish: ${{ github.sha }}
           draft: ${{ steps.release_meta.outputs.draft }}
-          generate_release_notes: true
+          generate_release_notes: false
           files: artifacts/*
