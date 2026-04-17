@@ -1,9 +1,9 @@
 # raptrix-cim-rs
-raptrix-cim-rs - the world's first high-performance zero-copy Rust implementation of IEC 61970 CIM optimized for real-time power flow and SCED.
+raptrix-cim-rs — the world’s first high-performance zero-copy Rust implementation of IEC 61970 CIM optimized for real-time power flow and SCED.
 
-We close the physics gap - planning to real time.
+We close the physics gap — planning to real time.
 
-Part of the Raptrix Powerflow ecosystem.
+Part of the Raptrix PowerFlow ecosystem.
 
 Related repositories:
 - [raptrix-psse-rs](https://github.com/RaptrixPowerFlow/raptrix-psse-rs) - Unlimited-size PSS/E to RPF converter

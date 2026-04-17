@@ -5,6 +5,21 @@ on:
     tags:
       - "v*.*.*"
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version without the v prefix. Defaults to Cargo.toml version."
+        required: false
+        type: string
+      publish_release:
+        description: "Create a GitHub Release and tag for this manual run."
+        required: false
+        default: true
+        type: boolean
+      draft:
+        description: "Create the manual GitHub Release as a draft."
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: write
@@ -44,6 +59,8 @@ jobs:
         run: |
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          elif [[ -n "${{ github.event.inputs.version }}" ]]; then
+            echo "value=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
           else
             VERSION=$(grep '^version = ' Cargo.toml | head -n1 | cut -d '"' -f2)
             echo "value=${VERSION}" >> "$GITHUB_OUTPUT"
@@ -79,16 +96,44 @@ jobs:
     name: Create GitHub Release
     needs: build
     runs-on: ubuntu-latest
+    if: github.ref_type == 'tag' || github.event.inputs.publish_release == 'true'
     steps:
+      - uses: actions/checkout@v6
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts/
           merge-multiple: true
 
+      - name: Resolve release metadata
+        id: release_meta
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            TAG_NAME="${GITHUB_REF_NAME}"
+            DRAFT_VALUE="false"
+          else
+            VERSION_INPUT="${{ github.event.inputs.version }}"
+            if [[ -n "$VERSION_INPUT" ]]; then
+              VERSION="$VERSION_INPUT"
+            else
+              VERSION=$(grep '^version = ' Cargo.toml | head -n1 | cut -d '"' -f2)
+            fi
+            TAG_NAME="v${VERSION}"
+            DRAFT_VALUE="${{ github.event.inputs.draft }}"
+          fi
+
+          echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+          echo "release_name=raptrix-cim-rs ${TAG_NAME}" >> "$GITHUB_OUTPUT"
+          echo "draft=${DRAFT_VALUE}" >> "$GITHUB_OUTPUT"
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
-        if: github.ref_type == 'tag'
         with:
+          tag_name: ${{ steps.release_meta.outputs.tag_name }}
+          name: ${{ steps.release_meta.outputs.release_name }}
+          target_commitish: ${{ github.sha }}
+          draft: ${{ steps.release_meta.outputs.draft }}
           generate_release_notes: true
           files: artifacts/*
