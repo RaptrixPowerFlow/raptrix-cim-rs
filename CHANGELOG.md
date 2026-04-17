@@ -5,15 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on Keep a Changelog,
 and this project follows Semantic Versioning for schema and converter release communication.
 
-Raptrix CIM-Arrow — High-performance open CIM profile by Musto Technologies LLC
+Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
 
-Copyright (c) 2026 Musto Technologies LLC
+Copyright (c) 2026 Raptrix PowerFlow
 
 ## [Schema Contract 0.8.4] - 2026-04-07
 ## [Schema Contract 0.8.5] - 2026-04-09
 ## [Schema Contract 0.8.6] - 2026-04-13
 
-### Converter release: Crate version 0.2.5 (raptrix-cim-arrow) / 0.2.4 (raptrix-cim-rs) | Arrow schema v0.8.6
+### Converter release: Crate version 0.2.6 (raptrix-cim-arrow) / 0.2.6 (raptrix-cim-rs) | Arrow schema v0.8.6
 
 ### Added
 
@@ -295,3 +295,4 @@ Copyright (c) 2026 Musto Technologies LLC
 - Backwards compatibility is preserved: existing `v0.5.2` Parquet files remain valid for the core ingest path.
 - This is a MINOR bump because the new node-breaker functionality is additive and optional, aligned with Semantic Versioning and interoperability goals.
 - PATCH releases remain reserved for fixes only; this release unlocks full operational CGMES fidelity while leaving the lean planning-model core untouched for speed.
+

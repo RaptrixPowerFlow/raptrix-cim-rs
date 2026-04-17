@@ -45,13 +45,14 @@
 - **Multi-TSO EQ merge**: Support multiple EQ files (e.g., BE + NL authority sets) as a merged ingest unit, enabling the MicroGrid assembled cases.
 - **Expanded CIM class coverage**: HVDC converters, FACTS devices, and additional shunt compensation types.
 - **CI regression gate**: Automated CGMES conformity runs on pull requests with pass/fail enforcement.
+- **RPF standard stewardship**: Keep `docs/schema-contract.md` authoritative and `docs/rpf-field-guide.md` synchronized as the public human-readable companion.
 - **Performance benchmarking suite**: Deterministic throughput tests on representative datasets with guardrails against regressions.
 - **Python bindings or C FFI**: Expose `write_complete_rpf_with_options` for downstream tooling without requiring a Rust build.
 
 ## Public Release Readiness Gate (Required Before Public Pushes)
 
 - **Safety checks must pass**: run `./scripts/public-safety-check.sh --mode tracked` locally and keep `.github/workflows/public-safety.yml` green.
-- **Release matrix must pass for all target platforms**: Windows x86_64, Linux x86_64, macOS x86_64, macOS arm64.
+- **Release matrix must pass for all target platforms**: Windows x86_64, Linux x86_64, macOS arm64.
 - **No external confidential dataset leakage**: keep utility/partner datasets only in ignored locations such as `tests/data/external/`.
 - **Contract/version consistency**: keep README claims, `docs/schema-contract.md`, and `raptrix-cim-arrow/src/schema.rs` aligned on the locked contract version.
 

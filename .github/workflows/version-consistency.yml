@@ -1,0 +1,19 @@
+name: Version Consistency
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate version sync
+        shell: pwsh
+        run: ./scripts/sync-versions.ps1 -Check

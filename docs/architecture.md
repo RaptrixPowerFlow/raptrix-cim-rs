@@ -48,6 +48,8 @@ Locked schema boundaries in v0.8.5:
 - all 15 required tables must materialize (empty allowed)
 - dictionary-encoded string identity fields
 - explicit keys and FK references
+- nullable nominal-kV provenance on core network tables when source BaseVoltage joins exist
+- generic contingency equipment identity for switch-oriented workflows
 - strict planning-vs-solved semantics via case-mode and solved-state metadata
 - solved shunt-state and angle-reference provenance for solved snapshots
 - nested Arrow types for contingencies and dynamics model params

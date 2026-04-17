@@ -17,7 +17,7 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, Schema};
 
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.8.6 - High-performance open CIM profile (CGMES 3.0+) by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.8.6 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.";
 
 /// Canonical RPF format version tag embedded as file-level metadata.
 pub const RPF_VERSION: &str = "0.8.6";
@@ -1026,3 +1026,4 @@ mod tests {
         assert_eq!(normalize_facts_device_type("svc"), None);
     }
 }
+

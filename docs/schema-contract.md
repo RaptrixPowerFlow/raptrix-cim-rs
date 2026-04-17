@@ -1,5 +1,7 @@
 # Schema Contract (Locked contract: v0.8.6 — CGMES 3.0+ Only)
 
+This repository is the authoritative source of truth for the Raptrix PowerFlow Interchange (`.rpf`) wire contract used by CIM-first conversion pipelines.
+
 ## Contract Policy
 
 - Schema changes are explicit and versioned.
@@ -34,7 +36,7 @@ Every `.rpf` file must include:
 Current locked values:
 
 - `raptrix.version = 0.8.6`
-- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.8.6 - High-performance open CIM profile (CGMES 3.0+) by Musto Technologies LLC. Copyright (c) 2026 Musto Technologies LLC.`
+- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.8.6 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.`
 - `rpf.case_fingerprint = <required deterministic case identity fingerprint>`
 - `rpf.validation_mode = topology_only | solved_ready`
 - `rpf.case_mode = flat_start_planning | warm_start_planning | solved_snapshot` (v0.8.4+, required)
@@ -722,5 +724,6 @@ For a plain-English explanation of all fields see [rpf-field-guide.md](rpf-field
 3. Add or update test coverage for schema construction and writer outputs.
 4. Update README capability and known-limits sections.
 
-Raptrix CIM-Arrow — High-performance open CIM profile by Musto Technologies LLC
-Copyright (c) 2026 Musto Technologies LLC
+Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
+Copyright (c) 2026 Raptrix PowerFlow
+

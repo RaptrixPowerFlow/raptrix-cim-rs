@@ -639,9 +639,9 @@ pub fn validate_rpf_file(path: impl AsRef<Path>, options: &RootWriteOptions) -> 
     let branding = metadata
         .get("raptrix.branding")
         .context("post-write contract violation: missing metadata key 'raptrix.branding'")?;
-    if !branding.contains("Musto Technologies") {
+    if !branding.contains("Raptrix PowerFlow") {
         bail!(
-            "post-write contract violation: raptrix.branding does not contain 'Musto Technologies'"
+            "post-write contract violation: raptrix.branding does not contain 'Raptrix PowerFlow'"
         );
     }
 
@@ -997,3 +997,4 @@ mod tests {
         Ok(())
     }
 }
+
