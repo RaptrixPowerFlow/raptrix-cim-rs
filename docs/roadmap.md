@@ -48,6 +48,20 @@
 - **Performance benchmarking suite**: Deterministic throughput tests on representative datasets with guardrails against regressions.
 - **Python bindings or C FFI**: Expose `write_complete_rpf_with_options` for downstream tooling without requiring a Rust build.
 
+## Public Release Readiness Gate (Required Before Public Pushes)
+
+- **Safety checks must pass**: run `./scripts/public-safety-check.sh --mode tracked` locally and keep `.github/workflows/public-safety.yml` green.
+- **Release matrix must pass for all target platforms**: Windows x86_64, Linux x86_64, macOS x86_64, macOS arm64.
+- **No external confidential dataset leakage**: keep utility/partner datasets only in ignored locations such as `tests/data/external/`.
+- **Contract/version consistency**: keep README claims, `docs/schema-contract.md`, and `raptrix-cim-arrow/src/schema.rs` aligned on the locked contract version.
+
+## CIM Coverage Risk Checklist (Triple-Check Before Public Announcements)
+
+- **Contingencies completeness**: current contract supports contingency rows, but splitter/breaker paths still include stub semantics in some flows and must be called out transparently.
+- **Dynamics completeness**: DY ingest is implemented with EQ fallback; placeholder dynamics rows may still appear when source coverage is missing.
+- **FACTS and HVDC breadth**: schema support is expanding, but class-level ingest coverage should be validated case-by-case before claiming full operational parity.
+- **Public NAESB-style corpus gap**: there is still no public NAESB test-configuration suite equivalent to ENTSO-E CAS, so publish notes should keep that limitation explicit.
+
 ## How to Propose Work
 
 Use GitHub issue templates for bug reports and feature requests.

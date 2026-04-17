@@ -6,12 +6,27 @@ Cargo.lock
 # Generated Parquet outputs stay out of source control by default.
 *.parquet
 !tests/data/fixtures/*.parquet
+*.rpf
+!tests/data/fixtures/*.rpf
 
 # Large or machine-local model datasets are kept outside the repo.
 /data/
 /tests/data/large/
 /tests/data/external/*
 !/tests/data/external/.gitkeep
+
+# Vendor and exchange-case formats that should never be committed.
+*.raw
+*.RAW
+*.dyr
+*.DYR
+*.sav
+*.SAV
+*.epc
+*.EPC
+*.pss
+*.PSS
+*.pdf
 
 # Internal-only marketing guide must never be committed.
 INTERNAL-MARKETING-GUIDE.md

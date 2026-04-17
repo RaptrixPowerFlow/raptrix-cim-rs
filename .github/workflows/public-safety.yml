@@ -1,0 +1,20 @@
+name: Public Safety
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  sanitize:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run public safety checks
+        run: |
+          chmod +x ./scripts/public-safety-check.sh
+          ./scripts/public-safety-check.sh --mode tracked
