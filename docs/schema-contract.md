@@ -1,4 +1,4 @@
-# Schema Contract (Locked contract: v0.8.6 — CGMES 3.0+ Only)
+# Schema Contract (Locked contract: v0.8.7 — CGMES 3.0+ Only)
 
 This repository is the authoritative source of truth for the Raptrix PowerFlow Interchange (`.rpf`) wire contract used by CIM-first conversion pipelines.
 
@@ -35,8 +35,8 @@ Every `.rpf` file must include:
 
 Current locked values:
 
-- `raptrix.version = 0.8.6`
-- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.8.6 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.`
+- `raptrix.version = 0.8.7`
+- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.8.7 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.`
 - `rpf.case_fingerprint = <required deterministic case identity fingerprint>`
 - `rpf.validation_mode = topology_only | solved_ready`
 - `rpf.case_mode = flat_start_planning | warm_start_planning | solved_snapshot` (v0.8.4+, required)
@@ -59,6 +59,7 @@ Optional file-level metadata keys:
 - `rpf.solver.angle_reference_deg = <float>` angle reference value in degrees, typically 0.0 (v0.8.5+, only when solved)
 - `rpf.solver.solved_shunt_state_presence = actual_solved | not_available` (v0.8.5+, only when solved)
 - `rpf.facts_solved_state_presence = actual_solved | not_available` (v0.8.6+, optional; defaults to `not_available` when `facts_devices` is present and `facts_solved` is absent)
+- `rpf.transformer_representation_mode = native_3w | expanded` (v0.8.7+, **required**; readers treating files from pre-v0.8.7 producers should default to `native_3w` when the key is absent)
 
 ## File Container Layout
 

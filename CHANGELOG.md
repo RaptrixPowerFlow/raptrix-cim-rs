@@ -12,8 +12,33 @@ Copyright (c) 2026 Raptrix PowerFlow
 ## [Schema Contract 0.8.4] - 2026-04-07
 ## [Schema Contract 0.8.5] - 2026-04-09
 ## [Schema Contract 0.8.6] - 2026-04-13
+## [Schema Contract 0.8.7] - 2026-04-17
 
-### Converter release: Crate version 0.2.6 (raptrix-cim-arrow) / 0.2.6 (raptrix-cim-rs) | Arrow schema v0.8.6
+### Converter release: Crate version 0.2.7 (raptrix-cim-arrow) / 0.2.7 (raptrix-cim-rs) | Arrow schema v0.8.7
+
+### Added
+
+- **Transformer Representation Contract** — producers and consumers can now negotiate
+  how 3-winding transformers are materialized in an RPF file.
+  - New required file metadata key `rpf.transformer_representation_mode`:
+    - `native_3w` — 3-winding transformers appear in the `transformers_3w` table (default, fully backward-compatible).
+    - `expanded` — each 3-winding transformer is star-expanded into three 2-winding legs placed in `transformers_2w`; impedances are converted delta→wye; synthetic star buses receive IDs > 10 000 000.
+  - New `METADATA_KEY_TRANSFORMER_REPRESENTATION_MODE` constant promoted to the shared `raptrix-cim-arrow` crate (was previously a `raptrix-psse-rs`-local constant).
+  - New `validate_transformer_representation_mode_value(value: &str) -> Result<(), String>` reader helper in `raptrix-cim-arrow::schema`.
+  - New `TransformerRepresentationMode` enum in `raptrix-cim-rs` (`Native3W` default, `Expanded`).
+  - `WriteOptions.transformer_representation_mode` field (default: `Native3W`).
+
+### Changed
+
+- Branding/schema constants bumped to v0.8.7.
+- `SUPPORTED_RPF_VERSIONS` now includes v0.8.7 as current.
+
+### Migration note
+
+- Default mode is `native_3w` — no change for existing callers; they automatically receive the new key stamped as `native_3w`.
+- Readers consuming files from pre-v0.8.7 producers (key absent) should treat missing key as `native_3w`.
+- See MIGRATION.md — *Transformer Representation Contract (v0.8.7)*.
+
 
 ### Added
 

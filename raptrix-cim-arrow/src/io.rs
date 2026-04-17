@@ -1000,7 +1000,7 @@ mod tests {
             branches.schema().fields().len(),
             branches_schema().fields().len()
         );
-        assert_eq!(SCHEMA_VERSION, "0.8.6");
+        assert_eq!(SCHEMA_VERSION, "0.8.7");
         Ok(())
     }
 }
