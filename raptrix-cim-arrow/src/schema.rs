@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.8.6 profile.
+//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.8.7 profile.
 //!
 //! **CGMES 3.0+ Only**: This module targets CGMES v3.0 and later (v17+ CIM) merged profiles.
 //! Support for legacy CGMES 2.4.x was dropped in this release for simplicity and performance.
@@ -17,12 +17,16 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, Schema};
 
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.8.6 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.8.7 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.";
 
 /// Canonical RPF format version tag embedded as file-level metadata.
-pub const RPF_VERSION: &str = "0.8.6";
+pub const RPF_VERSION: &str = "0.8.7";
 
 /// Supported RPF versions accepted by generic Arrow IPC readers.
+/// v0.8.7 codifies the transformer representation contract: every exported file must carry
+///   `rpf.transformer_representation_mode = expanded | native_3w`.  Dual materialization
+///   (active rows in both `transformers_3w` and synthetic star-leg `transformers_2w`) is
+///   a hard error.  CIM default is `native_3w`; `expanded` uses delta-to-wye star expansion.
 /// v0.8.6 adds additive FACTS fields on branches and optional facts_devices / facts_solved
 ///   tables, plus FACTS feature metadata and smartvalve token normalization helpers.
 /// v0.8.5 adds switched-shunt stable identity, switched_shunts_solved table, extended
@@ -36,8 +40,8 @@ pub const RPF_VERSION: &str = "0.8.6";
 /// v0.8.1 normalizes all power/admittance fields to per-unit on base_mva.
 /// v0.8.0 introduced diagram layout support and dropped CGMES 2.4.x compatibility.
 pub const SUPPORTED_RPF_VERSIONS: &[&str] = &[
-    "v0.8.6", "0.8.6", "v0.8.5", "0.8.5", "v0.8.4", "0.8.4", "v0.8.3", "0.8.3", "v0.8.2", "0.8.2",
-    "v0.8.1", "0.8.1", "v0.8.0", "0.8.0", "0.7.1", "0.7.0",
+    "v0.8.7", "0.8.7", "v0.8.6", "0.8.6", "v0.8.5", "0.8.5", "v0.8.4", "0.8.4", "v0.8.3",
+    "0.8.3", "v0.8.2", "0.8.2", "v0.8.1", "0.8.1", "v0.8.0", "0.8.0", "0.7.1", "0.7.0",
 ];
 
 /// Backward-compatible alias retained for older call sites.
@@ -95,6 +99,15 @@ pub const METADATA_KEY_SOLVED_SHUNT_STATE_PRESENCE: &str = "rpf.solver.solved_sh
 /// Optional metadata key indicating facts_solved table presence/provenance.
 /// Values: actual_solved | not_available.
 pub const METADATA_KEY_FACTS_SOLVED_STATE_PRESENCE: &str = "rpf.facts_solved_state_presence";
+/// Required metadata key declaring how 3-winding transformers are represented in this file.
+/// Added in v0.8.7.  Allowed values:
+/// - `"native_3w"` — physical 3W units appear only in `transformers_3w`; no synthetic star buses.
+/// - `"expanded"` — physical 3W units are star-expanded into three 2W legs in `transformers_2w`
+///   via delta-to-wye impedance conversion; `transformers_3w` has zero active rows.
+/// Dual materialization (active rows in both tables for the same physical unit) is always a
+/// hard error regardless of the declared mode.
+pub const METADATA_KEY_TRANSFORMER_REPRESENTATION_MODE: &str =
+    "rpf.transformer_representation_mode";
 /// Optional metadata key indicating total electrical island count.
 pub const METADATA_KEY_TOPOLOGY_ISLAND_COUNT: &str = "rpf.topology.island_count";
 /// Optional metadata key indicating largest-island bus count.
@@ -186,6 +199,26 @@ pub fn normalize_facts_device_type(value: &str) -> Option<&'static str> {
         return Some(FACTS_DEVICE_TYPE_SMARTVALVE);
     }
     None
+}
+
+/// Validates the value of `rpf.transformer_representation_mode` read from file metadata.
+///
+/// Returns `Ok(())` for `"expanded"` or `"native_3w"`.  Returns an error for any other
+/// value so readers can apply strict or compatibility semantics as appropriate.
+///
+/// # Usage
+/// - **Strict reader**: propagate the error and reject the file.
+/// - **Compatibility reader**: log a warning and assume `"native_3w"` as fallback.
+pub fn validate_transformer_representation_mode_value(value: &str) -> Result<(), String> {
+    match value {
+        "expanded" | "native_3w" => Ok(()),
+        other => Err(format!(
+            "unknown rpf.transformer_representation_mode value '{}'; expected 'expanded' or \
+             'native_3w'.  Files produced by converters older than v0.8.7 may lack this key \
+             entirely — treat absence as 'native_3w' in compatibility mode.",
+            other
+        )),
+    }
 }
 
 fn dict_utf8() -> DataType {

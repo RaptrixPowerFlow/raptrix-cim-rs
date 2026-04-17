@@ -318,6 +318,7 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
             timestamp_utc: args.timestamp_utc.clone(),
             case_mode: raptrix_cim_rs::rpf_writer::CaseMode::FlatStartPlanning,
             solver_provenance: None,
+            transformer_representation_mode: raptrix_cim_rs::rpf_writer::TransformerRepresentationMode::Native3W,
         }
     } else {
         WriteOptions {
@@ -335,6 +336,7 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
             timestamp_utc: args.timestamp_utc.clone(),
             case_mode: raptrix_cim_rs::rpf_writer::CaseMode::FlatStartPlanning,
             solver_provenance: None,
+            transformer_representation_mode: raptrix_cim_rs::rpf_writer::TransformerRepresentationMode::Native3W,
         }
     };
 

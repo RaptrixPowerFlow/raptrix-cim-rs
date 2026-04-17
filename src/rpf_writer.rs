@@ -43,7 +43,8 @@ use crate::arrow_schema::{
     METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_LOAD_ISLAND_COUNT,
     METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_NETWORK_ISLAND_COUNT,
     METADATA_KEY_TOPOLOGY_DETACHED_ISLANDS_PRESENT, METADATA_KEY_TOPOLOGY_ISLAND_COUNT,
-    METADATA_KEY_TOPOLOGY_MAIN_ISLAND_BUS_COUNT, METADATA_KEY_VALIDATION_MODE, SCHEMA_VERSION,
+    METADATA_KEY_TOPOLOGY_MAIN_ISLAND_BUS_COUNT, METADATA_KEY_TRANSFORMER_REPRESENTATION_MODE,
+    METADATA_KEY_VALIDATION_MODE, SCHEMA_VERSION,
     TABLE_AREAS, TABLE_BRANCHES, TABLE_BUSES, TABLE_CONNECTIVITY_NODES, TABLE_CONTINGENCIES,
     TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_DYNAMICS_MODELS, TABLE_FIXED_SHUNTS,
     TABLE_GENERATORS, TABLE_INTERFACES, TABLE_LOADS, TABLE_METADATA, TABLE_NODE_BREAKER_DETAIL,
@@ -56,6 +57,40 @@ use crate::arrow_schema::{
     transformers_2w_schema, transformers_3w_schema, zones_schema,
 };
 use crate::parser;
+
+/// Declares how 3-winding `PowerTransformer` objects are represented in the exported RPF file.
+///
+/// The canonical metadata key `rpf.transformer_representation_mode` is stamped on every
+/// exported file with the corresponding string value so readers can inspect it without
+/// understanding CIM source structure.
+///
+/// **Dual materialization** — active rows in both `transformers_3w` and synthetic star-leg
+/// `transformers_2w` for the same physical unit — is always a hard error regardless of mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TransformerRepresentationMode {
+    /// Physical 3W units appear only as native rows in `transformers_3w`.
+    ///
+    /// No synthetic star buses are allocated.  This is the CIM-native representation and
+    /// the recommended default for CIM converter exports.  Metadata value: `"native_3w"`.
+    #[default]
+    Native3W,
+    /// Physical 3W units are star-expanded into three synthetic 2W legs in `transformers_2w`
+    /// via delta-to-wye impedance conversion.  `transformers_3w` has zero active rows.
+    ///
+    /// Star bus IDs are allocated deterministically from the bus-triple hash in the range
+    /// `> 10_000_000` to avoid conflicts with real network bus IDs.  Metadata value: `"expanded"`.
+    Expanded,
+}
+
+impl TransformerRepresentationMode {
+    /// Returns the canonical string value written to file-level metadata.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TransformerRepresentationMode::Native3W => "native_3w",
+            TransformerRepresentationMode::Expanded => "expanded",
+        }
+    }
+}
 
 /// Bus resolution mode for EQ+TP merges.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,6 +121,11 @@ pub struct WriteOptions {
     /// Solver provenance written when `case_mode = SolvedSnapshot`.
     /// Must be `None` for planning cases; must be `Some` when `case_mode = SolvedSnapshot`.
     pub solver_provenance: Option<SolverProvenance>,
+    /// How 3-winding transformers are represented in the exported file (v0.8.7+).
+    ///
+    /// `Native3W` (default): physical 3W units appear as native rows in `transformers_3w`.
+    /// `Expanded`: physical 3W units are star-expanded into three 2W legs in `transformers_2w`.
+    pub transformer_representation_mode: TransformerRepresentationMode,
 }
 
 /// Policy for handling detached electrical islands at export time.
@@ -225,6 +265,7 @@ impl Default for WriteOptions {
             timestamp_utc: None,
             case_mode: CaseMode::FlatStartPlanning,
             solver_provenance: None,
+            transformer_representation_mode: TransformerRepresentationMode::Native3W,
         }
     }
 }
@@ -687,6 +728,248 @@ fn compute_case_fingerprint(
 
     let digest = hasher.finalize();
     Ok(format!("{:x}", digest))
+}
+
+// ---------------------------------------------------------------------------
+// v0.8.7  Transformer representation contract
+// ---------------------------------------------------------------------------
+
+/// Deterministic star bus ID for a 3-winding transformer's synthetic internal node.
+///
+/// Derived from the bus triple and circuit ID so the same physical 3W transformer
+/// always gets the same star bus ID across serialization calls.  The result is
+/// guaranteed to be in the range `[10_000_001, i32::MAX]` so it never collides
+/// with real CIM bus IDs (which start at 1 and rarely exceed a few hundred thousand
+/// even for the largest North American / European models).
+fn star_bus_id_for_3w(bus_h: i32, bus_m: i32, bus_l: i32, ckt: &str) -> i32 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    bus_h.hash(&mut hasher);
+    bus_m.hash(&mut hasher);
+    bus_l.hash(&mut hasher);
+    ckt.hash(&mut hasher);
+    let h = hasher.finish();
+    // Map to [10_000_001, i32::MAX].  Range is ~2.1 billion slots; collision
+    // probability for a realistic CIM file (< 10_000 3W units) is negligible.
+    let range = (i32::MAX as u64) - 10_000_001;
+    10_000_001i32 + (h % range) as i32
+}
+
+/// Star-expand a slice of active 3W transformer rows into three synthetic 2W legs each.
+///
+/// For each active `Transformer3WRow` the function:
+/// 1. Applies delta-to-wye impedance conversion for all six (r, x) pairwise fields.
+/// 2. Allocates a deterministic star bus ID via `star_bus_id_for_3w`.
+/// 3. Returns three `Transformer2WRow` values: H→star, M→star, L→star.
+///
+/// Inactive rows (`status == false`) are preserved as-is in the 3W list and skipped
+/// here — their impedance values are unchanged and they do not generate star legs.
+fn star_expand_3w_transformers<'a>(
+    rows_3w: &[Transformer3WRow<'a>],
+    existing_star_ids: &HashSet<i32>,
+) -> Vec<Transformer2WRow<'a>> {
+    let mut out: Vec<Transformer2WRow<'a>> = Vec::with_capacity(rows_3w.len() * 3);
+    let mut allocated: HashSet<i32> = existing_star_ids.clone();
+
+    for row in rows_3w {
+        if !row.status {
+            continue;
+        }
+
+        // Delta-to-wye impedance conversion.
+        let r_h = (row.r_hm + row.r_hl - row.r_ml) / 2.0;
+        let r_m = (row.r_hm + row.r_ml - row.r_hl) / 2.0;
+        let r_l = (row.r_hl + row.r_ml - row.r_hm) / 2.0;
+        let x_h = (row.x_hm + row.x_hl - row.x_ml) / 2.0;
+        let x_m = (row.x_hm + row.x_ml - row.x_hl) / 2.0;
+        let x_l = (row.x_hl + row.x_ml - row.x_hm) / 2.0;
+
+        // Deterministic star bus ID with collision avoidance.
+        let mut star_id = star_bus_id_for_3w(row.bus_h_id, row.bus_m_id, row.bus_l_id, &row.ckt);
+        // Probe forward on collision (extremely rare; keeps code simple).
+        while allocated.contains(&star_id) {
+            star_id = star_id.saturating_add(1);
+            if star_id <= 10_000_000 {
+                star_id = 10_000_001;
+            }
+        }
+        allocated.insert(star_id);
+
+        // H → star leg.
+        out.push(Transformer2WRow {
+            from_bus_id: row.bus_h_id,
+            to_bus_id: star_id,
+            ckt: row.ckt.clone(),
+            name: Cow::Owned(format!("{}_H", row.name)),
+            r: r_h,
+            x: x_h,
+            winding1_r: r_h,
+            winding1_x: x_h,
+            winding2_r: 0.0,
+            winding2_x: 0.0,
+            g: 0.0,
+            b: 0.0,
+            tap_ratio: row.tap_h,
+            nominal_tap_ratio: 1.0,
+            phase_shift: row.phase_shift,
+            vector_group: row.vector_group.clone(),
+            rate_a: row.rate_a,
+            rate_b: row.rate_b,
+            rate_c: row.rate_c,
+            status: true,
+            from_nominal_kv: row.nominal_kv_h,
+            to_nominal_kv: None,
+        });
+
+        // M → star leg.
+        out.push(Transformer2WRow {
+            from_bus_id: row.bus_m_id,
+            to_bus_id: star_id,
+            ckt: row.ckt.clone(),
+            name: Cow::Owned(format!("{}_M", row.name)),
+            r: r_m,
+            x: x_m,
+            winding1_r: r_m,
+            winding1_x: x_m,
+            winding2_r: 0.0,
+            winding2_x: 0.0,
+            g: 0.0,
+            b: 0.0,
+            tap_ratio: row.tap_m,
+            nominal_tap_ratio: 1.0,
+            phase_shift: 0.0,
+            vector_group: row.vector_group.clone(),
+            rate_a: row.rate_a,
+            rate_b: row.rate_b,
+            rate_c: row.rate_c,
+            status: true,
+            from_nominal_kv: row.nominal_kv_m,
+            to_nominal_kv: None,
+        });
+
+        // L → star leg.
+        out.push(Transformer2WRow {
+            from_bus_id: row.bus_l_id,
+            to_bus_id: star_id,
+            ckt: row.ckt.clone(),
+            name: Cow::Owned(format!("{}_L", row.name)),
+            r: r_l,
+            x: x_l,
+            winding1_r: r_l,
+            winding1_x: x_l,
+            winding2_r: 0.0,
+            winding2_x: 0.0,
+            g: 0.0,
+            b: 0.0,
+            tap_ratio: row.tap_l,
+            nominal_tap_ratio: 1.0,
+            phase_shift: 0.0,
+            vector_group: row.vector_group.clone(),
+            rate_a: row.rate_a,
+            rate_b: row.rate_b,
+            rate_c: row.rate_c,
+            status: true,
+            from_nominal_kv: row.nominal_kv_l,
+            to_nominal_kv: None,
+        });
+    }
+    out
+}
+
+/// Normalize `transformer_2w_rows` and `transformer_3w_rows` in-place to match `mode`.
+///
+/// - `Native3W`: removes any rows in `transformers_2w` that use a synthetic star bus
+///   (bus_id > 10_000_000).  This is a safety-net; normal CIM exports should not have
+///   these rows at all, but importing external files may.
+/// - `Expanded`: star-expands all active 3W rows into synthetic 2W legs and clears
+///   `transformer_3w_rows`.
+fn normalize_transformer_representation<'a>(
+    transformer_2w_rows: &mut Vec<Transformer2WRow<'a>>,
+    transformer_3w_rows: &mut Vec<Transformer3WRow<'a>>,
+    mode: TransformerRepresentationMode,
+) {
+    match mode {
+        TransformerRepresentationMode::Native3W => {
+            // Remove any previously allocated synthetic star-leg rows.
+            transformer_2w_rows.retain(|row| row.from_bus_id <= 10_000_000 && row.to_bus_id <= 10_000_000);
+        }
+        TransformerRepresentationMode::Expanded => {
+            // Collect existing real bus IDs to seed collision avoidance.
+            let existing: HashSet<i32> = transformer_2w_rows
+                .iter()
+                .flat_map(|row| [row.from_bus_id, row.to_bus_id])
+                .collect();
+            let star_legs = star_expand_3w_transformers(transformer_3w_rows, &existing);
+            transformer_2w_rows.extend(star_legs);
+            transformer_3w_rows.clear();
+        }
+    }
+}
+
+/// Validates that `transformer_2w_rows` and `transformer_3w_rows` conform to `mode`.
+///
+/// Fails fast with a deterministic diagnostic when:
+/// - `Expanded` mode has active rows in `transformers_3w`.
+/// - `Native3W` mode has active rows in `transformers_2w` with synthetic star bus IDs.
+fn validate_transformer_representation_mode(
+    transformer_2w_rows: &[Transformer2WRow<'_>],
+    transformer_3w_rows: &[Transformer3WRow<'_>],
+    mode: TransformerRepresentationMode,
+) -> Result<()> {
+    match mode {
+        TransformerRepresentationMode::Expanded => {
+            let active_3w: Vec<_> = transformer_3w_rows
+                .iter()
+                .filter(|row| row.status)
+                .collect();
+            if !active_3w.is_empty() {
+                let examples: Vec<String> = active_3w
+                    .iter()
+                    .take(3)
+                    .map(|row| {
+                        format!(
+                            "(bus_h={} bus_m={} bus_l={} ckt={})",
+                            row.bus_h_id, row.bus_m_id, row.bus_l_id, row.ckt
+                        )
+                    })
+                    .collect();
+                bail!(
+                    "transformer representation contract violation: mode=expanded requires \
+                     zero active rows in transformers_3w, found {} active row(s). \
+                     Examples: {}",
+                    active_3w.len(),
+                    examples.join(", ")
+                );
+            }
+        }
+        TransformerRepresentationMode::Native3W => {
+            let star_legs: Vec<_> = transformer_2w_rows
+                .iter()
+                .filter(|row| row.status && (row.from_bus_id > 10_000_000 || row.to_bus_id > 10_000_000))
+                .collect();
+            if !star_legs.is_empty() {
+                let examples: Vec<String> = star_legs
+                    .iter()
+                    .take(3)
+                    .map(|row| {
+                        format!(
+                            "(from={} to={} ckt={})",
+                            row.from_bus_id, row.to_bus_id, row.ckt
+                        )
+                    })
+                    .collect();
+                bail!(
+                    "transformer representation contract violation: mode=native_3w must have \
+                     no synthetic star-leg rows (bus_id > 10_000_000) in transformers_2w, \
+                     found {} row(s). Examples: {}",
+                    star_legs.len(),
+                    examples.join(", ")
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_pre_write_contract(
@@ -1182,6 +1465,19 @@ pub fn write_complete_rpf_with_options(
         &transformer_3w_rows,
     )?;
 
+    // v0.8.7: normalize transformer representation mode (star-expansion or cleanup),
+    // then validate contract invariants before writing any bytes.
+    normalize_transformer_representation(
+        &mut transformer_2w_rows,
+        &mut transformer_3w_rows,
+        options.transformer_representation_mode,
+    );
+    validate_transformer_representation_mode(
+        &transformer_2w_rows,
+        &transformer_3w_rows,
+        options.transformer_representation_mode,
+    )?;
+
     // v0.8.4: validate planning fields are finite before any solved-state checks.
     validate_planning_fields_finite(&bus_rows)?;
 
@@ -1397,6 +1693,11 @@ pub fn write_complete_rpf_with_options(
     additional_root_metadata.insert(
         METADATA_KEY_SOLVED_STATE_PRESENCE.to_string(),
         solved_state_presence.as_str().to_string(),
+    );
+    // v0.8.7: transformer representation contract.
+    additional_root_metadata.insert(
+        METADATA_KEY_TRANSFORMER_REPRESENTATION_MODE.to_string(),
+        options.transformer_representation_mode.as_str().to_string(),
     );
     if let Some(ref prov) = options.solver_provenance {
         if let Some(ref ver) = prov.solver_version {
@@ -4415,7 +4716,11 @@ mod tests {
     };
 
     use super::{
-        BusResolutionMode, DetachedIslandPolicy, GenRow, WriteOptions, infer_dynamics_model_type,
+        BusResolutionMode, DetachedIslandPolicy, GenRow, TransformerRepresentationMode,
+        Transformer2WRow, Transformer3WRow,
+        WriteOptions, infer_dynamics_model_type,
+        normalize_transformer_representation, star_expand_3w_transformers,
+        validate_transformer_representation_mode,
         read_rpf_tables, rpf_file_metadata, summarize_rpf, write_complete_rpf,
         write_complete_rpf_with_options,
     };
@@ -5238,6 +5543,366 @@ mod tests {
             Some(&"true".to_string())
         );
 
+        Ok(())
+    }
+
+    // -------------------------------------------------------------------------
+    // v0.8.7  Transformer representation contract — unit tests
+    // -------------------------------------------------------------------------
+
+    fn make_3w_row<'a>(
+        bus_h: i32, bus_m: i32, bus_l: i32,
+        r_hm: f64, x_hm: f64,
+        r_hl: f64, x_hl: f64,
+        r_ml: f64, x_ml: f64,
+        active: bool,
+    ) -> Transformer3WRow<'a> {
+        Transformer3WRow {
+            bus_h_id: bus_h,
+            bus_m_id: bus_m,
+            bus_l_id: bus_l,
+            ckt: Cow::Borrowed("1"),
+            name: Cow::Borrowed("T3W"),
+            r_hm, x_hm, r_hl, x_hl, r_ml, x_ml,
+            tap_h: 1.0, tap_m: 1.0, tap_l: 1.0,
+            phase_shift: 0.0,
+            vector_group: Cow::Borrowed("unknown"),
+            rate_a: 100.0, rate_b: 100.0, rate_c: 100.0,
+            status: active,
+            nominal_kv_h: None, nominal_kv_m: None, nominal_kv_l: None,
+        }
+    }
+
+    fn make_2w_star_row<'a>(from: i32, to: i32) -> Transformer2WRow<'a> {
+        Transformer2WRow {
+            from_bus_id: from,
+            to_bus_id: to,
+            ckt: Cow::Borrowed("1"),
+            name: Cow::Borrowed("STAR"),
+            r: 0.01, x: 0.05,
+            winding1_r: 0.01, winding1_x: 0.05,
+            winding2_r: 0.0, winding2_x: 0.0,
+            g: 0.0, b: 0.0,
+            tap_ratio: 1.0, nominal_tap_ratio: 1.0,
+            phase_shift: 0.0,
+            vector_group: Cow::Borrowed("unknown"),
+            rate_a: 100.0, rate_b: 100.0, rate_c: 100.0,
+            status: true,
+            from_nominal_kv: None, to_nominal_kv: None,
+        }
+    }
+
+    // --- mode string helpers ---
+
+    #[test]
+    fn mode_as_str_native_3w() {
+        assert_eq!(TransformerRepresentationMode::Native3W.as_str(), "native_3w");
+    }
+
+    #[test]
+    fn mode_as_str_expanded() {
+        assert_eq!(TransformerRepresentationMode::Expanded.as_str(), "expanded");
+    }
+
+    #[test]
+    fn mode_default_is_native_3w() {
+        assert_eq!(
+            TransformerRepresentationMode::default(),
+            TransformerRepresentationMode::Native3W
+        );
+    }
+
+    // --- validate_transformer_representation_mode ---
+
+    #[test]
+    fn validate_native3w_with_no_3w_rows_passes() {
+        let rows_2w: Vec<Transformer2WRow<'_>> = vec![];
+        let rows_3w: Vec<Transformer3WRow<'_>> = vec![];
+        assert!(
+            validate_transformer_representation_mode(
+                &rows_2w,
+                &rows_3w,
+                TransformerRepresentationMode::Native3W
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn validate_native3w_with_active_3w_rows_passes() {
+        // Native3W allows active 3W rows — they are the native form.
+        let rows_2w: Vec<Transformer2WRow<'_>> = vec![];
+        let rows_3w = vec![make_3w_row(1, 2, 3, 0.01, 0.1, 0.01, 0.1, 0.01, 0.1, true)];
+        assert!(
+            validate_transformer_representation_mode(
+                &rows_2w,
+                &rows_3w,
+                TransformerRepresentationMode::Native3W
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn validate_native3w_rejects_synthetic_star_bus_in_2w() {
+        // A 2W row whose to_bus_id is in the synthetic star range must be rejected in native_3w.
+        let rows_2w = vec![make_2w_star_row(1, 10_000_001)];
+        let rows_3w: Vec<Transformer3WRow<'_>> = vec![];
+        let err = validate_transformer_representation_mode(
+            &rows_2w,
+            &rows_3w,
+            TransformerRepresentationMode::Native3W,
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("native_3w"),
+            "diagnostic must mention mode; got: {msg}"
+        );
+        assert!(
+            msg.contains("10_000_000") || msg.contains("star"),
+            "diagnostic must mention star bus; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn validate_expanded_with_no_3w_rows_passes() {
+        let rows_2w: Vec<Transformer2WRow<'_>> = vec![];
+        let rows_3w: Vec<Transformer3WRow<'_>> = vec![];
+        assert!(
+            validate_transformer_representation_mode(
+                &rows_2w,
+                &rows_3w,
+                TransformerRepresentationMode::Expanded
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn validate_expanded_rejects_active_3w_rows() {
+        let rows_2w: Vec<Transformer2WRow<'_>> = vec![];
+        let rows_3w = vec![make_3w_row(1, 2, 3, 0.01, 0.1, 0.01, 0.1, 0.01, 0.1, true)];
+        let err = validate_transformer_representation_mode(
+            &rows_2w,
+            &rows_3w,
+            TransformerRepresentationMode::Expanded,
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("expanded"),
+            "diagnostic must mention mode; got: {msg}"
+        );
+        assert!(
+            msg.contains("bus_h=1") || msg.contains("1 active"),
+            "diagnostic must include row identity; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn validate_expanded_allows_inactive_3w_rows() {
+        // Inactive (status=false) 3W rows do not violate expanded mode.
+        let rows_2w: Vec<Transformer2WRow<'_>> = vec![];
+        let rows_3w = vec![make_3w_row(1, 2, 3, 0.01, 0.1, 0.01, 0.1, 0.01, 0.1, false)];
+        assert!(
+            validate_transformer_representation_mode(
+                &rows_2w,
+                &rows_3w,
+                TransformerRepresentationMode::Expanded
+            )
+            .is_ok()
+        );
+    }
+
+    // --- star_expand_3w_transformers ---
+
+    #[test]
+    fn star_expand_single_3w_row_produces_three_legs() {
+        let rows_3w = vec![make_3w_row(10, 20, 30, 0.02, 0.10, 0.02, 0.10, 0.02, 0.10, true)];
+        let existing = std::collections::HashSet::new();
+        let legs = star_expand_3w_transformers(&rows_3w, &existing);
+        assert_eq!(legs.len(), 3, "expected 3 star legs for 1 active 3W row");
+    }
+
+    #[test]
+    fn star_expand_inactive_3w_row_produces_no_legs() {
+        let rows_3w = vec![make_3w_row(10, 20, 30, 0.02, 0.10, 0.02, 0.10, 0.02, 0.10, false)];
+        let existing = std::collections::HashSet::new();
+        let legs = star_expand_3w_transformers(&rows_3w, &existing);
+        assert_eq!(legs.len(), 0);
+    }
+
+    #[test]
+    fn star_expand_delta_to_wye_impedance_correctness() {
+        // Known values: r_hm=0.04 r_hl=0.06 r_ml=0.02  x_hm=0.10 x_hl=0.14 x_ml=0.08
+        // Wye:  r_h=(0.04+0.06-0.02)/2=0.04  r_m=(0.04+0.02-0.06)/2=0.0  r_l=(0.06+0.02-0.04)/2=0.02
+        //       x_h=(0.10+0.14-0.08)/2=0.08  x_m=(0.10+0.08-0.14)/2=0.02 x_l=(0.14+0.08-0.10)/2=0.06
+        let rows_3w = vec![make_3w_row(
+            1, 2, 3,
+            0.04, 0.10,  // r_hm, x_hm
+            0.06, 0.14,  // r_hl, x_hl
+            0.02, 0.08,  // r_ml, x_ml
+            true,
+        )];
+        let existing = std::collections::HashSet::new();
+        let legs = star_expand_3w_transformers(&rows_3w, &existing);
+        assert_eq!(legs.len(), 3);
+
+        // H leg (from_bus_id == 1)
+        let h_leg = legs.iter().find(|l| l.from_bus_id == 1).expect("H leg missing");
+        assert!((h_leg.r - 0.04).abs() < 1e-9, "r_h mismatch: {}", h_leg.r);
+        assert!((h_leg.x - 0.08).abs() < 1e-9, "x_h mismatch: {}", h_leg.x);
+
+        // M leg (from_bus_id == 2)
+        let m_leg = legs.iter().find(|l| l.from_bus_id == 2).expect("M leg missing");
+        assert!((m_leg.r - 0.0).abs() < 1e-9, "r_m mismatch: {}", m_leg.r);
+        assert!((m_leg.x - 0.02).abs() < 1e-9, "x_m mismatch: {}", m_leg.x);
+
+        // L leg (from_bus_id == 3)
+        let l_leg = legs.iter().find(|l| l.from_bus_id == 3).expect("L leg missing");
+        assert!((l_leg.r - 0.02).abs() < 1e-9, "r_l mismatch: {}", l_leg.r);
+        assert!((l_leg.x - 0.06).abs() < 1e-9, "x_l mismatch: {}", l_leg.x);
+    }
+
+    #[test]
+    fn star_expand_star_bus_id_is_deterministic() {
+        let rows_3w = vec![make_3w_row(10, 20, 30, 0.01, 0.05, 0.01, 0.05, 0.01, 0.05, true)];
+        let existing = std::collections::HashSet::new();
+        let legs_a = star_expand_3w_transformers(&rows_3w, &existing);
+        let legs_b = star_expand_3w_transformers(&rows_3w, &existing);
+        assert_eq!(
+            legs_a[0].to_bus_id, legs_b[0].to_bus_id,
+            "star bus ID must be deterministic across calls"
+        );
+    }
+
+    #[test]
+    fn star_expand_star_bus_id_is_in_safe_range() {
+        let rows_3w = vec![make_3w_row(10, 20, 30, 0.01, 0.05, 0.01, 0.05, 0.01, 0.05, true)];
+        let existing = std::collections::HashSet::new();
+        let legs = star_expand_3w_transformers(&rows_3w, &existing);
+        let star_id = legs[0].to_bus_id;
+        assert!(
+            star_id > 10_000_000,
+            "star bus ID must be > 10_000_000, got {star_id}"
+        );
+        assert!(star_id > 0, "star bus ID must be positive");
+    }
+
+    #[test]
+    fn star_expand_all_three_legs_share_same_star_bus() {
+        let rows_3w = vec![make_3w_row(10, 20, 30, 0.01, 0.05, 0.01, 0.05, 0.01, 0.05, true)];
+        let existing = std::collections::HashSet::new();
+        let legs = star_expand_3w_transformers(&rows_3w, &existing);
+        assert_eq!(legs.len(), 3);
+        let star_ids: std::collections::HashSet<i32> = legs.iter().map(|l| l.to_bus_id).collect();
+        assert_eq!(star_ids.len(), 1, "all three legs must share the same star bus ID");
+    }
+
+    // --- normalize_transformer_representation ---
+
+    #[test]
+    fn normalize_native3w_strips_synthetic_star_legs() {
+        let mut rows_2w = vec![
+            make_2w_star_row(1, 2),          // real 2W — keep
+            make_2w_star_row(1, 10_000_001), // synthetic star leg — remove
+        ];
+        let mut rows_3w = vec![make_3w_row(1, 2, 3, 0.01, 0.1, 0.01, 0.1, 0.01, 0.1, true)];
+        normalize_transformer_representation(
+            &mut rows_2w,
+            &mut rows_3w,
+            TransformerRepresentationMode::Native3W,
+        );
+        assert_eq!(rows_2w.len(), 1, "star leg must be stripped");
+        assert_eq!(rows_2w[0].to_bus_id, 2, "real 2W row must be kept");
+        assert_eq!(rows_3w.len(), 1, "3W rows must be unchanged in native_3w");
+    }
+
+    #[test]
+    fn normalize_expanded_clears_3w_rows_and_adds_legs() {
+        let mut rows_2w: Vec<Transformer2WRow<'_>> = vec![];
+        let mut rows_3w = vec![make_3w_row(1, 2, 3, 0.04, 0.10, 0.06, 0.14, 0.02, 0.08, true)];
+        normalize_transformer_representation(
+            &mut rows_2w,
+            &mut rows_3w,
+            TransformerRepresentationMode::Expanded,
+        );
+        assert_eq!(rows_3w.len(), 0, "3W rows must be cleared in expanded mode");
+        assert_eq!(rows_2w.len(), 3, "three star legs must be added");
+    }
+
+    // --- shared schema reader helper (raptrix-cim-arrow) ---
+
+    #[test]
+    fn schema_validates_known_mode_values() {
+        use crate::arrow_schema::validate_transformer_representation_mode_value;
+        assert!(validate_transformer_representation_mode_value("native_3w").is_ok());
+        assert!(validate_transformer_representation_mode_value("expanded").is_ok());
+    }
+
+    #[test]
+    fn schema_rejects_unknown_mode_values() {
+        use crate::arrow_schema::validate_transformer_representation_mode_value;
+        let err = validate_transformer_representation_mode_value("star_point").unwrap_err();
+        assert!(err.contains("star_point"), "error must mention unknown value; got: {err}");
+        assert!(err.contains("native_3w"), "error must suggest valid values; got: {err}");
+    }
+
+    // --- metadata key stamping (write round-trip) ---
+
+    fn generate_eq_fixture_minimal_line() -> String {
+        String::from(
+            r##"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#">
+<cim:ConnectivityNode rdf:ID="N1" /><cim:ConnectivityNode rdf:ID="N2" />
+<cim:ACLineSegment rdf:ID="L1"><ACLineSegment.r>0.01</ACLineSegment.r><ACLineSegment.x>0.05</ACLineSegment.x></cim:ACLineSegment>
+<cim:Terminal rdf:ID="LT1"><Terminal.ConductingEquipment rdf:resource="#L1"/><Terminal.ConnectivityNode rdf:resource="#N1"/><ACDCTerminal.sequenceNumber>1</ACDCTerminal.sequenceNumber></cim:Terminal>
+<cim:Terminal rdf:ID="LT2"><Terminal.ConductingEquipment rdf:resource="#L1"/><Terminal.ConnectivityNode rdf:resource="#N2"/><ACDCTerminal.sequenceNumber>2</ACDCTerminal.sequenceNumber></cim:Terminal>
+</rdf:RDF>"##,
+        )
+    }
+
+    #[test]
+    fn write_complete_rpf_stamps_native3w_mode_key() -> Result<()> {
+        use crate::arrow_schema::METADATA_KEY_TRANSFORMER_REPRESENTATION_MODE;
+        let tmp_dir = std::env::temp_dir().join("raptrix_rpf_repr_mode_native3w");
+        fs::create_dir_all(&tmp_dir)?;
+        let eq_path = tmp_dir.join("eq.xml");
+        let out_path = tmp_dir.join("out.rpf");
+        fs::write(&eq_path, generate_eq_fixture_minimal_line())?;
+        let eq_str = eq_path.to_string_lossy().into_owned();
+        let out_str = out_path.to_string_lossy().into_owned();
+        write_complete_rpf(&[&eq_str], &out_str)?;
+        let metadata = rpf_file_metadata(&out_str)?;
+        assert_eq!(
+            metadata.get(METADATA_KEY_TRANSFORMER_REPRESENTATION_MODE),
+            Some(&"native_3w".to_string()),
+            "default mode must be native_3w"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn write_complete_rpf_stamps_expanded_mode_key() -> Result<()> {
+        use crate::arrow_schema::METADATA_KEY_TRANSFORMER_REPRESENTATION_MODE;
+        let tmp_dir = std::env::temp_dir().join("raptrix_rpf_repr_mode_expanded");
+        fs::create_dir_all(&tmp_dir)?;
+        let eq_path = tmp_dir.join("eq.xml");
+        let out_path = tmp_dir.join("out.rpf");
+        fs::write(&eq_path, generate_eq_fixture_minimal_line())?;
+        let options = WriteOptions {
+            transformer_representation_mode: TransformerRepresentationMode::Expanded,
+            ..WriteOptions::default()
+        };
+        let eq_str = eq_path.to_string_lossy().into_owned();
+        let out_str = out_path.to_string_lossy().into_owned();
+        write_complete_rpf_with_options(&[&eq_str], &out_str, &options)?;
+        let metadata = rpf_file_metadata(&out_str)?;
+        assert_eq!(
+            metadata.get(METADATA_KEY_TRANSFORMER_REPRESENTATION_MODE),
+            Some(&"expanded".to_string()),
+            "expanded mode must stamp 'expanded'"
+        );
         Ok(())
     }
 }
