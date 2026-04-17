@@ -4,7 +4,7 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Musto Technologies LL
 
 Part of the Raptrix Powerflow ecosystem.
 
-This crate supports the shared open converter suite published at [MustoTechnologies](https://github.com/MustoTechnologies/).
+This crate supports the shared open converter suite published at [RaptrixPowerFlow](https://github.com/RaptrixPowerFlow/).
 
 Copyright (c) 2026 Musto Technologies LLC
 

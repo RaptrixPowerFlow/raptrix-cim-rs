@@ -4,9 +4,9 @@ raptrix-cim-rs - the world's first high-performance zero-copy Rust implementatio
 Part of the Raptrix Powerflow ecosystem.
 
 Related repositories:
-- [raptrix-psse-rs](https://github.com/MustoTechnologies/raptrix-psse-rs) - Unlimited-size PSS/E to RPF converter
-- [raptrix-studio](https://github.com/MustoTechnologies/raptrix-studio) - Free unlimited RPF viewer/editor
-- [MustoTechnologies organization](https://github.com/MustoTechnologies/) - Full open converter suite
+- [raptrix-psse-rs](https://github.com/RaptrixPowerFlow/raptrix-psse-rs) - Unlimited-size PSS/E to RPF converter
+- [raptrix-studio](https://github.com/RaptrixPowerFlow/raptrix-studio) - Free unlimited RPF viewer/editor
+- [RaptrixPowerFlow organization](https://github.com/RaptrixPowerFlow/) - Full open converter suite
 
 Quick start:
 
@@ -17,9 +17,43 @@ cargo run --release -- convert --input-dir cgmes_case/ --output case.rpf
 ![License: MPL-2.0](https://img.shields.io/badge/License-MPL%202.0-brightgreen.svg)
 MPL 2.0 - free to use, modify, and distribute.
 
-Production-grid usage is supported through the commercial Raptrix core platform: [raptrix-core](https://github.com/MustoTechnologies/raptrix-core).
+Production-grid usage is supported through the commercial Raptrix core platform: [raptrix-core](https://github.com/RaptrixPowerFlow/raptrix-core).
 
-Enterprise and academic options: Flexible commercial licensing - contact us for seats, enterprise, or cloud options via [Raptrix website](https://www.raptrix.ai/) or [Musto Technologies](https://github.com/MustoTechnologies/).
+Enterprise and academic options: Flexible commercial licensing - contact us for seats, enterprise, or cloud options via [Raptrix website](https://www.raptrixpowerflow.com/) or [RaptrixPowerFlow on GitHub](https://github.com/RaptrixPowerFlow/).
+
+## Public Release Safety
+
+Before publishing a branch or tag, run the repository safety checks to prevent accidental release of confidential model data or secrets.
+
+- Local pre-commit hook support lives in `.githooks/` and can be enabled with `git config core.hooksPath .githooks`.
+- `scripts/public-safety-check.sh` blocks sensitive file patterns, common secret signatures, and large tracked payloads.
+- `.github/workflows/public-safety.yml` enforces the same checks on push and pull requests.
+- External or licensed CIM data should stay under ignored paths such as `tests/data/external/` and must never be committed.
+
+Manual scan command:
+
+```bash
+./scripts/public-safety-check.sh --mode tracked
+```
+
+## Why RPF? CIM Direct to Power Flow, No Vendor Detour
+
+CIM/XML profile exchange is rich and interoperable, but it was not designed as a zero-copy runtime handoff format for modern security analysis pipelines. RPF exists to close that gap.
+
+| CIM exchange reality | How RPF solves it |
+|---|---|
+| **Profile joins at runtime are expensive** — EQ/TP/SV/SSH/DY/DL data must be stitched repeatedly before solve-stage workflows | **Single canonical Arrow IPC payload** — profiles are normalized once into deterministic tables, then memory-mapped downstream |
+| **Semantic ambiguity across toolchains** — planning vs. solved intent can be unclear and inconsistently encoded | **Explicit case semantics** — `case_mode` and solved-state metadata are first-class, validated contract fields |
+| **Operational pipelines inherit vendor friction** — many teams round-trip through legacy vendor workflows before contingency or SCED analysis | **Direct CIM-to-RPF path** — `raptrix-cim-rs` maps IEC 61970 input straight to solver-ready interchange without requiring a PSS/E conversion step |
+| **Mixed proprietary/open ecosystems are hard to automate safely** | **Open, typed, versioned contract** — strict schema + metadata validation catches mismatches early and supports deterministic CI |
+
+### Why this is critical
+
+- **Time-to-answer**: remove unnecessary translation hops between planning data and contingency-ready power-flow input.
+- **Data integrity**: one canonical contract lowers drift between engineering sources and solver execution payloads.
+- **Operational independence**: CIM-first ingestion keeps the path open and reproducible for utilities, ISOs, consultants, and datacenter studies.
+
+In short: this converter takes IEC 61970 CIM exchange data directly into Raptrix PowerFlow Interchange (`.rpf`) so power-flow workflows can run without a PSS/E-in-the-middle dependency.
 
 Copyright (c) 2026 Musto Technologies LLC
 
@@ -467,3 +501,4 @@ to implementation tasks with much less ambiguity.
 Raptrix CIM-Arrow — High-performance open CIM profile by Musto Technologies LLC
 
 Copyright (c) 2026 Musto Technologies LLC
+

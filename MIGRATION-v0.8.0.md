@@ -216,7 +216,7 @@ match table_name {
 
 ## Contact & Support
 
-- **GitHub Issues**: https://github.com/MustoTechnologies/raptrix-cim-rs
+- **GitHub Issues**: https://github.com/RaptrixPowerFlow/raptrix-cim-rs
 - **Documentation**: [docs/schema-contract.md](docs/schema-contract.md)
 - **Release Sync Workflow**: [docs/release-sync-workflow.md](docs/release-sync-workflow.md)
 
@@ -235,3 +235,4 @@ match table_name {
 
 **Raptrix CIM-Arrow — High-performance open CIM profile by Musto Technologies LLC**  
 **Copyright (c) 2026 Musto Technologies LLC**
+

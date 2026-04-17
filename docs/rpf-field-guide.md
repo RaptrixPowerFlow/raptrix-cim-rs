@@ -12,7 +12,7 @@ This repository is **CIM-first**: it targets IEC 61970 CIM 17+ exchange for both
 
 An `.rpf` file is a single [Apache Arrow IPC](https://arrow.apache.org/docs/format/IPC.html) file. Think of it as a container that holds several named tables — buses, branches, generators, and so on — all packed into one binary file with metadata attached.
 
-You can open any `.rpf` file with the free [raptrix-studio](https://github.com/MustoTechnologies/raptrix-studio) viewer, with Python via `pyarrow`, or by running `cargo run --release -- view --input case.rpf` on this repo.
+You can open any `.rpf` file with the free [raptrix-studio](https://github.com/RaptrixPowerFlow/raptrix-studio) viewer, with Python via `pyarrow`, or by running `cargo run --release -- view --input case.rpf` on this repo.
 
 Each table lives as a named column in the root Arrow record batch. The root metadata (key-value strings attached to the file header) describe what kind of case it is, who created it, feature flags, and row counts.
 
@@ -469,6 +469,7 @@ with ipc.open_file("case.rpf") as reader:
 
 ---
 
-*Part of the Raptrix Powerflow ecosystem — [raptrix-studio](https://github.com/MustoTechnologies/raptrix-studio) | [raptrix-psse-rs](https://github.com/MustoTechnologies/raptrix-psse-rs) | [MustoTechnologies](https://github.com/MustoTechnologies/)*
+*Part of the Raptrix Powerflow ecosystem — [raptrix-studio](https://github.com/RaptrixPowerFlow/raptrix-studio) | [raptrix-psse-rs](https://github.com/RaptrixPowerFlow/raptrix-psse-rs) | [RaptrixPowerFlow](https://github.com/RaptrixPowerFlow/)*
 
 *Copyright (c) 2026 Musto Technologies LLC — MPL 2.0*
+
