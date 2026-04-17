@@ -143,7 +143,7 @@ RPF standardization here is intentional: it enables direct CIM-to-powerflow inte
 
 ### Versioning Policy
 
-Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is now locked at schema `v0.8.6` for interoperability and deterministic CGMES 3.0+ ingest behavior, while the converter crate release tracks implementation maturity and is currently `0.2.6`.
+Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is now locked at schema `v0.8.6` for interoperability and deterministic CGMES 3.0+ ingest behavior, while the converter crate release tracks implementation maturity and is currently `0.2.7`.
 
 This split preserves compatibility guarantees for downstream tools: existing `v0.5.2` Parquet artifacts remain valid to read on the core path, and new `v0.8.0` optional features (diagram layout via DL profile) are additive only. **Breaking change in v0.8.0**: CGMES 2.4.x support was removed. All ingest is now CGMES 3.0+ only.
 
@@ -517,5 +517,6 @@ to implementation tasks with much less ambiguity.
 Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
 
 Copyright (c) 2026 Raptrix PowerFlow
+
 
 
