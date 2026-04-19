@@ -1,9 +1,8 @@
 name: Build and publish release binaries
 
 on:
-  workflow_run:
-    workflows: ["CI", "Build", "cargo-check"]
-    types: [completed]
+  release:
+    types: [created, published]
 
 jobs:
   build:
