@@ -44,19 +44,18 @@ use crate::arrow_schema::{
     METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_NETWORK_ISLAND_COUNT,
     METADATA_KEY_TOPOLOGY_DETACHED_ISLANDS_PRESENT, METADATA_KEY_TOPOLOGY_ISLAND_COUNT,
     METADATA_KEY_TOPOLOGY_MAIN_ISLAND_BUS_COUNT, METADATA_KEY_TRANSFORMER_REPRESENTATION_MODE,
-    METADATA_KEY_VALIDATION_MODE, SCHEMA_VERSION,
-    TABLE_AREAS, TABLE_BRANCHES, TABLE_BUSES, TABLE_CONNECTIVITY_NODES, TABLE_CONTINGENCIES,
-    TABLE_DC_LINES_2W, TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_DYNAMICS_MODELS,
-    TABLE_FIXED_SHUNTS, TABLE_GENERATORS, TABLE_IBR_DEVICES, TABLE_INTERFACES, TABLE_LOADS,
-    TABLE_METADATA, TABLE_MULTI_SECTION_LINES, TABLE_NODE_BREAKER_DETAIL, TABLE_OWNERS,
-    TABLE_SWITCH_DETAIL, TABLE_SWITCHED_SHUNT_BANKS, TABLE_SWITCHED_SHUNTS,
-    TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, TABLE_ZONES, areas_schema, branches_schema,
-    buses_schema, connectivity_groups_schema, connectivity_nodes_schema, contingencies_schema,
-    dc_lines_2w_schema, diagram_objects_schema, diagram_points_schema, dynamics_models_schema,
-    fixed_shunts_schema, generators_schema, ibr_devices_schema, interfaces_schema, loads_schema,
-    metadata_schema, multi_section_lines_schema, node_breaker_detail_schema, owners_schema,
-    switch_detail_schema, switched_shunt_banks_schema, switched_shunts_schema,
-    transformers_2w_schema, transformers_3w_schema, zones_schema,
+    METADATA_KEY_VALIDATION_MODE, SCHEMA_VERSION, TABLE_AREAS, TABLE_BRANCHES, TABLE_BUSES,
+    TABLE_CONNECTIVITY_NODES, TABLE_CONTINGENCIES, TABLE_DC_LINES_2W, TABLE_DIAGRAM_OBJECTS,
+    TABLE_DIAGRAM_POINTS, TABLE_DYNAMICS_MODELS, TABLE_FIXED_SHUNTS, TABLE_GENERATORS,
+    TABLE_IBR_DEVICES, TABLE_INTERFACES, TABLE_LOADS, TABLE_METADATA, TABLE_MULTI_SECTION_LINES,
+    TABLE_NODE_BREAKER_DETAIL, TABLE_OWNERS, TABLE_SWITCH_DETAIL, TABLE_SWITCHED_SHUNT_BANKS,
+    TABLE_SWITCHED_SHUNTS, TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, TABLE_ZONES, areas_schema,
+    branches_schema, buses_schema, connectivity_groups_schema, connectivity_nodes_schema,
+    contingencies_schema, dc_lines_2w_schema, diagram_objects_schema, diagram_points_schema,
+    dynamics_models_schema, fixed_shunts_schema, generators_schema, ibr_devices_schema,
+    interfaces_schema, loads_schema, metadata_schema, multi_section_lines_schema,
+    node_breaker_detail_schema, owners_schema, switch_detail_schema, switched_shunt_banks_schema,
+    switched_shunts_schema, transformers_2w_schema, transformers_3w_schema, zones_schema,
 };
 use crate::parser;
 
@@ -924,7 +923,8 @@ fn normalize_transformer_representation<'a>(
     match mode {
         TransformerRepresentationMode::Native3W => {
             // Remove any previously allocated synthetic star-leg rows.
-            transformer_2w_rows.retain(|row| row.from_bus_id <= 10_000_000 && row.to_bus_id <= 10_000_000);
+            transformer_2w_rows
+                .retain(|row| row.from_bus_id <= 10_000_000 && row.to_bus_id <= 10_000_000);
         }
         TransformerRepresentationMode::Expanded => {
             // Collect existing real bus IDs to seed collision avoidance.
@@ -978,7 +978,9 @@ fn validate_transformer_representation_mode(
         TransformerRepresentationMode::Native3W => {
             let star_legs: Vec<_> = transformer_2w_rows
                 .iter()
-                .filter(|row| row.status && (row.from_bus_id > 10_000_000 || row.to_bus_id > 10_000_000))
+                .filter(|row| {
+                    row.status && (row.from_bus_id > 10_000_000 || row.to_bus_id > 10_000_000)
+                })
                 .collect();
             if !star_legs.is_empty() {
                 let examples: Vec<String> = star_legs
@@ -1673,7 +1675,10 @@ pub fn write_complete_rpf_with_options(
     table_batches.insert(TABLE_LOADS, loads_batch.clone());
     table_batches.insert(TABLE_FIXED_SHUNTS, fixed_shunts_batch.clone());
     table_batches.insert(TABLE_SWITCHED_SHUNTS, switched_shunts_batch.clone());
-    table_batches.insert(TABLE_SWITCHED_SHUNT_BANKS, switched_shunt_banks_batch.clone());
+    table_batches.insert(
+        TABLE_SWITCHED_SHUNT_BANKS,
+        switched_shunt_banks_batch.clone(),
+    );
     table_batches.insert(TABLE_TRANSFORMERS_2W, transformers_2w_batch.clone());
     table_batches.insert(TABLE_TRANSFORMERS_3W, transformers_3w_batch.clone());
     table_batches.insert(TABLE_AREAS, areas_batch.clone());
@@ -4394,7 +4399,8 @@ fn build_switched_shunt_banks_batch(
         Arc::new(step_b.finish()) as ArrayRef,
     ];
 
-    RecordBatch::try_new(schema, arrays).context("failed to build switched_shunt_banks record batch")
+    RecordBatch::try_new(schema, arrays)
+        .context("failed to build switched_shunt_banks record batch")
 }
 
 fn build_connectivity_groups_batch(rows: &[ConnectivityGroupRow<'_>]) -> Result<RecordBatch> {
@@ -4871,13 +4877,11 @@ mod tests {
     };
 
     use super::{
-        BusResolutionMode, DetachedIslandPolicy, GenRow, TransformerRepresentationMode,
-        Transformer2WRow, Transformer3WRow,
-        WriteOptions, infer_dynamics_model_type,
-        normalize_transformer_representation, star_expand_3w_transformers,
-        validate_transformer_representation_mode,
-        read_rpf_tables, rpf_file_metadata, summarize_rpf, write_complete_rpf,
-        write_complete_rpf_with_options,
+        BusResolutionMode, DetachedIslandPolicy, GenRow, Transformer2WRow, Transformer3WRow,
+        TransformerRepresentationMode, WriteOptions, infer_dynamics_model_type,
+        normalize_transformer_representation, read_rpf_tables, rpf_file_metadata,
+        star_expand_3w_transformers, summarize_rpf, validate_transformer_representation_mode,
+        write_complete_rpf, write_complete_rpf_with_options,
     };
 
     fn assert_schema_shape_matches(actual: &Schema, expected: &Schema) {
@@ -5706,10 +5710,15 @@ mod tests {
     // -------------------------------------------------------------------------
 
     fn make_3w_row<'a>(
-        bus_h: i32, bus_m: i32, bus_l: i32,
-        r_hm: f64, x_hm: f64,
-        r_hl: f64, x_hl: f64,
-        r_ml: f64, x_ml: f64,
+        bus_h: i32,
+        bus_m: i32,
+        bus_l: i32,
+        r_hm: f64,
+        x_hm: f64,
+        r_hl: f64,
+        x_hl: f64,
+        r_ml: f64,
+        x_ml: f64,
         active: bool,
     ) -> Transformer3WRow<'a> {
         Transformer3WRow {
@@ -5718,13 +5727,24 @@ mod tests {
             bus_l_id: bus_l,
             ckt: Cow::Borrowed("1"),
             name: Cow::Borrowed("T3W"),
-            r_hm, x_hm, r_hl, x_hl, r_ml, x_ml,
-            tap_h: 1.0, tap_m: 1.0, tap_l: 1.0,
+            r_hm,
+            x_hm,
+            r_hl,
+            x_hl,
+            r_ml,
+            x_ml,
+            tap_h: 1.0,
+            tap_m: 1.0,
+            tap_l: 1.0,
             phase_shift: 0.0,
             vector_group: Cow::Borrowed("unknown"),
-            rate_a: 100.0, rate_b: 100.0, rate_c: 100.0,
+            rate_a: 100.0,
+            rate_b: 100.0,
+            rate_c: 100.0,
             status: active,
-            nominal_kv_h: None, nominal_kv_m: None, nominal_kv_l: None,
+            nominal_kv_h: None,
+            nominal_kv_m: None,
+            nominal_kv_l: None,
         }
     }
 
@@ -5734,16 +5754,24 @@ mod tests {
             to_bus_id: to,
             ckt: Cow::Borrowed("1"),
             name: Cow::Borrowed("STAR"),
-            r: 0.01, x: 0.05,
-            winding1_r: 0.01, winding1_x: 0.05,
-            winding2_r: 0.0, winding2_x: 0.0,
-            g: 0.0, b: 0.0,
-            tap_ratio: 1.0, nominal_tap_ratio: 1.0,
+            r: 0.01,
+            x: 0.05,
+            winding1_r: 0.01,
+            winding1_x: 0.05,
+            winding2_r: 0.0,
+            winding2_x: 0.0,
+            g: 0.0,
+            b: 0.0,
+            tap_ratio: 1.0,
+            nominal_tap_ratio: 1.0,
             phase_shift: 0.0,
             vector_group: Cow::Borrowed("unknown"),
-            rate_a: 100.0, rate_b: 100.0, rate_c: 100.0,
+            rate_a: 100.0,
+            rate_b: 100.0,
+            rate_c: 100.0,
             status: true,
-            from_nominal_kv: None, to_nominal_kv: None,
+            from_nominal_kv: None,
+            to_nominal_kv: None,
         }
     }
 
@@ -5751,7 +5779,10 @@ mod tests {
 
     #[test]
     fn mode_as_str_native_3w() {
-        assert_eq!(TransformerRepresentationMode::Native3W.as_str(), "native_3w");
+        assert_eq!(
+            TransformerRepresentationMode::Native3W.as_str(),
+            "native_3w"
+        );
     }
 
     #[test]
@@ -5874,7 +5905,9 @@ mod tests {
 
     #[test]
     fn star_expand_single_3w_row_produces_three_legs() {
-        let rows_3w = vec![make_3w_row(10, 20, 30, 0.02, 0.10, 0.02, 0.10, 0.02, 0.10, true)];
+        let rows_3w = vec![make_3w_row(
+            10, 20, 30, 0.02, 0.10, 0.02, 0.10, 0.02, 0.10, true,
+        )];
         let existing = std::collections::HashSet::new();
         let legs = star_expand_3w_transformers(&rows_3w, &existing);
         assert_eq!(legs.len(), 3, "expected 3 star legs for 1 active 3W row");
@@ -5882,7 +5915,9 @@ mod tests {
 
     #[test]
     fn star_expand_inactive_3w_row_produces_no_legs() {
-        let rows_3w = vec![make_3w_row(10, 20, 30, 0.02, 0.10, 0.02, 0.10, 0.02, 0.10, false)];
+        let rows_3w = vec![make_3w_row(
+            10, 20, 30, 0.02, 0.10, 0.02, 0.10, 0.02, 0.10, false,
+        )];
         let existing = std::collections::HashSet::new();
         let legs = star_expand_3w_transformers(&rows_3w, &existing);
         assert_eq!(legs.len(), 0);
@@ -5894,10 +5929,9 @@ mod tests {
         // Wye:  r_h=(0.04+0.06-0.02)/2=0.04  r_m=(0.04+0.02-0.06)/2=0.0  r_l=(0.06+0.02-0.04)/2=0.02
         //       x_h=(0.10+0.14-0.08)/2=0.08  x_m=(0.10+0.08-0.14)/2=0.02 x_l=(0.14+0.08-0.10)/2=0.06
         let rows_3w = vec![make_3w_row(
-            1, 2, 3,
-            0.04, 0.10,  // r_hm, x_hm
-            0.06, 0.14,  // r_hl, x_hl
-            0.02, 0.08,  // r_ml, x_ml
+            1, 2, 3, 0.04, 0.10, // r_hm, x_hm
+            0.06, 0.14, // r_hl, x_hl
+            0.02, 0.08, // r_ml, x_ml
             true,
         )];
         let existing = std::collections::HashSet::new();
@@ -5905,24 +5939,35 @@ mod tests {
         assert_eq!(legs.len(), 3);
 
         // H leg (from_bus_id == 1)
-        let h_leg = legs.iter().find(|l| l.from_bus_id == 1).expect("H leg missing");
+        let h_leg = legs
+            .iter()
+            .find(|l| l.from_bus_id == 1)
+            .expect("H leg missing");
         assert!((h_leg.r - 0.04).abs() < 1e-9, "r_h mismatch: {}", h_leg.r);
         assert!((h_leg.x - 0.08).abs() < 1e-9, "x_h mismatch: {}", h_leg.x);
 
         // M leg (from_bus_id == 2)
-        let m_leg = legs.iter().find(|l| l.from_bus_id == 2).expect("M leg missing");
+        let m_leg = legs
+            .iter()
+            .find(|l| l.from_bus_id == 2)
+            .expect("M leg missing");
         assert!((m_leg.r - 0.0).abs() < 1e-9, "r_m mismatch: {}", m_leg.r);
         assert!((m_leg.x - 0.02).abs() < 1e-9, "x_m mismatch: {}", m_leg.x);
 
         // L leg (from_bus_id == 3)
-        let l_leg = legs.iter().find(|l| l.from_bus_id == 3).expect("L leg missing");
+        let l_leg = legs
+            .iter()
+            .find(|l| l.from_bus_id == 3)
+            .expect("L leg missing");
         assert!((l_leg.r - 0.02).abs() < 1e-9, "r_l mismatch: {}", l_leg.r);
         assert!((l_leg.x - 0.06).abs() < 1e-9, "x_l mismatch: {}", l_leg.x);
     }
 
     #[test]
     fn star_expand_star_bus_id_is_deterministic() {
-        let rows_3w = vec![make_3w_row(10, 20, 30, 0.01, 0.05, 0.01, 0.05, 0.01, 0.05, true)];
+        let rows_3w = vec![make_3w_row(
+            10, 20, 30, 0.01, 0.05, 0.01, 0.05, 0.01, 0.05, true,
+        )];
         let existing = std::collections::HashSet::new();
         let legs_a = star_expand_3w_transformers(&rows_3w, &existing);
         let legs_b = star_expand_3w_transformers(&rows_3w, &existing);
@@ -5934,7 +5979,9 @@ mod tests {
 
     #[test]
     fn star_expand_star_bus_id_is_in_safe_range() {
-        let rows_3w = vec![make_3w_row(10, 20, 30, 0.01, 0.05, 0.01, 0.05, 0.01, 0.05, true)];
+        let rows_3w = vec![make_3w_row(
+            10, 20, 30, 0.01, 0.05, 0.01, 0.05, 0.01, 0.05, true,
+        )];
         let existing = std::collections::HashSet::new();
         let legs = star_expand_3w_transformers(&rows_3w, &existing);
         let star_id = legs[0].to_bus_id;
@@ -5947,12 +5994,18 @@ mod tests {
 
     #[test]
     fn star_expand_all_three_legs_share_same_star_bus() {
-        let rows_3w = vec![make_3w_row(10, 20, 30, 0.01, 0.05, 0.01, 0.05, 0.01, 0.05, true)];
+        let rows_3w = vec![make_3w_row(
+            10, 20, 30, 0.01, 0.05, 0.01, 0.05, 0.01, 0.05, true,
+        )];
         let existing = std::collections::HashSet::new();
         let legs = star_expand_3w_transformers(&rows_3w, &existing);
         assert_eq!(legs.len(), 3);
         let star_ids: std::collections::HashSet<i32> = legs.iter().map(|l| l.to_bus_id).collect();
-        assert_eq!(star_ids.len(), 1, "all three legs must share the same star bus ID");
+        assert_eq!(
+            star_ids.len(),
+            1,
+            "all three legs must share the same star bus ID"
+        );
     }
 
     // --- normalize_transformer_representation ---
@@ -5977,7 +6030,9 @@ mod tests {
     #[test]
     fn normalize_expanded_clears_3w_rows_and_adds_legs() {
         let mut rows_2w: Vec<Transformer2WRow<'_>> = vec![];
-        let mut rows_3w = vec![make_3w_row(1, 2, 3, 0.04, 0.10, 0.06, 0.14, 0.02, 0.08, true)];
+        let mut rows_3w = vec![make_3w_row(
+            1, 2, 3, 0.04, 0.10, 0.06, 0.14, 0.02, 0.08, true,
+        )];
         normalize_transformer_representation(
             &mut rows_2w,
             &mut rows_3w,
@@ -6000,8 +6055,14 @@ mod tests {
     fn schema_rejects_unknown_mode_values() {
         use crate::arrow_schema::validate_transformer_representation_mode_value;
         let err = validate_transformer_representation_mode_value("star_point").unwrap_err();
-        assert!(err.contains("star_point"), "error must mention unknown value; got: {err}");
-        assert!(err.contains("native_3w"), "error must suggest valid values; got: {err}");
+        assert!(
+            err.contains("star_point"),
+            "error must mention unknown value; got: {err}"
+        );
+        assert!(
+            err.contains("native_3w"),
+            "error must suggest valid values; got: {err}"
+        );
     }
 
     // --- metadata key stamping (write round-trip) ---
