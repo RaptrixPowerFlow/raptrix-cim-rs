@@ -349,7 +349,7 @@ struct BusRow<'a> {
     b_shunt: f64,
     area: i32,
     zone: i32,
-    owner: i32,
+    owner_id: Option<i32>,
     v_min: f64,
     v_max: f64,
     p_min_agg: f64,
@@ -377,15 +377,21 @@ struct BranchRow<'a> {
     rate_b: f64,
     rate_c: f64,
     status: bool,
+    owner_id: Option<i32>,
     from_nominal_kv: Option<f64>,
     to_nominal_kv: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
 struct GenRow<'a> {
+    generator_id: i32,
     bus_id: i32,
     id: Cow<'a, str>,
     name: Cow<'a, str>,
+    unit_type: Cow<'a, str>,
+    hierarchy_level: Cow<'a, str>,
+    parent_generator_id: Option<i32>,
+    aggregation_count: Option<i32>,
     p_sched_mw: f64,
     p_min_mw: f64,
     p_max_mw: f64,
@@ -393,6 +399,15 @@ struct GenRow<'a> {
     q_max_mvar: f64,
     status: bool,
     mbase_mva: f64,
+    uol_mw: Option<f64>,
+    lol_mw: Option<f64>,
+    ramp_rate_up_mw_min: Option<f64>,
+    ramp_rate_down_mw_min: Option<f64>,
+    is_ibr: bool,
+    ibr_subtype: Option<Cow<'a, str>>,
+    fuel_type: Option<Cow<'a, str>>,
+    owner_id: Option<i32>,
+    market_resource_id: Option<Cow<'a, str>>,
     h: f64,
     xd_prime: f64,
     d: f64,
@@ -514,6 +529,8 @@ struct ZoneRow<'a> {
 struct OwnerRow<'a> {
     owner_id: i32,
     name: Cow<'a, str>,
+    short_name: Option<Cow<'a, str>>,
+    owner_type: Option<Cow<'a, str>>,
 }
 
 #[derive(Debug, Clone)]
@@ -1028,8 +1045,10 @@ fn validate_pre_write_contract(
         }
     }
     for row in gen_rows {
-        if row.bus_id <= 0 || row.id.is_empty() {
-            bail!("pre-write contract violation: generators.bus_id/id must be present")
+        if row.generator_id <= 0 || row.bus_id <= 0 {
+            bail!(
+                "pre-write contract violation: generators.generator_id/bus_id must be present"
+            )
         }
     }
     for row in load_rows {
@@ -2492,6 +2511,19 @@ fn parse_eq_topology_rows(
     }
     let mut switches: Vec<parser::SwitchSpec> = switch_by_mrid.into_values().collect();
 
+    let mut owner_by_mrid: HashMap<String, crate::models::Owner<'static>> = HashMap::new();
+    for owner in owners {
+        owner_by_mrid.insert(owner.base.m_rid.as_ref().to_owned(), owner);
+    }
+    let mut owners: Vec<crate::models::Owner<'static>> = owner_by_mrid.into_values().collect();
+    owners.sort_unstable_by(|left, right| left.base.m_rid.cmp(&right.base.m_rid));
+    let owner_id_by_mrid: HashMap<String, i32> = owners
+        .iter()
+        .enumerate()
+        .map(|(idx, owner)| (owner.base.m_rid.as_ref().to_owned(), (idx as i32) + 1))
+        .collect();
+    let default_owner_id = if owners.len() == 1 { Some(1) } else { None };
+
     let mut conn_to_topo: HashMap<&str, &str> = HashMap::new();
     for group in &connectivity_groups {
         let topological_mrid = group.topological_node_mrid.as_ref();
@@ -2652,7 +2684,7 @@ fn parse_eq_topology_rows(
             b_shunt: 0.0,
             area: 1,
             zone: 1,
-            owner: 1,
+            owner_id: default_owner_id,
             v_min: 0.9,
             v_max: 1.1,
             p_min_agg: 0.0,
@@ -2765,6 +2797,7 @@ fn parse_eq_topology_rows(
             rate_b: 9999.0,
             rate_c: 9999.0,
             status: true,
+            owner_id: default_owner_id,
             from_nominal_kv: bus_nominal_kv_by_key.get(from_bus_key).copied(),
             to_nominal_kv: bus_nominal_kv_by_key.get(to_bus_key).copied(),
         });
@@ -2781,7 +2814,7 @@ fn parse_eq_topology_rows(
     }
 
     let mut gen_rows = Vec::with_capacity(machines.len());
-    for machine in machines {
+    for (generator_index, machine) in machines.into_iter().enumerate() {
         let machine_mrid = machine.base.m_rid.as_ref();
         let machine_terminals = terminals_by_equipment.get(machine_mrid).with_context(|| {
             format!("missing Terminal linkage for SynchronousMachine mRID '{machine_mrid}'")
@@ -2841,6 +2874,7 @@ fn parse_eq_topology_rows(
             },
         );
         gen_rows.push(GenRow {
+            generator_id: (generator_index as i32) + 1,
             bus_id,
             id: machine_id,
             name: machine
@@ -2858,6 +2892,15 @@ fn parse_eq_topology_rows(
                             .map(String::as_str),
                     ))
                 }),
+            unit_type: machine
+                .unit_type
+                .as_deref()
+                .and_then(non_empty_name)
+                .map(|value| Cow::Owned(value.to_ascii_lowercase()))
+                .unwrap_or_else(|| Cow::Borrowed("synchronous_machine")),
+            hierarchy_level: Cow::Borrowed("unit"),
+            parent_generator_id: None,
+            aggregation_count: None,
             p_sched_mw: machine.p_sched_mw.unwrap_or(0.0),
             p_min_mw: machine.p_min_mw.unwrap_or(0.0),
             p_max_mw: machine.p_max_mw.unwrap_or(0.0),
@@ -2865,6 +2908,31 @@ fn parse_eq_topology_rows(
             q_max_mvar: machine.q_max_mvar.unwrap_or(0.0),
             status: true,
             mbase_mva: machine.mbase_mva.unwrap_or(100.0),
+            uol_mw: machine.uol_mw.or(machine.p_max_mw),
+            lol_mw: machine.lol_mw.or(machine.p_min_mw),
+            ramp_rate_up_mw_min: None,
+            ramp_rate_down_mw_min: None,
+            is_ibr: machine.is_ibr.unwrap_or(false),
+            ibr_subtype: machine
+                .ibr_subtype
+                .as_deref()
+                .and_then(non_empty_name)
+                .map(|value| Cow::Owned(value.to_owned())),
+            fuel_type: machine
+                .fuel_type
+                .as_deref()
+                .and_then(non_empty_name)
+                .map(|value| Cow::Owned(value.to_owned())),
+            owner_id: machine
+                .owner_mrid
+                .as_deref()
+                .and_then(|mrid| owner_id_by_mrid.get(mrid).copied())
+                .or(default_owner_id),
+            market_resource_id: machine
+                .market_resource_id
+                .as_deref()
+                .and_then(non_empty_name)
+                .map(|value| Cow::Owned(value.to_owned())),
             h: machine.h.unwrap_or(0.0),
             xd_prime: machine.xd_prime.unwrap_or(0.0),
             d: machine.d.unwrap_or(0.0),
@@ -3192,7 +3260,6 @@ fn parse_eq_topology_rows(
         })
         .collect();
 
-    owners.sort_unstable_by(|left, right| left.base.m_rid.cmp(&right.base.m_rid));
     let owner_rows: Vec<OwnerRow<'static>> = owners
         .into_iter()
         .enumerate()
@@ -3202,6 +3269,13 @@ fn parse_eq_topology_rows(
                 .base
                 .name
                 .unwrap_or_else(|| Cow::Owned(owner.base.m_rid.as_ref().to_owned())),
+            short_name: owner
+                .base
+                .description
+                .as_deref()
+                .and_then(non_empty_name)
+                .map(|value| Cow::Owned(value.to_owned())),
+            owner_type: None,
         })
         .collect();
 
@@ -3805,7 +3879,7 @@ fn build_buses_batch(rows: &[BusRow<'_>]) -> Result<RecordBatch> {
     let mut b_shunt_b = Float64Builder::new();
     let mut area_b = Int32Builder::new();
     let mut zone_b = Int32Builder::new();
-    let mut owner_b = Int32Builder::new();
+    let mut owner_id_b = Int32Builder::new();
     let mut v_min_b = Float64Builder::new();
     let mut v_max_b = Float64Builder::new();
     let mut p_min_agg_b = Float64Builder::new();
@@ -3827,7 +3901,11 @@ fn build_buses_batch(rows: &[BusRow<'_>]) -> Result<RecordBatch> {
         b_shunt_b.append_value(row.b_shunt);
         area_b.append_value(row.area);
         zone_b.append_value(row.zone);
-        owner_b.append_value(row.owner);
+        if let Some(owner_id) = row.owner_id {
+            owner_id_b.append_value(owner_id);
+        } else {
+            owner_id_b.append_null();
+        }
         v_min_b.append_value(row.v_min);
         v_max_b.append_value(row.v_max);
         p_min_agg_b.append_value(row.p_min_agg);
@@ -3854,7 +3932,7 @@ fn build_buses_batch(rows: &[BusRow<'_>]) -> Result<RecordBatch> {
         Arc::new(b_shunt_b.finish()) as ArrayRef,
         Arc::new(area_b.finish()) as ArrayRef,
         Arc::new(zone_b.finish()) as ArrayRef,
-        Arc::new(owner_b.finish()) as ArrayRef,
+        Arc::new(owner_id_b.finish()) as ArrayRef,
         Arc::new(v_min_b.finish()) as ArrayRef,
         Arc::new(v_max_b.finish()) as ArrayRef,
         Arc::new(p_min_agg_b.finish()) as ArrayRef,
@@ -3882,6 +3960,7 @@ fn build_branches_batch(rows: &[BranchRow<'_>]) -> Result<RecordBatch> {
     let mut rate_b_b = Float64Builder::new();
     let mut rate_c_b = Float64Builder::new();
     let mut status_b = BooleanBuilder::new();
+    let mut owner_id_b = Int32Builder::new();
     let mut name_b = StringDictionaryBuilder::<UInt32Type>::new();
     let mut from_nominal_kv_b = Float64Builder::new();
     let mut to_nominal_kv_b = Float64Builder::new();
@@ -3900,6 +3979,11 @@ fn build_branches_batch(rows: &[BranchRow<'_>]) -> Result<RecordBatch> {
         rate_b_b.append_value(row.rate_b);
         rate_c_b.append_value(row.rate_c);
         status_b.append_value(row.status);
+        if let Some(owner_id) = row.owner_id {
+            owner_id_b.append_value(owner_id);
+        } else {
+            owner_id_b.append_null();
+        }
         name_b.append(row.name.as_ref())?;
         if let Some(from_nominal_kv) = row.from_nominal_kv {
             from_nominal_kv_b.append_value(from_nominal_kv);
@@ -3927,12 +4011,12 @@ fn build_branches_batch(rows: &[BranchRow<'_>]) -> Result<RecordBatch> {
         Arc::new(rate_b_b.finish()) as ArrayRef,
         Arc::new(rate_c_b.finish()) as ArrayRef,
         Arc::new(status_b.finish()) as ArrayRef,
+        Arc::new(owner_id_b.finish()) as ArrayRef,
         Arc::new(name_b.finish()) as ArrayRef,
         Arc::new(from_nominal_kv_b.finish()) as ArrayRef,
         Arc::new(to_nominal_kv_b.finish()) as ArrayRef,
         // v0.8.6 additive FACTS columns default to null for CIM exports that do
         // not currently materialize explicit FACTS rows.
-        new_null_array(schema.field(16).data_type(), rows.len()),
         new_null_array(schema.field(17).data_type(), rows.len()),
         new_null_array(schema.field(18).data_type(), rows.len()),
         new_null_array(schema.field(19).data_type(), rows.len()),
@@ -3942,58 +4026,157 @@ fn build_branches_batch(rows: &[BranchRow<'_>]) -> Result<RecordBatch> {
         new_null_array(schema.field(23).data_type(), rows.len()),
         new_null_array(schema.field(24).data_type(), rows.len()),
         new_null_array(schema.field(25).data_type(), rows.len()),
+        new_null_array(schema.field(26).data_type(), rows.len()),
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build branches record batch")
 }
 
-fn build_generators_batch(rows: &[GenRow<'_>], base_mva: f64) -> Result<RecordBatch> {
+fn build_generators_batch(rows: &[GenRow<'_>], _base_mva: f64) -> Result<RecordBatch> {
     let schema = Arc::new(generators_schema());
 
+    let mut generator_id_b = Int32Builder::new();
     let mut bus_id_b = Int32Builder::new();
-    let mut id_b = StringDictionaryBuilder::<Int32Type>::new();
-    let mut p_sched_pu_b = Float64Builder::new();
-    let mut p_min_pu_b = Float64Builder::new();
-    let mut p_max_pu_b = Float64Builder::new();
-    let mut q_min_pu_b = Float64Builder::new();
-    let mut q_max_pu_b = Float64Builder::new();
+    let mut name_b = StringBuilder::new();
+    let mut unit_type_b = StringBuilder::new();
+    let mut hierarchy_level_b = StringBuilder::new();
+    let mut parent_generator_id_b = Int32Builder::new();
+    let mut aggregation_count_b = Int32Builder::new();
     let mut status_b = BooleanBuilder::new();
+    let mut p_sched_mw_b = Float64Builder::new();
+    let mut p_min_mw_b = Float64Builder::new();
+    let mut p_max_mw_b = Float64Builder::new();
+    let mut q_min_mvar_b = Float64Builder::new();
+    let mut q_max_mvar_b = Float64Builder::new();
     let mut mbase_mva_b = Float64Builder::new();
-    let mut h_b = Float64Builder::new();
-    let mut xd_prime_b = Float64Builder::new();
-    let mut d_b = Float64Builder::new();
-    let mut name_b = StringDictionaryBuilder::<UInt32Type>::new();
+    let mut uol_mw_b = Float64Builder::new();
+    let mut lol_mw_b = Float64Builder::new();
+    let mut ramp_rate_up_mw_min_b = Float64Builder::new();
+    let mut ramp_rate_down_mw_min_b = Float64Builder::new();
+    let mut is_ibr_b = BooleanBuilder::new();
+    let mut ibr_subtype_b = StringBuilder::new();
+    let mut fuel_type_b = StringBuilder::new();
+    let mut owner_id_b = Int32Builder::new();
+    let mut market_resource_id_b = StringBuilder::new();
+    let mut params_b = MapBuilder::new(
+        Some(MapFieldNames {
+            entry: "entries".to_string(),
+            key: "key".to_string(),
+            value: "value".to_string(),
+        }),
+        StringBuilder::new(),
+        Float64Builder::new(),
+    )
+    .with_keys_field(Arc::new(Field::new("key", DataType::Utf8, false)))
+    .with_values_field(Arc::new(Field::new("value", DataType::Float64, false)));
 
     for row in rows {
+        generator_id_b.append_value(row.generator_id);
         bus_id_b.append_value(row.bus_id);
-        id_b.append(row.id.as_ref())?;
-        p_sched_pu_b.append_value(row.p_sched_mw / base_mva);
-        p_min_pu_b.append_value(row.p_min_mw / base_mva);
-        p_max_pu_b.append_value(row.p_max_mw / base_mva);
-        q_min_pu_b.append_value(row.q_min_mvar / base_mva);
-        q_max_pu_b.append_value(row.q_max_mvar / base_mva);
+        name_b.append_value(row.name.as_ref());
+        unit_type_b.append_value(row.unit_type.as_ref());
+        hierarchy_level_b.append_value(row.hierarchy_level.as_ref());
+        if let Some(parent_generator_id) = row.parent_generator_id {
+            parent_generator_id_b.append_value(parent_generator_id);
+        } else {
+            parent_generator_id_b.append_null();
+        }
+        if let Some(aggregation_count) = row.aggregation_count {
+            aggregation_count_b.append_value(aggregation_count);
+        } else {
+            aggregation_count_b.append_null();
+        }
         status_b.append_value(row.status);
+        p_sched_mw_b.append_value(row.p_sched_mw);
+        p_min_mw_b.append_value(row.p_min_mw);
+        p_max_mw_b.append_value(row.p_max_mw);
+        q_min_mvar_b.append_value(row.q_min_mvar);
+        q_max_mvar_b.append_value(row.q_max_mvar);
         mbase_mva_b.append_value(row.mbase_mva);
-        h_b.append_value(row.h);
-        xd_prime_b.append_value(row.xd_prime);
-        d_b.append_value(row.d);
-        name_b.append(row.name.as_ref())?;
+        if let Some(uol_mw) = row.uol_mw {
+            uol_mw_b.append_value(uol_mw);
+        } else {
+            uol_mw_b.append_null();
+        }
+        if let Some(lol_mw) = row.lol_mw {
+            lol_mw_b.append_value(lol_mw);
+        } else {
+            lol_mw_b.append_null();
+        }
+        if let Some(ramp_rate_up_mw_min) = row.ramp_rate_up_mw_min {
+            ramp_rate_up_mw_min_b.append_value(ramp_rate_up_mw_min);
+        } else {
+            ramp_rate_up_mw_min_b.append_null();
+        }
+        if let Some(ramp_rate_down_mw_min) = row.ramp_rate_down_mw_min {
+            ramp_rate_down_mw_min_b.append_value(ramp_rate_down_mw_min);
+        } else {
+            ramp_rate_down_mw_min_b.append_null();
+        }
+        is_ibr_b.append_value(row.is_ibr);
+        if let Some(ibr_subtype) = row.ibr_subtype.as_deref() {
+            ibr_subtype_b.append_value(ibr_subtype);
+        } else {
+            ibr_subtype_b.append_null();
+        }
+        if let Some(fuel_type) = row.fuel_type.as_deref() {
+            fuel_type_b.append_value(fuel_type);
+        } else {
+            fuel_type_b.append_null();
+        }
+        if let Some(owner_id) = row.owner_id {
+            owner_id_b.append_value(owner_id);
+        } else {
+            owner_id_b.append_null();
+        }
+        if let Some(market_resource_id) = row.market_resource_id.as_deref() {
+            market_resource_id_b.append_value(market_resource_id);
+        } else {
+            market_resource_id_b.append_null();
+        }
+
+        if row.h > 0.0 {
+            params_b.keys().append_value("H");
+            params_b.values().append_value(row.h);
+        }
+        if row.xd_prime > 0.0 {
+            params_b.keys().append_value("xd_prime");
+            params_b.values().append_value(row.xd_prime);
+        }
+        if row.d != 0.0 {
+            params_b.keys().append_value("D");
+            params_b.values().append_value(row.d);
+        }
+        params_b
+            .append(true)
+            .context("failed to append generators.params map row")?;
     }
 
     let arrays: Vec<ArrayRef> = vec![
+        Arc::new(generator_id_b.finish()) as ArrayRef,
         Arc::new(bus_id_b.finish()) as ArrayRef,
-        Arc::new(id_b.finish()) as ArrayRef,
-        Arc::new(p_sched_pu_b.finish()) as ArrayRef,
-        Arc::new(p_min_pu_b.finish()) as ArrayRef,
-        Arc::new(p_max_pu_b.finish()) as ArrayRef,
-        Arc::new(q_min_pu_b.finish()) as ArrayRef,
-        Arc::new(q_max_pu_b.finish()) as ArrayRef,
-        Arc::new(status_b.finish()) as ArrayRef,
-        Arc::new(mbase_mva_b.finish()) as ArrayRef,
-        Arc::new(h_b.finish()) as ArrayRef,
-        Arc::new(xd_prime_b.finish()) as ArrayRef,
-        Arc::new(d_b.finish()) as ArrayRef,
         Arc::new(name_b.finish()) as ArrayRef,
+        Arc::new(unit_type_b.finish()) as ArrayRef,
+        Arc::new(hierarchy_level_b.finish()) as ArrayRef,
+        Arc::new(parent_generator_id_b.finish()) as ArrayRef,
+        Arc::new(aggregation_count_b.finish()) as ArrayRef,
+        Arc::new(status_b.finish()) as ArrayRef,
+        Arc::new(p_sched_mw_b.finish()) as ArrayRef,
+        Arc::new(p_min_mw_b.finish()) as ArrayRef,
+        Arc::new(p_max_mw_b.finish()) as ArrayRef,
+        Arc::new(q_min_mvar_b.finish()) as ArrayRef,
+        Arc::new(q_max_mvar_b.finish()) as ArrayRef,
+        Arc::new(mbase_mva_b.finish()) as ArrayRef,
+        Arc::new(uol_mw_b.finish()) as ArrayRef,
+        Arc::new(lol_mw_b.finish()) as ArrayRef,
+        Arc::new(ramp_rate_up_mw_min_b.finish()) as ArrayRef,
+        Arc::new(ramp_rate_down_mw_min_b.finish()) as ArrayRef,
+        Arc::new(is_ibr_b.finish()) as ArrayRef,
+        Arc::new(ibr_subtype_b.finish()) as ArrayRef,
+        Arc::new(fuel_type_b.finish()) as ArrayRef,
+        Arc::new(owner_id_b.finish()) as ArrayRef,
+        Arc::new(market_resource_id_b.finish()) as ArrayRef,
+        Arc::new(params_b.finish()) as ArrayRef,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build generators record batch")
@@ -4273,16 +4456,31 @@ fn build_owners_batch(rows: &[OwnerRow<'_>]) -> Result<RecordBatch> {
     let schema = Arc::new(owners_schema());
 
     let mut owner_id_b = Int32Builder::new();
-    let mut name_b = StringDictionaryBuilder::<Int32Type>::new();
+    let mut name_b = StringBuilder::new();
+    let mut short_name_b = StringBuilder::new();
+    let mut owner_type_b = StringBuilder::new();
 
     for row in rows {
         owner_id_b.append_value(row.owner_id);
-        name_b.append(row.name.as_ref())?;
+        name_b.append_value(row.name.as_ref());
+        if let Some(short_name) = row.short_name.as_deref() {
+            short_name_b.append_value(short_name);
+        } else {
+            short_name_b.append_null();
+        }
+        if let Some(owner_type) = row.owner_type.as_deref() {
+            owner_type_b.append_value(owner_type);
+        } else {
+            owner_type_b.append_null();
+        }
     }
 
     let arrays: Vec<ArrayRef> = vec![
         Arc::new(owner_id_b.finish()) as ArrayRef,
         Arc::new(name_b.finish()) as ArrayRef,
+        Arc::new(short_name_b.finish()) as ArrayRef,
+        Arc::new(owner_type_b.finish()) as ArrayRef,
+        new_null_array(schema.field(4).data_type(), rows.len()),
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build owners record batch")
@@ -5493,9 +5691,14 @@ mod tests {
     #[test]
     fn infer_dynamics_model_type_uses_conservative_rules() {
         let full = GenRow {
+            generator_id: 1,
             bus_id: 1,
             id: Cow::Borrowed("G1"),
             name: Cow::Borrowed("Gen 1"),
+            unit_type: Cow::Borrowed("synchronous_machine"),
+            hierarchy_level: Cow::Borrowed("unit"),
+            parent_generator_id: None,
+            aggregation_count: None,
             p_sched_mw: 0.0,
             p_min_mw: 0.0,
             p_max_mw: 0.0,
@@ -5503,6 +5706,15 @@ mod tests {
             q_max_mvar: 0.0,
             status: true,
             mbase_mva: 100.0,
+            uol_mw: None,
+            lol_mw: None,
+            ramp_rate_up_mw_min: None,
+            ramp_rate_down_mw_min: None,
+            is_ibr: false,
+            ibr_subtype: None,
+            fuel_type: None,
+            owner_id: None,
+            market_resource_id: None,
             h: 4.0,
             xd_prime: 0.2,
             d: 0.5,
@@ -5581,7 +5793,7 @@ mod tests {
         }
 
         let branch_names = branches_batch
-            .column(13)
+            .column(14)
             .as_any()
             .downcast_ref::<DictionaryArray<UInt32Type>>()
             .context("branches.name should be dictionary-encoded UTF8")?;
@@ -5600,12 +5812,12 @@ mod tests {
         );
 
         let from_nominal_kv = branches_batch
-            .column(14)
+            .column(15)
             .as_any()
             .downcast_ref::<Float64Array>()
             .context("branches.from_nominal_kv should be Float64")?;
         let to_nominal_kv = branches_batch
-            .column(15)
+            .column(16)
             .as_any()
             .downcast_ref::<Float64Array>()
             .context("branches.to_nominal_kv should be Float64")?;

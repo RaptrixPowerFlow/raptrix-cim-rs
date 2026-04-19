@@ -687,8 +687,8 @@ pub fn validate_rpf_file(path: impl AsRef<Path>, options: &RootWriteOptions) -> 
     let generators = by_name
         .get(TABLE_GENERATORS)
         .context("post-write contract violation: missing generators table")?;
+    require_non_null_count_equals_len(TABLE_GENERATORS, generators, "generator_id")?;
     require_non_null_count_equals_len(TABLE_GENERATORS, generators, "bus_id")?;
-    require_non_null_count_equals_len(TABLE_GENERATORS, generators, "id")?;
 
     let loads = by_name
         .get(TABLE_LOADS)
@@ -1033,7 +1033,7 @@ mod tests {
             branches.schema().fields().len(),
             branches_schema().fields().len()
         );
-        assert_eq!(SCHEMA_VERSION, "0.8.8");
+        assert_eq!(SCHEMA_VERSION, "0.8.9");
         Ok(())
     }
 }

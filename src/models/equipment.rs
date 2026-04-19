@@ -910,6 +910,30 @@ pub struct SynchronousMachine<'a> {
 
     /// Damping coefficient D.
     pub d: Option<f64>,
+
+    /// Optional explicit upper operating limit (MW).
+    pub uol_mw: Option<f64>,
+
+    /// Optional explicit lower operating limit (MW).
+    pub lol_mw: Option<f64>,
+
+    /// Optional unit classification from CIM payload.
+    pub unit_type: Option<Cow<'a, str>>,
+
+    /// Optional fuel classification from CIM payload.
+    pub fuel_type: Option<Cow<'a, str>>,
+
+    /// Optional owner reference mRID from CIM payload.
+    pub owner_mrid: Option<Cow<'a, str>>,
+
+    /// Optional market resource identifier.
+    pub market_resource_id: Option<Cow<'a, str>>,
+
+    /// Optional IBR marker when explicitly declared in source CIM.
+    pub is_ibr: Option<bool>,
+
+    /// Optional IBR subtype from CIM payload.
+    pub ibr_subtype: Option<Cow<'a, str>>,
 }
 
 #[derive(Deserialize)]
@@ -938,6 +962,24 @@ struct RawSynchronousMachine<'a> {
     xd_prime: Option<f64>,
     #[serde(rename = "SynchronousMachine.D", default)]
     d: Option<f64>,
+    #[serde(rename = "SynchronousMachine.uol", default)]
+    uol_mw: Option<f64>,
+    #[serde(rename = "SynchronousMachine.lol", default)]
+    lol_mw: Option<f64>,
+    #[serde(rename = "SynchronousMachine.type", default, borrow)]
+    sync_machine_type: Option<Cow<'a, str>>,
+    #[serde(rename = "GeneratingUnit.genUnitType", default, borrow)]
+    gen_unit_type: Option<Cow<'a, str>>,
+    #[serde(rename = "GeneratingUnit.fuelType", default, borrow)]
+    fuel_type: Option<Cow<'a, str>>,
+    #[serde(rename = "PowerSystemResource.Owner", default)]
+    owner: Option<RawSvResourceRef<'a>>,
+    #[serde(rename = "PowerSystemResource.marketResource", default, borrow)]
+    market_resource_id: Option<Cow<'a, str>>,
+    #[serde(rename = "PowerElectronicsConnection.ibr", default)]
+    is_ibr: Option<bool>,
+    #[serde(rename = "PowerElectronicsConnection.type", default, borrow)]
+    ibr_subtype: Option<Cow<'a, str>>,
 }
 
 impl<'de: 'a, 'a> Deserialize<'de> for SynchronousMachine<'a> {
@@ -958,6 +1000,14 @@ impl<'de: 'a, 'a> Deserialize<'de> for SynchronousMachine<'a> {
             h: raw.h,
             xd_prime: raw.xd_prime,
             d: raw.d,
+            uol_mw: raw.uol_mw,
+            lol_mw: raw.lol_mw,
+            unit_type: raw.gen_unit_type.or(raw.sync_machine_type),
+            fuel_type: raw.fuel_type,
+            owner_mrid: raw.owner.map(|owner| strip_hash_cow(owner.resource)),
+            market_resource_id: raw.market_resource_id,
+            is_ibr: raw.is_ibr,
+            ibr_subtype: raw.ibr_subtype,
         })
     }
 }
@@ -1000,6 +1050,27 @@ impl<'a> Serialize for SynchronousMachine<'a> {
         if let Some(v) = self.d {
             s.serialize_field("SynchronousMachine.D", &v)?;
         }
+        if let Some(v) = self.uol_mw {
+            s.serialize_field("SynchronousMachine.uol", &v)?;
+        }
+        if let Some(v) = self.lol_mw {
+            s.serialize_field("SynchronousMachine.lol", &v)?;
+        }
+        if let Some(v) = self.unit_type.as_deref() {
+            s.serialize_field("GeneratingUnit.genUnitType", v)?;
+        }
+        if let Some(v) = self.fuel_type.as_deref() {
+            s.serialize_field("GeneratingUnit.fuelType", v)?;
+        }
+        if let Some(v) = self.market_resource_id.as_deref() {
+            s.serialize_field("PowerSystemResource.marketResource", v)?;
+        }
+        if let Some(v) = self.is_ibr {
+            s.serialize_field("PowerElectronicsConnection.ibr", &v)?;
+        }
+        if let Some(v) = self.ibr_subtype.as_deref() {
+            s.serialize_field("PowerElectronicsConnection.type", v)?;
+        }
         s.end()
     }
 }
@@ -1018,6 +1089,14 @@ impl<'a> SynchronousMachine<'a> {
             h: None,
             xd_prime: None,
             d: None,
+            uol_mw: None,
+            lol_mw: None,
+            unit_type: None,
+            fuel_type: None,
+            owner_mrid: None,
+            market_resource_id: None,
+            is_ibr: None,
+            ibr_subtype: None,
         }
     }
 
@@ -1034,6 +1113,16 @@ impl<'a> SynchronousMachine<'a> {
             h: self.h,
             xd_prime: self.xd_prime,
             d: self.d,
+            uol_mw: self.uol_mw,
+            lol_mw: self.lol_mw,
+            unit_type: self.unit_type.map(|value| Cow::Owned(value.into_owned())),
+            fuel_type: self.fuel_type.map(|value| Cow::Owned(value.into_owned())),
+            owner_mrid: self.owner_mrid.map(|value| Cow::Owned(value.into_owned())),
+            market_resource_id: self
+                .market_resource_id
+                .map(|value| Cow::Owned(value.into_owned())),
+            is_ibr: self.is_ibr,
+            ibr_subtype: self.ibr_subtype.map(|value| Cow::Owned(value.into_owned())),
         }
     }
 }
