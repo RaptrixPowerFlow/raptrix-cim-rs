@@ -1046,9 +1046,7 @@ fn validate_pre_write_contract(
     }
     for row in gen_rows {
         if row.generator_id <= 0 || row.bus_id <= 0 {
-            bail!(
-                "pre-write contract violation: generators.generator_id/bus_id must be present"
-            )
+            bail!("pre-write contract violation: generators.generator_id/bus_id must be present")
         }
     }
     for row in load_rows {
