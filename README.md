@@ -224,6 +224,22 @@ All conversions are zero-copy headless — no readback or post-write validation 
 - src/parser.rs: parse helpers and EQ-to-branch mapping
 - src/rpf_writer.rs: CIM-specific mapping from parsed CGMES content into canonical table batches
 
+### 2026 First-Principles Mandate (short)
+
+v0.8.8 formalizes the design decision to treat modern-grid constructs (IBRs, DERs,
+Smart Valves, and DC workflows) as first-class components of the RPF interchange.
+This README points to `docs/schema-contract.md` for the full normative rationale and
+required writer obligations.
+
+### Release automation (short)
+
+A GitHub Actions workflow `.github/workflows/release-binaries.yml` has been added to
+build and publish precompiled binaries to GitHub Releases when CI succeeds and a
+release/tag is created. To publish release artifacts, create an annotated tag
+(`git tag -a v0.2.8 -m "Release v0.2.8"` then `git push origin v0.2.8`) or bump the
+crate version and push a corresponding tag; the workflow will attach platform
+artifacts to the Release automatically.
+
 ### Locked contract: v0.8.x notable fields
 
 

@@ -115,6 +115,18 @@ use raptrix_cim_arrow::METADATA_KEY_TRANSFORMER_REPRESENTATION_MODE;
 
 **Schema version**: v0.8.8 | **Crate version**: 0.2.8
 
+### 2026 First-Principles Mandate
+
+v0.8.8 formalizes a modern-grid-first contract. The schema now treats IBR-heavy operation,
+distributed flexibility, Smart Valve-style controls, and modern DC workflows as core model
+features. This is reflected in required root tables and required metadata, not optional add-ons.
+
+### Beyond Parity
+
+This release is not a parity-first redesign around legacy interchange formats. Compatibility with
+legacy workflows can still be achieved where practical, but contract design is anchored in
+first-principles network physics and IEC 61970 CIM semantics.
+
 ### Breaking support policy
 
 - Reader support for contracts below v0.8.8 is deprecated and removed in this repository.
@@ -129,6 +141,12 @@ New required tables in canonical root order:
 - `dc_lines_2w`
 - `ibr_devices`
 - `switched_shunt_banks`
+
+Arrow typing constraints for these tables are part of the wire contract:
+
+- `multi_section_lines.section_branch_ids`: `list<int32>`
+- `ibr_devices.params`: `map<string, float64>`
+- Nullable fields remain nullable per schema contract for additive compatibility where possible.
 
 ### Required metadata changes
 
@@ -156,3 +174,23 @@ New nullable metadata fields:
 
 - `switched_shunts.b_steps` is now capacitive-only (positive values).
 - Inductive steps must be represented in `switched_shunt_banks`.
+
+### Writer obligations for modern-grid metadata
+
+Writers must populate required v0.8.8 metadata flags:
+
+- `modern_grid_profile`
+- `has_ibr`
+- `has_smart_valve`
+- `has_multi_terminal_dc`
+
+Writers should populate nullable context fields when known:
+
+- `ibr_penetration_pct`
+- `study_purpose`
+- `scenario_tags`
+
+### Backward compatibility boundaries
+
+- Reader compatibility is intentionally strict at v0.8.8 only.
+- Backward compatibility remains for additive nullable columns and empty required-table materialization within the v0.8.8 contract shape.
