@@ -95,7 +95,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 | Connectivity detail | `--connectivity-detail` | Granular ConnectivityNode bus mapping; emits optional `connectivity_groups` table |
 | Node-breaker | `--connectivity-detail --node-breaker` | Adds switch-topology detail tables for operational and viewer workflows |
 
-### Output tables (schema contract v0.8.8)
+### Output tables (schema contract v0.8.9)
 
 **19 canonical tables (always emitted):** `metadata`, `buses`, `branches`, `multi_section_lines`, `dc_lines_2w`, `generators`, `ibr_devices`, `loads`, `fixed_shunts`, `switched_shunts`, `switched_shunt_banks`, `transformers_2w`, `transformers_3w`, `areas`, `zones`, `owners`, `contingencies`, `interfaces`, `dynamics_models`
 
@@ -130,7 +130,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 
 ## Data Contract (Locked)
 
-- Current schema contract: v0.8.8 (CGMES 3.0+ only)
+- Current schema contract: v0.8.9 (CGMES 3.0+ only)
 - Canonical source: raptrix-cim-arrow/src/schema.rs
 - Contract policy and semantics: docs/schema-contract.md
 - Plain-English field guide: [docs/rpf-field-guide.md](docs/rpf-field-guide.md)
@@ -218,7 +218,7 @@ All conversions are zero-copy headless — no readback or post-write validation 
 
 ## Project Layout
 
-- raptrix-cim-arrow/src/schema.rs: v0.8.8 table schemas, metadata constants, and schema registry helpers
+- raptrix-cim-arrow/src/schema.rs: v0.8.9 table schemas, metadata constants, and schema registry helpers
 - raptrix-cim-arrow/src/io.rs: generic root `.rpf` assembly, validation, readback, and summary helpers
 - src/models: CIM data structures and traits
 - src/parser.rs: parse helpers and EQ-to-branch mapping
@@ -226,7 +226,7 @@ All conversions are zero-copy headless — no readback or post-write validation 
 
 ### 2026 First-Principles Mandate (short)
 
-v0.8.8 formalizes the design decision to treat modern-grid constructs (IBRs, DERs,
+v0.8.9 formalizes the design decision to treat modern-grid constructs (IBRs, DERs,
 Smart Valves, and DC workflows) as first-class components of the RPF interchange.
 This README points to `docs/schema-contract.md` for the full normative rationale and
 required writer obligations.
@@ -234,7 +234,8 @@ required writer obligations.
 ### Locked contract: v0.8.x notable fields
 
 
-- v0.8.8 additions:
+
+- v0.8.9 additions:
 	- Required modern-grid tables: `multi_section_lines`, `dc_lines_2w`, `switched_shunt_banks`, `ibr_devices`
 	- Required metadata fields: `modern_grid_profile`, `has_ibr`, `has_smart_valve`, `has_multi_terminal_dc`
 	- Nullable metadata fields: `ibr_penetration_pct`, `study_purpose`, `scenario_tags`

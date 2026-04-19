@@ -1,12 +1,12 @@
-# Schema Contract (Locked contract: v0.8.8 — CGMES 3.0+ Only)
+# Schema Contract (Locked contract: v0.8.9 — CGMES 3.0+ Only)
 
 This repository is the authoritative source of truth for the Raptrix PowerFlow Interchange (`.rpf`) wire contract used by CIM-first conversion pipelines.
 
-v0.8.8 is the current contract and is a breaking release in this repository.
+v0.8.9 is the current contract and is a breaking release in this repository.
 
 ## 2026 First-Principles Mandate
 
-- The v0.8.8 contract is designed from power-system first principles for 2026+ networks, including inverter-based resources (IBR), DER-heavy operation, Smart Valve controls, and modern DC workflows.
+- The v0.8.9 contract is designed from power-system first principles for 2026+ networks, including inverter-based resources (IBR), DER-heavy operation, Smart Valve controls, and modern DC workflows.
 - Required modern-grid tables (`multi_section_lines`, `dc_lines_2w`, `switched_shunt_banks`, `ibr_devices`) are first-class contract elements, not side extensions.
 - Arrow-native list and map types are used deliberately so parsers and solvers can ingest table payloads without lossy flattening.
 
@@ -49,8 +49,8 @@ Every `.rpf` file must include:
 
 Current locked values:
 
-- `raptrix.version = 0.8.8`
-- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.8.8 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.`
+- `raptrix.version = 0.8.9`
+- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.8.9 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.`
 - `rpf.case_fingerprint = <required deterministic case identity fingerprint>`
 - `rpf.validation_mode = topology_only | solved_ready`
 - `rpf.case_mode = flat_start_planning | warm_start_planning | solved_snapshot` (v0.8.4+, required)
@@ -225,13 +225,13 @@ This section is normative for external parser authors.
 - `slack_bus_id_solved`: Int32, nullable — bus_id of the angle reference (slack) bus used in the solve; prevents silent reference-frame mismatch when snapshots are re-used (v0.8.5+)
 - `angle_reference_deg`: Float64, nullable — angle reference value in degrees applied at the slack bus; typically 0.0 (v0.8.5+)
 - `solved_shunt_state_presence`: Dictionary<Int32, Utf8>, nullable — `actual_solved` | `not_available`; lets loaders fail fast or warn if solved snapshot claims solved but lacks full shunt state (v0.8.5+)
-- `modern_grid_profile`: Boolean, required (v0.8.8+)
-- `ibr_penetration_pct`: Float64, nullable (v0.8.8+)
-- `has_ibr`: Boolean, required (v0.8.8+)
-- `has_smart_valve`: Boolean, required (v0.8.8+)
-- `has_multi_terminal_dc`: Boolean, required (v0.8.8+)
-- `study_purpose`: Utf8, nullable (v0.8.8+)
-- `scenario_tags`: List<Utf8>, nullable (v0.8.8+)
+- `modern_grid_profile`: Boolean, required (v0.8.9+)
+- `ibr_penetration_pct`: Float64, nullable (v0.8.9+)
+- `has_ibr`: Boolean, required (v0.8.9+)
+- `has_smart_valve`: Boolean, required (v0.8.9+)
+- `has_multi_terminal_dc`: Boolean, required (v0.8.9+)
+- `study_purpose`: Utf8, nullable (v0.8.9+)
+- `scenario_tags`: List<Utf8>, nullable (v0.8.9+)
 
 ### buses
 
@@ -282,8 +282,8 @@ This section is normative for external parser authors.
 - `injected_voltage_mag_pu`: Float64, nullable (v0.8.6+) — injected series-voltage magnitude in per-unit.
 - `injected_voltage_angle_deg`: Float64, nullable (v0.8.6+) — injected series-voltage angle in degrees.
 - `facts_params`: Map<String, Float64>, nullable (v0.8.6+) — additive vendor or model-specific scalar parameters.
-- `parent_line_id`: Int32, nullable (v0.8.8+) — links branch sections to `multi_section_lines.line_id`.
-- `section_index`: Int32, nullable (v0.8.8+) — ordered section index within a multi-section logical line.
+- `parent_line_id`: Int32, nullable (v0.8.9+) — links branch sections to `multi_section_lines.line_id`.
+- `section_index`: Int32, nullable (v0.8.9+) — ordered section index within a multi-section logical line.
 
 ### multi_section_lines
 
@@ -380,7 +380,7 @@ Recommended `device_type` tokens for `ibr_devices` are `solar_pv`, `wind`, `bess
 - `b_init_pu`: Float64, nullable — authoritative initial susceptance in per-unit (v0.8.3+). PSS/E source: `BINIT / base_mva`. CIM source: `b_steps[current_step - 1]`. Readers should prefer this field over reconstructing from `b_steps + current_step`. Nullable for backward compatibility; writers must populate this field.
 - `shunt_id`: Dictionary<Int32, Utf8>, nullable — stable per-bank identity to disambiguate multiple banks at the same bus (v0.8.5+). CIM path: `ShuntCompensator` mRID. PSS/E path: synthesized as `"{bus_id}_shunt_{n}"` (1-indexed). Nullable for backward compatibility; writers must populate when available.
 
-For v0.8.8+, `switched_shunts.b_steps` must contain strictly capacitive (positive) values.
+For v0.8.9+, `switched_shunts.b_steps` must contain strictly capacitive (positive) values.
 Inductive steps must be represented in `switched_shunt_banks`.
 
 ### switched_shunt_banks
