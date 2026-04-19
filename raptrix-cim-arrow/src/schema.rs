@@ -480,6 +480,8 @@ pub fn generators_schema() -> Schema {
             Field::new("parent_generator_id", DataType::Int32, true),
             Field::new("aggregation_count", DataType::Int32, true),
             Field::new("status", DataType::Boolean, false),
+            Field::new("is_ibr", DataType::Boolean, false),
+            Field::new("ibr_subtype", DataType::Utf8, true),
             Field::new("p_sched_mw", DataType::Float64, false),
             Field::new("p_min_mw", DataType::Float64, false),
             Field::new("p_max_mw", DataType::Float64, false),
@@ -490,9 +492,6 @@ pub fn generators_schema() -> Schema {
             Field::new("lol_mw", DataType::Float64, true),
             Field::new("ramp_rate_up_mw_min", DataType::Float64, true),
             Field::new("ramp_rate_down_mw_min", DataType::Float64, true),
-            Field::new("is_ibr", DataType::Boolean, false),
-            Field::new("ibr_subtype", DataType::Utf8, true),
-            Field::new("fuel_type", DataType::Utf8, true),
             Field::new("owner_id", DataType::Int32, true),
             Field::new("market_resource_id", DataType::Utf8, true),
             Field::new("params", map_string_f64(), true),
@@ -922,7 +921,7 @@ pub fn generators_solved_schema() -> Schema {
             // unit commitment).  Null means status unknown.
             Field::new("status", DataType::Boolean, true),
             // True when this unit's bus was switched from PV to PQ during solve.
-            // This flag must never be written back to generators.p_sched_pu.
+            // This flag must never be written back to generators.p_sched_mw.
             Field::new("pv_to_pq", DataType::Boolean, true),
             // Per-row data provenance.
             Field::new("provenance", dict_utf8(), true),

@@ -253,6 +253,7 @@ This section is normative for external parser authors.
 - `v_max`: Float64, required
 - `p_min_agg`: Float64, required
 - `p_max_agg`: Float64, required
+- `owner_id`: Int32, nullable
 - `nominal_kv`: Float64, nullable
 - `bus_uuid`: Dictionary<Int32, Utf8>, required
 
@@ -272,6 +273,7 @@ This section is normative for external parser authors.
 - `rate_c`: Float64, required
 - `status`: Boolean, required
 - `name`: Dictionary<UInt32, Utf8>, nullable
+- `owner_id`: Int32, nullable
 - `from_nominal_kv`: Float64, nullable
 - `to_nominal_kv`: Float64, nullable
 - `device_type`: Dictionary<Int32, Utf8>, nullable (v0.8.6+) — canonical token for SmartValve is `smartvalve`; reader normalization must accept alias `SV` (case-insensitive) and canonicalize to `smartvalve`.
@@ -322,19 +324,29 @@ Recommended `control_mode` tokens for `dc_lines_2w` are `power`, `current`, `vol
 
 ### generators
 
+- `generator_id`: Int32, required
 - `bus_id`: Int32, required
-- `id`: Dictionary<Int32, Utf8>, required
-- `p_sched_pu`: Float64, required
-- `p_min_pu`: Float64, required
-- `p_max_pu`: Float64, required
-- `q_min_pu`: Float64, required
-- `q_max_pu`: Float64, required
+- `name`: Utf8, nullable
+- `unit_type`: Utf8, required
+- `hierarchy_level`: Utf8, required
+- `parent_generator_id`: Int32, nullable
+- `aggregation_count`: Int32, nullable
 - `status`: Boolean, required
+- `is_ibr`: Boolean, required
+- `ibr_subtype`: Utf8, nullable
+- `p_sched_mw`: Float64, required
+- `p_min_mw`: Float64, required
+- `p_max_mw`: Float64, required
+- `q_min_mvar`: Float64, required
+- `q_max_mvar`: Float64, required
 - `mbase_mva`: Float64, required
-- `H`: Float64, required
-- `xd_prime`: Float64, required
-- `D`: Float64, required
-- `name`: Dictionary<UInt32, Utf8>, nullable
+- `uol_mw`: Float64, nullable
+- `lol_mw`: Float64, nullable
+- `ramp_rate_up_mw_min`: Float64, nullable
+- `ramp_rate_down_mw_min`: Float64, nullable
+- `owner_id`: Int32, nullable
+- `market_resource_id`: Utf8, nullable
+- `params`: Map<String, Float64>, nullable
 
 ### ibr_devices
 

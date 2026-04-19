@@ -148,6 +148,34 @@ Arrow typing constraints for these tables are part of the wire contract:
 - `ibr_devices.params`: `map<string, float64>`
 - Nullable fields remain nullable per schema contract for additive compatibility where possible.
 
+### Generators table redesign (breaking)
+
+The `generators` table is now a unified hierarchical contract for individual units,
+IBR units, and aggregate DER records.
+
+v0.8.9 canonical columns are:
+
+- `generator_id`, `bus_id`, `name`
+- `unit_type`, `hierarchy_level`, `parent_generator_id`, `aggregation_count`
+- `status`, `is_ibr`, `ibr_subtype`
+- `p_sched_mw`, `p_min_mw`, `p_max_mw`, `q_min_mvar`, `q_max_mvar`, `mbase_mva`
+- `uol_mw`, `lol_mw`, `ramp_rate_up_mw_min`, `ramp_rate_down_mw_min`
+- `owner_id`, `market_resource_id`, `params`
+
+Notes:
+
+- Legacy per-unit and direct dynamics columns (`p_sched_pu`, `p_min_pu`, `p_max_pu`,
+  `q_min_pu`, `q_max_pu`, `H`, `xd_prime`, `D`) are no longer part of the `generators`
+  table wire shape.
+- Dynamics scalars remain expressible through `generators.params` when provided by source data.
+- `fuel_type` is not part of the v0.8.9 `generators` contract.
+
+### Ownership linkage changes
+
+- `buses.owner_id` is now explicitly part of the contract (nullable).
+- `branches.owner_id` is now explicitly part of the contract (nullable).
+- `generators.owner_id` remains nullable for source datasets that lack owner attribution.
+
 ### Required metadata changes
 
 `metadata` row now requires:

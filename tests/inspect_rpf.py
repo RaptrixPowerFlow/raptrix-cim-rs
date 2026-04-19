@@ -481,9 +481,9 @@ def _run_profile_validation(
 
         if expected_first_generator_p is not None and generators_batch.num_rows > 0:
             generator_table = pa.Table.from_batches([generators_batch])
-            first_generator_p = float(generator_table.column("p_sched_pu")[0].as_py())
-            assert first_generator_p == pytest.approx(expected_first_generator_p / base_mva_value), (
-                f"First generator p_sched_pu mismatch: expected {expected_first_generator_p / base_mva_value}, got {first_generator_p}"
+            first_generator_p = float(generator_table.column("p_sched_mw")[0].as_py())
+            assert first_generator_p == pytest.approx(expected_first_generator_p), (
+                f"First generator p_sched_mw mismatch: expected {expected_first_generator_p}, got {first_generator_p}"
             )
 
         if expected_first_load_p is not None and loads_batch.num_rows > 0:
