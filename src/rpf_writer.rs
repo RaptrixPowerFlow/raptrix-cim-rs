@@ -405,7 +405,6 @@ struct GenRow<'a> {
     ramp_rate_down_mw_min: Option<f64>,
     is_ibr: bool,
     ibr_subtype: Option<Cow<'a, str>>,
-    fuel_type: Option<Cow<'a, str>>,
     owner_id: Option<i32>,
     market_resource_id: Option<Cow<'a, str>>,
     h: f64,
@@ -2916,11 +2915,6 @@ fn parse_eq_topology_rows(
                 .as_deref()
                 .and_then(non_empty_name)
                 .map(|value| Cow::Owned(value.to_owned())),
-            fuel_type: machine
-                .fuel_type
-                .as_deref()
-                .and_then(non_empty_name)
-                .map(|value| Cow::Owned(value.to_owned())),
             owner_id: machine
                 .owner_mrid
                 .as_deref()
@@ -4053,7 +4047,6 @@ fn build_generators_batch(rows: &[GenRow<'_>], _base_mva: f64) -> Result<RecordB
     let mut ramp_rate_down_mw_min_b = Float64Builder::new();
     let mut is_ibr_b = BooleanBuilder::new();
     let mut ibr_subtype_b = StringBuilder::new();
-    let mut fuel_type_b = StringBuilder::new();
     let mut owner_id_b = Int32Builder::new();
     let mut market_resource_id_b = StringBuilder::new();
     let mut params_b = MapBuilder::new(
@@ -4117,11 +4110,6 @@ fn build_generators_batch(rows: &[GenRow<'_>], _base_mva: f64) -> Result<RecordB
         } else {
             ibr_subtype_b.append_null();
         }
-        if let Some(fuel_type) = row.fuel_type.as_deref() {
-            fuel_type_b.append_value(fuel_type);
-        } else {
-            fuel_type_b.append_null();
-        }
         if let Some(owner_id) = row.owner_id {
             owner_id_b.append_value(owner_id);
         } else {
@@ -4159,6 +4147,8 @@ fn build_generators_batch(rows: &[GenRow<'_>], _base_mva: f64) -> Result<RecordB
         Arc::new(parent_generator_id_b.finish()) as ArrayRef,
         Arc::new(aggregation_count_b.finish()) as ArrayRef,
         Arc::new(status_b.finish()) as ArrayRef,
+        Arc::new(is_ibr_b.finish()) as ArrayRef,
+        Arc::new(ibr_subtype_b.finish()) as ArrayRef,
         Arc::new(p_sched_mw_b.finish()) as ArrayRef,
         Arc::new(p_min_mw_b.finish()) as ArrayRef,
         Arc::new(p_max_mw_b.finish()) as ArrayRef,
@@ -4169,9 +4159,6 @@ fn build_generators_batch(rows: &[GenRow<'_>], _base_mva: f64) -> Result<RecordB
         Arc::new(lol_mw_b.finish()) as ArrayRef,
         Arc::new(ramp_rate_up_mw_min_b.finish()) as ArrayRef,
         Arc::new(ramp_rate_down_mw_min_b.finish()) as ArrayRef,
-        Arc::new(is_ibr_b.finish()) as ArrayRef,
-        Arc::new(ibr_subtype_b.finish()) as ArrayRef,
-        Arc::new(fuel_type_b.finish()) as ArrayRef,
         Arc::new(owner_id_b.finish()) as ArrayRef,
         Arc::new(market_resource_id_b.finish()) as ArrayRef,
         Arc::new(params_b.finish()) as ArrayRef,
@@ -5710,7 +5697,6 @@ mod tests {
             ramp_rate_down_mw_min: None,
             is_ibr: false,
             ibr_subtype: None,
-            fuel_type: None,
             owner_id: None,
             market_resource_id: None,
             h: 4.0,

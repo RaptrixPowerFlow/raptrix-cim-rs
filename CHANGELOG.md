@@ -24,7 +24,7 @@ Copyright (c) 2026 Raptrix PowerFlow
   - New identity and hierarchy fields: `generator_id`, `unit_type`, `hierarchy_level`, `parent_generator_id`, `aggregation_count`
   - MW/MVAR-native dispatch fields: `p_sched_mw`, `p_min_mw`, `p_max_mw`, `q_min_mvar`, `q_max_mvar`
   - Ownership/market/extension fields: `owner_id`, `market_resource_id`, `params`
-  - Unit classification fields: `is_ibr`, `ibr_subtype`, `fuel_type`
+  - Unit classification fields: `is_ibr`, `ibr_subtype`
   - Optional UOL/LOL and ramp-rate fields: `uol_mw`, `lol_mw`, `ramp_rate_up_mw_min`, `ramp_rate_down_mw_min`
 - Ownership enrichment:
   - `buses.owner_id` (nullable)
@@ -243,7 +243,7 @@ Copyright (c) 2026 Raptrix PowerFlow
 
 - Flat-start planning must always exist for a valid model.
 - Solved-state fields are optional and nullable; exporters must **never** fabricate solved values.
-- PV→PQ switching outcome lives only in `generators_solved.pv_to_pq`; it must never be back-propagated into `generators.p_sched_pu` or any other planning field.
+- PV→PQ switching outcome lives only in `generators_solved.pv_to_pq`; it must never be back-propagated into `generators.p_sched_mw` or any other planning field.
 - Contradictory metadata combinations (`case_mode = solved_snapshot` + `solved_state_presence ≠ actual_solved`, or vice-versa) are hard errors.
 
 ## [Schema Contract 0.8.3] - 2026-04-06
