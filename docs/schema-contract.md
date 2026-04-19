@@ -1,4 +1,4 @@
-# Schema Contract (Locked contract: v0.8.7 — CGMES 3.0+ Only)
+# Schema Contract (Locked contract: v0.8.8 — CGMES 3.0+ Only)
 
 This repository is the authoritative source of truth for the Raptrix PowerFlow Interchange (`.rpf`) wire contract used by CIM-first conversion pipelines.
 
@@ -35,8 +35,8 @@ Every `.rpf` file must include:
 
 Current locked values:
 
-- `raptrix.version = 0.8.7`
-- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.8.7 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.`
+- `raptrix.version = 0.8.8`
+- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.8.8 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.`
 - `rpf.case_fingerprint = <required deterministic case identity fingerprint>`
 - `rpf.validation_mode = topology_only | solved_ready`
 - `rpf.case_mode = flat_start_planning | warm_start_planning | solved_snapshot` (v0.8.4+, required)
@@ -79,31 +79,35 @@ Required root columns are in this exact order:
 1. `metadata`
 2. `buses`
 3. `branches`
-4. `generators`
-5. `loads`
-6. `fixed_shunts`
-7. `switched_shunts`
-8. `transformers_2w`
-9. `transformers_3w`
-10. `areas`
-11. `zones`
-12. `owners`
-13. `contingencies`
-14. `interfaces`
-15. `dynamics_models`
+4. `multi_section_lines`
+5. `dc_lines_2w`
+6. `generators`
+7. `ibr_devices`
+8. `loads`
+9. `fixed_shunts`
+10. `switched_shunts`
+11. `switched_shunt_banks`
+12. `transformers_2w`
+13. `transformers_3w`
+14. `areas`
+15. `zones`
+16. `owners`
+17. `contingencies`
+18. `interfaces`
+19. `dynamics_models`
 
 Optional root columns, when present, are appended after the required columns in this order:
 
-16. `node_breaker_detail`
-17. `switch_detail`
-18. `connectivity_nodes`
-19. `diagram_objects`
-20. `diagram_points`
-21. `buses_solved`
-22. `generators_solved`
-23. `switched_shunts_solved`
-24. `facts_devices`
-25. `facts_solved`
+20. `node_breaker_detail`
+21. `switch_detail`
+22. `connectivity_nodes`
+23. `diagram_objects`
+24. `diagram_points`
+25. `buses_solved`
+26. `generators_solved`
+27. `switched_shunts_solved`
+28. `facts_devices`
+29. `facts_solved`
 
 `connectivity_groups` is an optional detail table emitted only in connectivity-detail mode and is appended after the required root columns when that mode is active.
 
@@ -137,10 +141,14 @@ Required tables (empty tables allowed):
 - `metadata`
 - `buses`
 - `branches`
+- `multi_section_lines`
+- `dc_lines_2w`
 - `generators`
+- `ibr_devices`
 - `loads`
 - `fixed_shunts`
 - `switched_shunts`
+- `switched_shunt_banks`
 - `transformers_2w`
 - `transformers_3w`
 - `areas`
@@ -203,6 +211,13 @@ This section is normative for external parser authors.
 - `slack_bus_id_solved`: Int32, nullable — bus_id of the angle reference (slack) bus used in the solve; prevents silent reference-frame mismatch when snapshots are re-used (v0.8.5+)
 - `angle_reference_deg`: Float64, nullable — angle reference value in degrees applied at the slack bus; typically 0.0 (v0.8.5+)
 - `solved_shunt_state_presence`: Dictionary<Int32, Utf8>, nullable — `actual_solved` | `not_available`; lets loaders fail fast or warn if solved snapshot claims solved but lacks full shunt state (v0.8.5+)
+- `modern_grid_profile`: Boolean, required (v0.8.8+)
+- `ibr_penetration_pct`: Float64, nullable (v0.8.8+)
+- `has_ibr`: Boolean, required (v0.8.8+)
+- `has_smart_valve`: Boolean, required (v0.8.8+)
+- `has_multi_terminal_dc`: Boolean, required (v0.8.8+)
+- `study_purpose`: Utf8, nullable (v0.8.8+)
+- `scenario_tags`: List<Utf8>, nullable (v0.8.8+)
 
 ### buses
 
@@ -253,6 +268,41 @@ This section is normative for external parser authors.
 - `injected_voltage_mag_pu`: Float64, nullable (v0.8.6+) — injected series-voltage magnitude in per-unit.
 - `injected_voltage_angle_deg`: Float64, nullable (v0.8.6+) — injected series-voltage angle in degrees.
 - `facts_params`: Map<String, Float64>, nullable (v0.8.6+) — additive vendor or model-specific scalar parameters.
+- `parent_line_id`: Int32, nullable (v0.8.8+) — links branch sections to `multi_section_lines.line_id`.
+- `section_index`: Int32, nullable (v0.8.8+) — ordered section index within a multi-section logical line.
+
+### multi_section_lines
+
+- `line_id`: Int32, required
+- `from_bus_id`: Int32, required
+- `to_bus_id`: Int32, required
+- `ckt`: Utf8, required
+- `section_branch_ids`: List<Int32>, required
+- `total_r_pu`: Float64, required
+- `total_x_pu`: Float64, required
+- `total_b_pu`: Float64, required
+- `rate_a_mva`: Float64, required
+- `rate_b_mva`: Float64, nullable
+- `status`: Boolean, required
+- `name`: Utf8, nullable
+
+### dc_lines_2w
+
+- `dc_line_id`: Int32, required
+- `from_bus_id`: Int32, required
+- `to_bus_id`: Int32, required
+- `ckt`: Utf8, required
+- `r_ohm`: Float64, required
+- `l_henry`: Float64, nullable
+- `control_mode`: Utf8, required
+- `p_setpoint_mw`: Float64, nullable
+- `i_setpoint_ka`: Float64, nullable
+- `v_setpoint_kv`: Float64, nullable
+- `q_from_mvar`: Float64, nullable
+- `q_to_mvar`: Float64, nullable
+- `status`: Boolean, required
+- `name`: Utf8, nullable
+- `converter_type`: Utf8, required
 
 ### generators
 
@@ -269,6 +319,20 @@ This section is normative for external parser authors.
 - `xd_prime`: Float64, required
 - `D`: Float64, required
 - `name`: Dictionary<UInt32, Utf8>, nullable
+
+### ibr_devices
+
+- `device_id`: Int32, required
+- `bus_id`: Int32, required
+- `device_type`: Utf8, required
+- `rated_mva`: Float64, required
+- `p_max_mw`: Float64, required
+- `q_min_mvar`: Float64, required
+- `q_max_mvar`: Float64, required
+- `control_mode`: Utf8, required
+- `status`: Boolean, required
+- `params`: Map<String, Float64>, nullable
+- `name`: Utf8, nullable
 
 ### loads
 
@@ -297,6 +361,17 @@ This section is normative for external parser authors.
 - `current_step`: Int32, required
 - `b_init_pu`: Float64, nullable — authoritative initial susceptance in per-unit (v0.8.3+). PSS/E source: `BINIT / base_mva`. CIM source: `b_steps[current_step - 1]`. Readers should prefer this field over reconstructing from `b_steps + current_step`. Nullable for backward compatibility; writers must populate this field.
 - `shunt_id`: Dictionary<Int32, Utf8>, nullable — stable per-bank identity to disambiguate multiple banks at the same bus (v0.8.5+). CIM path: `ShuntCompensator` mRID. PSS/E path: synthesized as `"{bus_id}_shunt_{n}"` (1-indexed). Nullable for backward compatibility; writers must populate when available.
+
+For v0.8.8+, `switched_shunts.b_steps` must contain strictly capacitive (positive) values.
+Inductive steps must be represented in `switched_shunt_banks`.
+
+### switched_shunt_banks
+
+- `shunt_id`: Int32, required
+- `bank_id`: Int32, required
+- `b_mvar`: Float64, required
+- `status`: Boolean, required
+- `step`: Int32, required
 
 ### transformers_2w
 

@@ -46,14 +46,16 @@ use crate::arrow_schema::{
     METADATA_KEY_TOPOLOGY_MAIN_ISLAND_BUS_COUNT, METADATA_KEY_TRANSFORMER_REPRESENTATION_MODE,
     METADATA_KEY_VALIDATION_MODE, SCHEMA_VERSION,
     TABLE_AREAS, TABLE_BRANCHES, TABLE_BUSES, TABLE_CONNECTIVITY_NODES, TABLE_CONTINGENCIES,
-    TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_DYNAMICS_MODELS, TABLE_FIXED_SHUNTS,
-    TABLE_GENERATORS, TABLE_INTERFACES, TABLE_LOADS, TABLE_METADATA, TABLE_NODE_BREAKER_DETAIL,
-    TABLE_OWNERS, TABLE_SWITCH_DETAIL, TABLE_SWITCHED_SHUNTS, TABLE_TRANSFORMERS_2W,
-    TABLE_TRANSFORMERS_3W, TABLE_ZONES, areas_schema, branches_schema, buses_schema,
-    connectivity_groups_schema, connectivity_nodes_schema, contingencies_schema,
-    diagram_objects_schema, diagram_points_schema, dynamics_models_schema, fixed_shunts_schema,
-    generators_schema, interfaces_schema, loads_schema, metadata_schema,
-    node_breaker_detail_schema, owners_schema, switch_detail_schema, switched_shunts_schema,
+    TABLE_DC_LINES_2W, TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_DYNAMICS_MODELS,
+    TABLE_FIXED_SHUNTS, TABLE_GENERATORS, TABLE_IBR_DEVICES, TABLE_INTERFACES, TABLE_LOADS,
+    TABLE_METADATA, TABLE_MULTI_SECTION_LINES, TABLE_NODE_BREAKER_DETAIL, TABLE_OWNERS,
+    TABLE_SWITCH_DETAIL, TABLE_SWITCHED_SHUNT_BANKS, TABLE_SWITCHED_SHUNTS,
+    TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, TABLE_ZONES, areas_schema, branches_schema,
+    buses_schema, connectivity_groups_schema, connectivity_nodes_schema, contingencies_schema,
+    dc_lines_2w_schema, diagram_objects_schema, diagram_points_schema, dynamics_models_schema,
+    fixed_shunts_schema, generators_schema, ibr_devices_schema, interfaces_schema, loads_schema,
+    metadata_schema, multi_section_lines_schema, node_breaker_detail_schema, owners_schema,
+    switch_detail_schema, switched_shunt_banks_schema, switched_shunts_schema,
     transformers_2w_schema, transformers_3w_schema, zones_schema,
 };
 use crate::parser;
@@ -115,6 +117,14 @@ pub struct WriteOptions {
     pub frequency_hz: f64,
     pub study_name: Option<String>,
     pub timestamp_utc: Option<String>,
+    /// v0.8.8: required modern-grid contract toggle on metadata row.
+    pub modern_grid_profile: bool,
+    /// v0.8.8: optional IBR penetration percentage metadata.
+    pub ibr_penetration_pct: Option<f64>,
+    /// v0.8.8: optional study-purpose metadata.
+    pub study_purpose: Option<String>,
+    /// v0.8.8: optional scenario tags metadata.
+    pub scenario_tags: Vec<String>,
     /// Explicit case mode written to the metadata row and file-level metadata.
     /// CIM EQ/TP exports are always `FlatStartPlanning` (default).
     pub case_mode: CaseMode,
@@ -263,6 +273,10 @@ impl Default for WriteOptions {
             frequency_hz: 60.0,
             study_name: None,
             timestamp_utc: None,
+            modern_grid_profile: true,
+            ibr_penetration_pct: None,
+            study_purpose: None,
+            scenario_tags: Vec::new(),
             case_mode: CaseMode::FlatStartPlanning,
             solver_provenance: None,
             transformer_representation_mode: TransformerRepresentationMode::Native3W,
@@ -311,6 +325,14 @@ struct MetadataRow<'a> {
     slack_bus_id_solved: Option<i32>,
     angle_reference_deg: Option<f64>,
     solved_shunt_state_presence: Option<Cow<'a, str>>,
+    // v0.8.8 modern-grid metadata
+    modern_grid_profile: bool,
+    ibr_penetration_pct: Option<f64>,
+    has_ibr: bool,
+    has_smart_valve: bool,
+    has_multi_terminal_dc: bool,
+    study_purpose: Option<Cow<'a, str>>,
+    scenario_tags: Vec<Cow<'a, str>>,
 }
 
 #[derive(Debug, Clone)]
@@ -411,6 +433,16 @@ struct SwitchedShuntRow {
     /// Stable per-bank identity (v0.8.5+).  CIM mRID or PSS/E-synthesized id.
     /// None when not available from source.
     shunt_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct SwitchedShuntBankRow {
+    shunt_id: i32,
+    bank_id: i32,
+    b_pu: f64,
+    status: bool,
+    step: i32,
+    bus_id: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -1277,6 +1309,7 @@ fn enforce_detached_island_policy(
     transformer_3w_rows: &mut Vec<Transformer3WRow<'static>>,
     fixed_shunt_rows: &mut Vec<FixedShuntRow<'static>>,
     switched_shunt_rows: &mut Vec<SwitchedShuntRow>,
+    switched_shunt_bank_rows: &mut Vec<SwitchedShuntBankRow>,
     node_breaker_rows: &mut Vec<NodeBreakerDetailRow<'static>>,
     connectivity_node_rows: &mut Vec<ConnectivityNodeDetailRow<'static>>,
     split_bus_stub_elements: &mut Vec<ContingencyElement<'static>>,
@@ -1335,6 +1368,7 @@ fn enforce_detached_island_policy(
     });
     fixed_shunt_rows.retain(|row| main_set.contains(&row.bus_id));
     switched_shunt_rows.retain(|row| main_set.contains(&row.bus_id));
+    switched_shunt_bank_rows.retain(|row| main_set.contains(&row.bus_id));
     node_breaker_rows.retain(|row| {
         row.from_bus_id
             .map(|bus_id| main_set.contains(&bus_id))
@@ -1431,6 +1465,7 @@ pub fn write_complete_rpf_with_options(
         owner_rows,
         mut fixed_shunt_rows,
         mut switched_shunt_rows,
+        mut switched_shunt_bank_rows,
         connectivity_group_rows,
         mut node_breaker_rows,
         switch_detail_rows,
@@ -1451,6 +1486,7 @@ pub fn write_complete_rpf_with_options(
         &mut transformer_3w_rows,
         &mut fixed_shunt_rows,
         &mut switched_shunt_rows,
+        &mut switched_shunt_bank_rows,
         &mut node_breaker_rows,
         &mut connectivity_node_rows,
         &mut split_bus_stub_elements,
@@ -1572,6 +1608,18 @@ pub fn write_complete_rpf_with_options(
         slack_bus_id_solved: sv_slack_bus_id,
         angle_reference_deg: sv_angle_ref_deg,
         solved_shunt_state_presence: sv_shunt_state_presence.map(|v| Cow::Owned(v.into_owned())),
+        // v0.8.8
+        modern_grid_profile: options.modern_grid_profile,
+        ibr_penetration_pct: options.ibr_penetration_pct,
+        has_ibr: false,
+        has_smart_valve: false,
+        has_multi_terminal_dc: false,
+        study_purpose: options.study_purpose.as_deref().map(Cow::Borrowed),
+        scenario_tags: options
+            .scenario_tags
+            .iter()
+            .map(|tag| Cow::Borrowed(tag.as_str()))
+            .collect(),
     };
 
     let metadata_batch = build_metadata_batch(&metadata_row)?;
@@ -1586,6 +1634,8 @@ pub fn write_complete_rpf_with_options(
     let owners_batch = build_owners_batch(&owner_rows)?;
     let fixed_shunts_batch = build_fixed_shunts_batch(&fixed_shunt_rows, options.base_mva)?;
     let switched_shunts_batch = build_switched_shunts_batch(&switched_shunt_rows)?;
+    let switched_shunt_banks_batch =
+        build_switched_shunt_banks_batch(&switched_shunt_bank_rows, options.base_mva)?;
     let (contingencies_rows, contingencies_are_stub) =
         contingency_rows_from_switches_and_stubs(&node_breaker_rows, split_bus_stub_elements);
     let (
@@ -1607,10 +1657,23 @@ pub fn write_complete_rpf_with_options(
     table_batches.insert(TABLE_METADATA, metadata_batch.clone());
     table_batches.insert(TABLE_BUSES, buses_batch.clone());
     table_batches.insert(TABLE_BRANCHES, branches_batch.clone());
+    table_batches.insert(
+        TABLE_MULTI_SECTION_LINES,
+        RecordBatch::new_empty(Arc::new(multi_section_lines_schema())),
+    );
+    table_batches.insert(
+        TABLE_DC_LINES_2W,
+        RecordBatch::new_empty(Arc::new(dc_lines_2w_schema())),
+    );
     table_batches.insert(TABLE_GENERATORS, generators_batch.clone());
+    table_batches.insert(
+        TABLE_IBR_DEVICES,
+        RecordBatch::new_empty(Arc::new(ibr_devices_schema())),
+    );
     table_batches.insert(TABLE_LOADS, loads_batch.clone());
     table_batches.insert(TABLE_FIXED_SHUNTS, fixed_shunts_batch.clone());
     table_batches.insert(TABLE_SWITCHED_SHUNTS, switched_shunts_batch.clone());
+    table_batches.insert(TABLE_SWITCHED_SHUNT_BANKS, switched_shunt_banks_batch.clone());
     table_batches.insert(TABLE_TRANSFORMERS_2W, transformers_2w_batch.clone());
     table_batches.insert(TABLE_TRANSFORMERS_3W, transformers_3w_batch.clone());
     table_batches.insert(TABLE_AREAS, areas_batch.clone());
@@ -2272,6 +2335,7 @@ fn parse_eq_topology_rows(
     Vec<OwnerRow<'static>>,
     Vec<FixedShuntRow<'static>>,
     Vec<SwitchedShuntRow>,
+    Vec<SwitchedShuntBankRow>,
     Vec<ConnectivityGroupRow<'static>>,
     Vec<NodeBreakerDetailRow<'static>>,
     Vec<SwitchDetailRow<'static>>,
@@ -3212,6 +3276,7 @@ fn parse_eq_topology_rows(
 
     switched_shunts.sort_unstable_by(|left, right| left.base.m_rid.cmp(&right.base.m_rid));
     let mut switched_shunt_rows = Vec::with_capacity(switched_shunts.len());
+    let mut switched_shunt_bank_rows = Vec::new();
     for shunt in switched_shunts {
         let shunt_mrid = shunt.base.m_rid.as_ref();
         let shunt_terminals = terminals_by_equipment.get(shunt_mrid).with_context(|| {
@@ -3262,16 +3327,37 @@ fn parse_eq_topology_rows(
                 })?
         };
 
-        let mut b_steps = shunt.b_steps.unwrap_or_default();
-        if b_steps.is_empty() {
-            b_steps.push(0.0);
+        let source_steps = shunt.b_steps.unwrap_or_default();
+        let mut capacitive_steps = Vec::new();
+        let numeric_shunt_id = (switched_shunt_rows.len() as i32) + 1;
+
+        for (index, value) in source_steps.iter().copied().enumerate() {
+            if value > 0.0 {
+                // v0.8.8: switched_shunts.b_steps is strictly capacitive.
+                capacitive_steps.push(value);
+            } else if value < 0.0 {
+                // v0.8.8: inductive steps are emitted in switched_shunt_banks.
+                switched_shunt_bank_rows.push(SwitchedShuntBankRow {
+                    shunt_id: numeric_shunt_id,
+                    bank_id: (index as i32) + 1,
+                    b_pu: value,
+                    status: true,
+                    step: (index as i32) + 1,
+                    bus_id,
+                });
+            }
         }
 
-        let current_step = shunt.current_step.unwrap_or(0);
+        let raw_current_step = shunt.current_step.unwrap_or(0).max(0);
+        let current_step = if capacitive_steps.is_empty() {
+            0
+        } else {
+            raw_current_step.min(capacitive_steps.len() as i32)
+        };
         // For CIM, b_steps are cumulative susceptance values (b_steps[i] = per_section*(i+1)).
         // b_init_pu is the susceptance at the active step: b_steps[current_step - 1].
-        let b_init_pu = if current_step > 0 && (current_step as usize) <= b_steps.len() {
-            b_steps[(current_step as usize) - 1]
+        let b_init_pu = if current_step > 0 && (current_step as usize) <= capacitive_steps.len() {
+            capacitive_steps[(current_step as usize) - 1]
         } else {
             0.0
         };
@@ -3281,7 +3367,7 @@ fn parse_eq_topology_rows(
             status: true,
             v_low: shunt.v_low.unwrap_or(0.95),
             v_high: shunt.v_high.unwrap_or(1.05),
-            b_steps,
+            b_steps: capacitive_steps,
             current_step,
             b_init_pu,
             // v0.8.5: CIM path — use ShuntCompensator mRID as stable bank identity.
@@ -3537,6 +3623,7 @@ fn parse_eq_topology_rows(
         owner_rows,
         fixed_shunt_rows,
         switched_shunt_rows,
+        switched_shunt_bank_rows,
         connectivity_group_rows,
         node_breaker_rows,
         switch_detail_rows,
@@ -3574,6 +3661,18 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
     let mut slack_bus_id_solved_b = Int32Builder::new();
     let mut angle_reference_deg_b = Float64Builder::new();
     let mut solved_shunt_state_presence_b = StringDictionaryBuilder::<Int32Type>::new();
+    // v0.8.8 builders
+    let mut modern_grid_profile_b = BooleanBuilder::new();
+    let mut ibr_penetration_pct_b = Float64Builder::new();
+    let mut has_ibr_b = BooleanBuilder::new();
+    let mut has_smart_valve_b = BooleanBuilder::new();
+    let mut has_multi_terminal_dc_b = BooleanBuilder::new();
+    let mut study_purpose_b = StringBuilder::new();
+    let list_field = schema.field(27).data_type().clone();
+    let mut scenario_tags_b = ListBuilder::new(StringBuilder::new()).with_field(match list_field {
+        DataType::List(field) => field,
+        _ => Arc::new(Field::new("item", DataType::Utf8, false)),
+    });
 
     base_mva_b.append_value(row.base_mva);
     frequency_b.append_value(row.frequency_hz);
@@ -3627,6 +3726,22 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
         }
         None => solved_shunt_state_presence_b.append_null(),
     }
+    modern_grid_profile_b.append_value(row.modern_grid_profile);
+    match row.ibr_penetration_pct {
+        Some(v) => ibr_penetration_pct_b.append_value(v),
+        None => ibr_penetration_pct_b.append_null(),
+    }
+    has_ibr_b.append_value(row.has_ibr);
+    has_smart_valve_b.append_value(row.has_smart_valve);
+    has_multi_terminal_dc_b.append_value(row.has_multi_terminal_dc);
+    match &row.study_purpose {
+        Some(v) => study_purpose_b.append_value(v.as_ref()),
+        None => study_purpose_b.append_null(),
+    }
+    for tag in &row.scenario_tags {
+        scenario_tags_b.values().append_value(tag.as_ref());
+    }
+    scenario_tags_b.append(true);
 
     let custom_metadata_type = schema.field(11).data_type().clone();
     let custom_metadata_array = new_null_array(&custom_metadata_type, 1);
@@ -3655,6 +3770,13 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
         Arc::new(slack_bus_id_solved_b.finish()) as ArrayRef,
         Arc::new(angle_reference_deg_b.finish()) as ArrayRef,
         Arc::new(solved_shunt_state_presence_b.finish()) as ArrayRef,
+        Arc::new(modern_grid_profile_b.finish()) as ArrayRef,
+        Arc::new(ibr_penetration_pct_b.finish()) as ArrayRef,
+        Arc::new(has_ibr_b.finish()) as ArrayRef,
+        Arc::new(has_smart_valve_b.finish()) as ArrayRef,
+        Arc::new(has_multi_terminal_dc_b.finish()) as ArrayRef,
+        Arc::new(study_purpose_b.finish()) as ArrayRef,
+        Arc::new(scenario_tags_b.finish()) as ArrayRef,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build metadata record batch")
@@ -3813,6 +3935,8 @@ fn build_branches_batch(rows: &[BranchRow<'_>]) -> Result<RecordBatch> {
         new_null_array(schema.field(21).data_type(), rows.len()),
         new_null_array(schema.field(22).data_type(), rows.len()),
         new_null_array(schema.field(23).data_type(), rows.len()),
+        new_null_array(schema.field(24).data_type(), rows.len()),
+        new_null_array(schema.field(25).data_type(), rows.len()),
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build branches record batch")
@@ -4240,6 +4364,37 @@ fn build_switched_shunts_batch(rows: &[SwitchedShuntRow]) -> Result<RecordBatch>
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build switched_shunts record batch")
+}
+
+fn build_switched_shunt_banks_batch(
+    rows: &[SwitchedShuntBankRow],
+    base_mva: f64,
+) -> Result<RecordBatch> {
+    let schema = Arc::new(switched_shunt_banks_schema());
+
+    let mut shunt_id_b = Int32Builder::new();
+    let mut bank_id_b = Int32Builder::new();
+    let mut b_mvar_b = Float64Builder::new();
+    let mut status_b = BooleanBuilder::new();
+    let mut step_b = Int32Builder::new();
+
+    for row in rows {
+        shunt_id_b.append_value(row.shunt_id);
+        bank_id_b.append_value(row.bank_id);
+        b_mvar_b.append_value(row.b_pu * base_mva);
+        status_b.append_value(row.status);
+        step_b.append_value(row.step);
+    }
+
+    let arrays: Vec<ArrayRef> = vec![
+        Arc::new(shunt_id_b.finish()) as ArrayRef,
+        Arc::new(bank_id_b.finish()) as ArrayRef,
+        Arc::new(b_mvar_b.finish()) as ArrayRef,
+        Arc::new(status_b.finish()) as ArrayRef,
+        Arc::new(step_b.finish()) as ArrayRef,
+    ];
+
+    RecordBatch::try_new(schema, arrays).context("failed to build switched_shunt_banks record batch")
 }
 
 fn build_connectivity_groups_batch(rows: &[ConnectivityGroupRow<'_>]) -> Result<RecordBatch> {

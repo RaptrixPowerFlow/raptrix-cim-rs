@@ -22,16 +22,20 @@ except ImportError:  # pragma: no cover - handled by skip branch below
     ipc = None
 
 
-BRANDING = "Raptrix CIM-Arrow / PowerFlow Interchange v0.8.3 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow."
-SCHEMA_VERSION = "0.8.3"
+BRANDING = "Raptrix CIM-Arrow / PowerFlow Interchange v0.8.8 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow."
+SCHEMA_VERSION = "0.8.8"
 CANONICAL_TABLE_ORDER = [
     "metadata",
     "buses",
     "branches",
+    "multi_section_lines",
+    "dc_lines_2w",
     "generators",
+    "ibr_devices",
     "loads",
     "fixed_shunts",
     "switched_shunts",
+    "switched_shunt_banks",
     "transformers_2w",
     "transformers_3w",
     "areas",
@@ -344,16 +348,16 @@ def _run_profile_validation(
         tables = _read_rpf_tables(output_path)
         _emit_table_row_report(profile_name, tables, capsys)
 
-        expected_table_count = 15
+        expected_table_count = 19
         assert len(tables) == expected_table_count, (
             f"Expected {expected_table_count} canonical tables, got {len(tables)}"
         )
 
         observed_names = [name for name, _ in tables]
-        assert observed_names[:15] == CANONICAL_TABLE_ORDER, (
+        assert observed_names[:19] == CANONICAL_TABLE_ORDER, (
             f"Unexpected core table order: {observed_names}"
         )
-        for table_idx, (table_name, batch) in enumerate(tables[:15]):
+        for table_idx, (table_name, batch) in enumerate(tables[:19]):
             expected_table_name = CANONICAL_TABLE_ORDER[table_idx]
             assert table_name == expected_table_name, (
                 f"Table order mismatch at index {table_idx}: expected {expected_table_name}, got {table_name}"

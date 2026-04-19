@@ -13,6 +13,35 @@ Copyright (c) 2026 Raptrix PowerFlow
 ## [Schema Contract 0.8.5] - 2026-04-09
 ## [Schema Contract 0.8.6] - 2026-04-13
 ## [Schema Contract 0.8.7] - 2026-04-17
+## [Schema Contract 0.8.8] - 2026-04-19
+
+### Converter release: Crate version 0.2.8 (raptrix-cim-arrow) / 0.2.8 (raptrix-cim-rs) | Arrow schema v0.8.8
+
+### Added
+
+- New required tables for modern-grid modeling:
+  - `multi_section_lines`
+  - `dc_lines_2w`
+  - `switched_shunt_banks`
+  - `ibr_devices`
+- New required metadata-row fields:
+  - `modern_grid_profile`
+  - `has_ibr`
+  - `has_smart_valve`
+  - `has_multi_terminal_dc`
+- New nullable metadata-row fields:
+  - `ibr_penetration_pct`
+  - `study_purpose`
+  - `scenario_tags`
+- `branches` additive columns:
+  - `parent_line_id`
+  - `section_index`
+
+### Changed
+
+- Branding/schema constants bumped to v0.8.8.
+- `SUPPORTED_RPF_VERSIONS` now includes v0.8.8 as current.
+- `switched_shunts.b_steps` is now emitted as capacitive-only values; inductive steps are emitted in `switched_shunt_banks`.
 
 ### Converter release: Crate version 0.2.7 (raptrix-cim-arrow) / 0.2.7 (raptrix-cim-rs) | Arrow schema v0.8.7
 
