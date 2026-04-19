@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.8.8 profile.
+//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.8.9 profile.
 //!
 //! **CGMES 3.0+ Only**: This module targets CGMES v3.0 and later (v17+ CIM) merged profiles.
 //! Support for legacy CGMES 2.4.x was dropped in this release for simplicity and performance.
@@ -17,21 +17,21 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, Schema};
 
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.8.8 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.8.9 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.";
 
 /// Canonical RPF format version tag embedded as file-level metadata.
-pub const RPF_VERSION: &str = "0.8.8";
+pub const RPF_VERSION: &str = "0.8.9";
 
 /// Supported RPF versions accepted by generic Arrow IPC readers.
 ///
-/// v0.8.8 is a breaking contract release and is now the only accepted reader target.
+/// v0.8.9 is a breaking contract release and is now the only accepted reader target.
 /// Older files must be migrated before ingestion.
-/// v0.8.8 adds first-class modern-grid tables (`multi_section_lines`, `dc_lines_2w`,
+/// v0.8.9 adds first-class modern-grid tables (`multi_section_lines`, `dc_lines_2w`,
 /// `switched_shunt_banks`, `ibr_devices`), metadata fields
 /// (`modern_grid_profile`, `ibr_penetration_pct`, `has_ibr`, `has_smart_valve`,
 /// `has_multi_terminal_dc`, `study_purpose`, `scenario_tags`), and additive branch linkage
-/// fields (`parent_line_id`, `section_index`).
-pub const SUPPORTED_RPF_VERSIONS: &[&str] = &["v0.8.8", "0.8.8"];
+/// fields (`parent_line_id`, `section_index`), plus the hierarchical `generators` table.
+pub const SUPPORTED_RPF_VERSIONS: &[&str] = &["v0.8.9", "0.8.9"];
 
 /// Backward-compatible alias retained for older call sites.
 pub const SCHEMA_VERSION: &str = RPF_VERSION;
@@ -369,7 +369,7 @@ pub fn buses_schema() -> Schema {
             Field::new("b_shunt", DataType::Float64, false),
             Field::new("area", DataType::Int32, false),
             Field::new("zone", DataType::Int32, false),
-            Field::new("owner", DataType::Int32, false),
+            Field::new("owner_id", DataType::Int32, true),
             Field::new("v_min", DataType::Float64, false),
             Field::new("v_max", DataType::Float64, false),
             Field::new("p_min_agg", DataType::Float64, false),
@@ -398,6 +398,7 @@ pub fn branches_schema() -> Schema {
             Field::new("rate_b", DataType::Float64, false),
             Field::new("rate_c", DataType::Float64, false),
             Field::new("status", DataType::Boolean, false),
+            Field::new("owner_id", DataType::Int32, true),
             Field::new("name", dict_utf8_u32(), true),
             Field::new("from_nominal_kv", DataType::Float64, true),
             Field::new("to_nominal_kv", DataType::Float64, true),
@@ -471,19 +472,30 @@ pub fn dc_lines_2w_schema() -> Schema {
 pub fn generators_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
+            Field::new("generator_id", DataType::Int32, false),
             Field::new("bus_id", DataType::Int32, false),
-            Field::new("id", dict_utf8(), false),
-            Field::new("p_sched_pu", DataType::Float64, false),
-            Field::new("p_min_pu", DataType::Float64, false),
-            Field::new("p_max_pu", DataType::Float64, false),
-            Field::new("q_min_pu", DataType::Float64, false),
-            Field::new("q_max_pu", DataType::Float64, false),
+            Field::new("name", DataType::Utf8, true),
+            Field::new("unit_type", DataType::Utf8, false),
+            Field::new("hierarchy_level", DataType::Utf8, false),
+            Field::new("parent_generator_id", DataType::Int32, true),
+            Field::new("aggregation_count", DataType::Int32, true),
             Field::new("status", DataType::Boolean, false),
+            Field::new("p_sched_mw", DataType::Float64, false),
+            Field::new("p_min_mw", DataType::Float64, false),
+            Field::new("p_max_mw", DataType::Float64, false),
+            Field::new("q_min_mvar", DataType::Float64, false),
+            Field::new("q_max_mvar", DataType::Float64, false),
             Field::new("mbase_mva", DataType::Float64, false),
-            Field::new("H", DataType::Float64, false),
-            Field::new("xd_prime", DataType::Float64, false),
-            Field::new("D", DataType::Float64, false),
-            Field::new("name", dict_utf8_u32(), true),
+            Field::new("uol_mw", DataType::Float64, true),
+            Field::new("lol_mw", DataType::Float64, true),
+            Field::new("ramp_rate_up_mw_min", DataType::Float64, true),
+            Field::new("ramp_rate_down_mw_min", DataType::Float64, true),
+            Field::new("is_ibr", DataType::Boolean, false),
+            Field::new("ibr_subtype", DataType::Utf8, true),
+            Field::new("fuel_type", DataType::Utf8, true),
+            Field::new("owner_id", DataType::Int32, true),
+            Field::new("market_resource_id", DataType::Utf8, true),
+            Field::new("params", map_string_f64(), true),
         ],
         schema_metadata(),
     )
@@ -672,7 +684,10 @@ pub fn owners_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
             Field::new("owner_id", DataType::Int32, false),
-            Field::new("name", dict_utf8(), false),
+            Field::new("name", DataType::Utf8, false),
+            Field::new("short_name", DataType::Utf8, true),
+            Field::new("type", DataType::Utf8, true),
+            Field::new("params", map_string_f64(), true),
         ],
         schema_metadata(),
     )
@@ -1114,17 +1129,17 @@ mod tests {
     #[test]
     fn branches_schema_appends_facts_columns() {
         let branches = branches_schema();
-        assert_eq!(branches.fields().len(), 26);
-        assert_eq!(branches.field(16).name(), "device_type");
-        assert_eq!(branches.field(17).name(), "control_mode");
-        assert_eq!(branches.field(18).name(), "control_target_flow_mw");
-        assert_eq!(branches.field(19).name(), "x_min_pu");
-        assert_eq!(branches.field(20).name(), "x_max_pu");
-        assert_eq!(branches.field(21).name(), "injected_voltage_mag_pu");
-        assert_eq!(branches.field(22).name(), "injected_voltage_angle_deg");
-        assert_eq!(branches.field(23).name(), "facts_params");
-        assert_eq!(branches.field(24).name(), "parent_line_id");
-        assert_eq!(branches.field(25).name(), "section_index");
+        assert_eq!(branches.fields().len(), 27);
+        assert_eq!(branches.field(17).name(), "device_type");
+        assert_eq!(branches.field(18).name(), "control_mode");
+        assert_eq!(branches.field(19).name(), "control_target_flow_mw");
+        assert_eq!(branches.field(20).name(), "x_min_pu");
+        assert_eq!(branches.field(21).name(), "x_max_pu");
+        assert_eq!(branches.field(22).name(), "injected_voltage_mag_pu");
+        assert_eq!(branches.field(23).name(), "injected_voltage_angle_deg");
+        assert_eq!(branches.field(24).name(), "facts_params");
+        assert_eq!(branches.field(25).name(), "parent_line_id");
+        assert_eq!(branches.field(26).name(), "section_index");
     }
 
     #[test]

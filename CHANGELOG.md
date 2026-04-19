@@ -14,6 +14,32 @@ Copyright (c) 2026 Raptrix PowerFlow
 ## [Schema Contract 0.8.6] - 2026-04-13
 ## [Schema Contract 0.8.7] - 2026-04-17
 ## [Schema Contract 0.8.8] - 2026-04-19
+## [Schema Contract 0.8.9] - 2026-04-19
+
+### Converter release: Crate version 0.2.9 (raptrix-cim-arrow) / 0.2.9 (raptrix-cim-rs) | Arrow schema v0.8.9
+
+### Added
+
+- Breaking `generators` table redesign for hierarchical unit modeling:
+  - New identity and hierarchy fields: `generator_id`, `unit_type`, `hierarchy_level`, `parent_generator_id`, `aggregation_count`
+  - MW/MVAR-native dispatch fields: `p_sched_mw`, `p_min_mw`, `p_max_mw`, `q_min_mvar`, `q_max_mvar`
+  - Ownership/market/extension fields: `owner_id`, `market_resource_id`, `params`
+  - Unit classification fields: `is_ibr`, `ibr_subtype`, `fuel_type`
+  - Optional UOL/LOL and ramp-rate fields: `uol_mw`, `lol_mw`, `ramp_rate_up_mw_min`, `ramp_rate_down_mw_min`
+- Ownership enrichment:
+  - `buses.owner_id` (nullable)
+  - `branches.owner_id` (nullable)
+  - Extended `owners` table columns: `short_name`, `type`, `params`
+
+### Changed
+
+- Branding/schema constants bumped to v0.8.9.
+- `SUPPORTED_RPF_VERSIONS` now only accepts v0.8.9 (`"v0.8.9"`, `"0.8.9"`).
+- CIM export now emits rich generator rows with per-unit metadata mapped from source machine payload where available.
+
+### Breaking change note
+
+- v0.8.9 is a hard schema break with no backward compatibility to v0.8.8 and earlier.
 
 ### Converter release: Crate version 0.2.8 (raptrix-cim-arrow) / 0.2.8 (raptrix-cim-rs) | Arrow schema v0.8.8
 

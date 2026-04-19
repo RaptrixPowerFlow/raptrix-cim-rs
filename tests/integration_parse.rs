@@ -109,13 +109,13 @@ fn parse_smallgrid_eq_aclinesegment() -> Result<()> {
         Arc::new(Float64Array::from(rate_b)) as ArrayRef,
         Arc::new(Float64Array::from(rate_c)) as ArrayRef,
         Arc::new(BooleanArray::from(status)) as ArrayRef,
+        new_null_array(
+            &branch_schema().field(13).data_type().clone(),
+            branch_rows.len(),
+        ),
         Arc::new(name.finish()) as ArrayRef,
         Arc::new(Float64Array::from(from_nominal_kv)) as ArrayRef,
         Arc::new(Float64Array::from(to_nominal_kv)) as ArrayRef,
-        new_null_array(
-            &branch_schema().field(16).data_type().clone(),
-            branch_rows.len(),
-        ),
         new_null_array(
             &branch_schema().field(17).data_type().clone(),
             branch_rows.len(),
@@ -150,6 +150,10 @@ fn parse_smallgrid_eq_aclinesegment() -> Result<()> {
         ),
         new_null_array(
             &branch_schema().field(25).data_type().clone(),
+            branch_rows.len(),
+        ),
+        new_null_array(
+            &branch_schema().field(26).data_type().clone(),
             branch_rows.len(),
         ),
     ];
