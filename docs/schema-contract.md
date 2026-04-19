@@ -2,6 +2,20 @@
 
 This repository is the authoritative source of truth for the Raptrix PowerFlow Interchange (`.rpf`) wire contract used by CIM-first conversion pipelines.
 
+v0.8.8 is the current contract and is a breaking release in this repository.
+
+## 2026 First-Principles Mandate
+
+- The v0.8.8 contract is designed from power-system first principles for 2026+ networks, including inverter-based resources (IBR), DER-heavy operation, Smart Valve controls, and modern DC workflows.
+- Required modern-grid tables (`multi_section_lines`, `dc_lines_2w`, `switched_shunt_banks`, `ibr_devices`) are first-class contract elements, not side extensions.
+- Arrow-native list and map types are used deliberately so parsers and solvers can ingest table payloads without lossy flattening.
+
+## Beyond Parity
+
+- This contract is not designed as a PSS/E parity-first schema.
+- Interoperability with legacy toolchains may be achieved where practical, but parity is a side-effect of robust physical modeling, not the design goal.
+- The normative source remains IEC 61970 CIM semantics mapped into a stable Arrow contract for deterministic downstream ingestion.
+
 ## Contract Policy
 
 - Schema changes are explicit and versioned.
@@ -304,6 +318,8 @@ This section is normative for external parser authors.
 - `name`: Utf8, nullable
 - `converter_type`: Utf8, required
 
+Recommended `control_mode` tokens for `dc_lines_2w` are `power`, `current`, `voltage`, and `droop`.
+
 ### generators
 
 - `bus_id`: Int32, required
@@ -333,6 +349,8 @@ This section is normative for external parser authors.
 - `status`: Boolean, required
 - `params`: Map<String, Float64>, nullable
 - `name`: Utf8, nullable
+
+Recommended `device_type` tokens for `ibr_devices` are `solar_pv`, `wind`, `bess`, and `generic_ibr`.
 
 ### loads
 

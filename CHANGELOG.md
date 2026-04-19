@@ -37,6 +37,14 @@ Copyright (c) 2026 Raptrix PowerFlow
   - `parent_line_id`
   - `section_index`
 
+### Release automation
+
+- Added GitHub Actions workflow `.github/workflows/release-binaries.yml` to build
+  platform binaries (Windows, Linux, macOS) and publish them to a GitHub Release
+  when CI completes and a release/tag is created. To publish release artifacts,
+  create an annotated tag (for example `v0.2.8`) and push it to GitHub; the workflow
+  will produce and attach platform artifacts to the Release.
+
 ### Changed
 
 - Branding/schema constants bumped to v0.8.8.
