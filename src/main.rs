@@ -322,7 +322,8 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
             scenario_tags: Vec::new(),
             case_mode: raptrix_cim_rs::rpf_writer::CaseMode::FlatStartPlanning,
             solver_provenance: None,
-            transformer_representation_mode: raptrix_cim_rs::rpf_writer::TransformerRepresentationMode::Native3W,
+            transformer_representation_mode:
+                raptrix_cim_rs::rpf_writer::TransformerRepresentationMode::Native3W,
         }
     } else {
         WriteOptions {
@@ -344,7 +345,8 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
             scenario_tags: Vec::new(),
             case_mode: raptrix_cim_rs::rpf_writer::CaseMode::FlatStartPlanning,
             solver_provenance: None,
-            transformer_representation_mode: raptrix_cim_rs::rpf_writer::TransformerRepresentationMode::Native3W,
+            transformer_representation_mode:
+                raptrix_cim_rs::rpf_writer::TransformerRepresentationMode::Native3W,
         }
     };
 

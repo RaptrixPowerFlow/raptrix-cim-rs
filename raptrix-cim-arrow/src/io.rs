@@ -32,9 +32,9 @@ use crate::schema::{
     TABLE_BUSES_SOLVED, TABLE_DC_LINES_2W, TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS,
     TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED, TABLE_GENERATORS, TABLE_GENERATORS_SOLVED,
     TABLE_IBR_DEVICES, TABLE_LOADS, TABLE_MULTI_SECTION_LINES, TABLE_SWITCHED_SHUNT_BANKS,
-    TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, all_table_schemas,
-    diagram_layout_table_schemas, facts_table_schemas, node_breaker_table_schemas,
-    schema_metadata, solved_state_table_schemas, table_schema,
+    TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, all_table_schemas, diagram_layout_table_schemas,
+    facts_table_schemas, node_breaker_table_schemas, schema_metadata, solved_state_table_schemas,
+    table_schema,
 };
 
 /// Summary stats for a single logical table found in an `.rpf` file.
@@ -1007,7 +1007,10 @@ mod tests {
 
         let mut root_meta = schema_metadata();
         root_meta.insert(METADATA_KEY_VERSION.to_string(), SCHEMA_VERSION.to_string());
-        root_meta.insert(METADATA_KEY_RPF_VERSION.to_string(), SCHEMA_VERSION.to_string());
+        root_meta.insert(
+            METADATA_KEY_RPF_VERSION.to_string(),
+            SCHEMA_VERSION.to_string(),
+        );
         for (name, _) in all_table_schemas() {
             root_meta.insert(row_count_metadata_key(name), "0".to_string());
         }

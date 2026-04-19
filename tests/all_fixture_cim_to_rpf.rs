@@ -6,7 +6,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use anyhow::{Context, Result};
 use raptrix_cim_rs::arrow_schema::{SCHEMA_VERSION, all_table_schemas};
 use raptrix_cim_rs::rpf_writer::{
-    DetachedIslandPolicy, WriteOptions, rpf_file_metadata, summarize_rpf, write_complete_rpf_with_options,
+    DetachedIslandPolicy, WriteOptions, rpf_file_metadata, summarize_rpf,
+    write_complete_rpf_with_options,
 };
 
 static OUTPUT_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -45,7 +46,9 @@ fn discover_fixture_cases() -> Result<Vec<FixtureCase>> {
     let mut cases = Vec::new();
     let base = fixtures_dir();
 
-    for entry in fs::read_dir(&base).with_context(|| format!("failed to read {}", base.display()))? {
+    for entry in
+        fs::read_dir(&base).with_context(|| format!("failed to read {}", base.display()))?
+    {
         let entry = entry?;
         let path = entry.path();
         if path.extension().and_then(|ext| ext.to_str()) != Some("xml") {
@@ -55,7 +58,10 @@ fn discover_fixture_cases() -> Result<Vec<FixtureCase>> {
             continue;
         }
 
-        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
         if file_name.ends_with("_DY.xml") {
             continue;
         }
@@ -66,7 +72,11 @@ fn discover_fixture_cases() -> Result<Vec<FixtureCase>> {
                 cases.push(FixtureCase {
                     name: prefix.to_string(),
                     eq: path,
-                    dy: if dy_path.is_file() { Some(dy_path) } else { None },
+                    dy: if dy_path.is_file() {
+                        Some(dy_path)
+                    } else {
+                        None
+                    },
                 });
                 continue;
             }
@@ -91,7 +101,10 @@ fn discover_fixture_cases() -> Result<Vec<FixtureCase>> {
 #[test]
 fn all_workspace_fixture_cim_cases_emit_v088_compliant_rpf() -> Result<()> {
     let cases = discover_fixture_cases()?;
-    assert!(!cases.is_empty(), "expected at least one local fixture case");
+    assert!(
+        !cases.is_empty(),
+        "expected at least one local fixture case"
+    );
 
     let required_table_names: Vec<String> = all_table_schemas()
         .into_iter()
@@ -120,7 +133,12 @@ fn all_workspace_fixture_cim_cases_emit_v088_compliant_rpf() -> Result<()> {
 
         let summary = summarize_rpf(&output)
             .with_context(|| format!("failed to summarize RPF for fixture case '{}'", case.name))?;
-        assert!(summary.has_all_canonical_tables, "missing canonical table(s) for case '{}'; found {} tables", case.name, summary.tables.len());
+        assert!(
+            summary.has_all_canonical_tables,
+            "missing canonical table(s) for case '{}'; found {} tables",
+            case.name,
+            summary.tables.len()
+        );
         assert_eq!(
             summary.canonical_table_count,
             required_table_names.len(),
@@ -128,7 +146,11 @@ fn all_workspace_fixture_cim_cases_emit_v088_compliant_rpf() -> Result<()> {
             case.name
         );
 
-        let present: HashSet<String> = summary.tables.iter().map(|t| t.table_name.clone()).collect();
+        let present: HashSet<String> = summary
+            .tables
+            .iter()
+            .map(|t| t.table_name.clone())
+            .collect();
         for required in &required_table_names {
             assert!(
                 present.contains(required),
