@@ -111,13 +111,13 @@ use raptrix_cim_arrow::METADATA_KEY_TRANSFORMER_REPRESENTATION_MODE;
 
 ---
 
-## Schema Contract 0.8.8 (Breaking)
+## Schema Contract 0.8.9 (Breaking)
 
-**Schema version**: v0.8.8 | **Crate version**: 0.2.8
+**Schema version**: v0.8.9 | **Crate version**: 0.2.9
 
 ### 2026 First-Principles Mandate
 
-v0.8.8 formalizes a modern-grid-first contract. The schema now treats IBR-heavy operation,
+v0.8.9 formalizes a modern-grid-first contract. The schema now treats IBR-heavy operation,
 distributed flexibility, Smart Valve-style controls, and modern DC workflows as core model
 features. This is reflected in required root tables and required metadata, not optional add-ons.
 
@@ -129,9 +129,9 @@ first-principles network physics and IEC 61970 CIM semantics.
 
 ### Breaking support policy
 
-- Reader support for contracts below v0.8.8 is deprecated and removed in this repository.
-- `SUPPORTED_RPF_VERSIONS` now accepts only `v0.8.8` / `0.8.8`.
-- Any file produced at v0.8.7 or below must be re-exported/migrated to v0.8.8 before ingestion.
+- Reader support for contracts below v0.8.9 is deprecated and removed in this repository.
+- `SUPPORTED_RPF_VERSIONS` now accepts only `v0.8.9` / `0.8.9`.
+- Any file produced at v0.8.8 or below must be re-exported/migrated to v0.8.9 before ingestion.
 
 ### Required table changes
 
@@ -177,7 +177,7 @@ New nullable metadata fields:
 
 ### Writer obligations for modern-grid metadata
 
-Writers must populate required v0.8.8 metadata flags:
+Writers must populate required v0.8.9 metadata flags:
 
 - `modern_grid_profile`
 - `has_ibr`
@@ -192,5 +192,5 @@ Writers should populate nullable context fields when known:
 
 ### Backward compatibility boundaries
 
-- Reader compatibility is intentionally strict at v0.8.8 only.
-- Backward compatibility remains for additive nullable columns and empty required-table materialization within the v0.8.8 contract shape.
+- Reader compatibility is intentionally strict at v0.8.9 only.
+- Backward compatibility remains for additive nullable columns and empty required-table materialization within the v0.8.9 contract shape.
