@@ -144,6 +144,14 @@ fn parse_smallgrid_eq_aclinesegment() -> Result<()> {
             &branch_schema().field(23).data_type().clone(),
             branch_rows.len(),
         ),
+        new_null_array(
+            &branch_schema().field(24).data_type().clone(),
+            branch_rows.len(),
+        ),
+        new_null_array(
+            &branch_schema().field(25).data_type().clone(),
+            branch_rows.len(),
+        ),
     ];
 
     let schema = Arc::new(branch_schema());

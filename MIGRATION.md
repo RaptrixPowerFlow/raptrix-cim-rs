@@ -108,3 +108,51 @@ replaced with:
 ```rust
 use raptrix_cim_arrow::METADATA_KEY_TRANSFORMER_REPRESENTATION_MODE;
 ```
+
+---
+
+## Schema Contract 0.8.8 (Breaking)
+
+**Schema version**: v0.8.8 | **Crate version**: 0.2.8
+
+### Breaking support policy
+
+- Reader support for contracts below v0.8.8 is deprecated and removed in this repository.
+- `SUPPORTED_RPF_VERSIONS` now accepts only `v0.8.8` / `0.8.8`.
+- Any file produced at v0.8.7 or below must be re-exported/migrated to v0.8.8 before ingestion.
+
+### Required table changes
+
+New required tables in canonical root order:
+
+- `multi_section_lines`
+- `dc_lines_2w`
+- `ibr_devices`
+- `switched_shunt_banks`
+
+### Required metadata changes
+
+`metadata` row now requires:
+
+- `modern_grid_profile` (bool)
+- `has_ibr` (bool)
+- `has_smart_valve` (bool)
+- `has_multi_terminal_dc` (bool)
+
+New nullable metadata fields:
+
+- `ibr_penetration_pct` (float64)
+- `study_purpose` (utf8)
+- `scenario_tags` (list<utf8>)
+
+### Branch table changes
+
+`branches` now includes additive linkage fields:
+
+- `parent_line_id` (int32, nullable)
+- `section_index` (int32, nullable)
+
+### Switched shunt semantics
+
+- `switched_shunts.b_steps` is now capacitive-only (positive values).
+- Inductive steps must be represented in `switched_shunt_banks`.

@@ -219,7 +219,7 @@ fn generated_v080_outputs_make_detail_levels_explicit() -> Result<()> {
         },
     )?;
     let topological_tables = table_names(&topological_output)?;
-    assert_eq!(topological_tables.len(), 15);
+    assert_eq!(topological_tables.len(), 19);
     assert!(
         !topological_tables
             .iter()
@@ -273,7 +273,7 @@ fn generated_v080_outputs_make_detail_levels_explicit() -> Result<()> {
         },
     )?;
     let connectivity_tables = table_names(&connectivity_output)?;
-    assert_eq!(connectivity_tables.len(), 15);
+    assert_eq!(connectivity_tables.len(), 19);
     assert!(
         !connectivity_tables
             .iter()
@@ -319,7 +319,7 @@ fn generated_v080_outputs_make_detail_levels_explicit() -> Result<()> {
         },
     )?;
     let node_breaker_tables = table_names(&node_breaker_output)?;
-    assert_eq!(node_breaker_tables.len(), 18);
+    assert_eq!(node_breaker_tables.len(), 22);
     assert!(
         !node_breaker_tables
             .iter()

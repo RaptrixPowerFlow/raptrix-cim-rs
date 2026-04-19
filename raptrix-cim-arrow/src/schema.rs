@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.8.7 profile.
+//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.8.8 profile.
 //!
 //! **CGMES 3.0+ Only**: This module targets CGMES v3.0 and later (v17+ CIM) merged profiles.
 //! Support for legacy CGMES 2.4.x was dropped in this release for simplicity and performance.
@@ -17,32 +17,21 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, Schema};
 
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.8.7 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.8.8 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.";
 
 /// Canonical RPF format version tag embedded as file-level metadata.
-pub const RPF_VERSION: &str = "0.8.7";
+pub const RPF_VERSION: &str = "0.8.8";
 
 /// Supported RPF versions accepted by generic Arrow IPC readers.
-/// v0.8.7 codifies the transformer representation contract: every exported file must carry
-///   `rpf.transformer_representation_mode = expanded | native_3w`.  Dual materialization
-///   (active rows in both `transformers_3w` and synthetic star-leg `transformers_2w`) is
-///   a hard error.  CIM default is `native_3w`; `expanded` uses delta-to-wye star expansion.
-/// v0.8.6 adds additive FACTS fields on branches and optional facts_devices / facts_solved
-///   tables, plus FACTS feature metadata and smartvalve token normalization helpers.
-/// v0.8.5 adds switched-shunt stable identity, switched_shunts_solved table, extended
-///   generators_solved (p_mw, q_mvar, status), angle-reference metadata
-///   (slack_bus_id_solved, angle_reference_deg), and solved_shunt_state_presence.
-/// v0.8.4 adds strict planning-vs-solved semantics: case_mode enum, solved_state_presence
-///   provenance tags, solver metadata (version/iterations/accuracy/mode), and optional
-///   buses_solved / generators_solved tables for post-solve round-trip.
-/// v0.8.3 adds switched_shunts.b_init_pu for exact initial-susceptance round-trip.
-/// v0.8.2 requires buses.bus_uuid and adds mandatory case identity + validation metadata fields.
-/// v0.8.1 normalizes all power/admittance fields to per-unit on base_mva.
-/// v0.8.0 introduced diagram layout support and dropped CGMES 2.4.x compatibility.
-pub const SUPPORTED_RPF_VERSIONS: &[&str] = &[
-    "v0.8.7", "0.8.7", "v0.8.6", "0.8.6", "v0.8.5", "0.8.5", "v0.8.4", "0.8.4", "v0.8.3",
-    "0.8.3", "v0.8.2", "0.8.2", "v0.8.1", "0.8.1", "v0.8.0", "0.8.0", "0.7.1", "0.7.0",
-];
+///
+/// v0.8.8 is a breaking contract release and is now the only accepted reader target.
+/// Older files must be migrated before ingestion.
+/// v0.8.8 adds first-class modern-grid tables (`multi_section_lines`, `dc_lines_2w`,
+/// `switched_shunt_banks`, `ibr_devices`), metadata fields
+/// (`modern_grid_profile`, `ibr_penetration_pct`, `has_ibr`, `has_smart_valve`,
+/// `has_multi_terminal_dc`, `study_purpose`, `scenario_tags`), and additive branch linkage
+/// fields (`parent_line_id`, `section_index`).
+pub const SUPPORTED_RPF_VERSIONS: &[&str] = &["v0.8.8", "0.8.8"];
 
 /// Backward-compatible alias retained for older call sites.
 pub const SCHEMA_VERSION: &str = RPF_VERSION;
@@ -131,14 +120,22 @@ pub const TABLE_METADATA: &str = "metadata";
 pub const TABLE_BUSES: &str = "buses";
 /// Canonical branches table name.
 pub const TABLE_BRANCHES: &str = "branches";
+/// Canonical multi-section logical line table name (v0.8.8+).
+pub const TABLE_MULTI_SECTION_LINES: &str = "multi_section_lines";
+/// Canonical two-terminal DC line table name (v0.8.8+).
+pub const TABLE_DC_LINES_2W: &str = "dc_lines_2w";
 /// Canonical generators table name.
 pub const TABLE_GENERATORS: &str = "generators";
+/// Canonical inverter-based resource table name (v0.8.8+).
+pub const TABLE_IBR_DEVICES: &str = "ibr_devices";
 /// Canonical loads table name.
 pub const TABLE_LOADS: &str = "loads";
 /// Canonical fixed shunts table name.
 pub const TABLE_FIXED_SHUNTS: &str = "fixed_shunts";
 /// Canonical switched shunts table name.
 pub const TABLE_SWITCHED_SHUNTS: &str = "switched_shunts";
+/// Canonical switched shunt per-bank detail table name (v0.8.8+).
+pub const TABLE_SWITCHED_SHUNT_BANKS: &str = "switched_shunt_banks";
 /// Canonical two-winding transformers table name.
 pub const TABLE_TRANSFORMERS_2W: &str = "transformers_2w";
 /// Canonical three-winding transformers table name.
@@ -338,6 +335,18 @@ pub fn metadata_schema() -> Schema {
             // Indicates whether switched-shunt solved state (step + susceptance) is
             // present in switched_shunts_solved: actual_solved | not_available.
             Field::new("solved_shunt_state_presence", dict_utf8(), true),
+            // v0.8.8: modern-grid profile metadata.
+            Field::new("modern_grid_profile", DataType::Boolean, false),
+            Field::new("ibr_penetration_pct", DataType::Float64, true),
+            Field::new("has_ibr", DataType::Boolean, false),
+            Field::new("has_smart_valve", DataType::Boolean, false),
+            Field::new("has_multi_terminal_dc", DataType::Boolean, false),
+            Field::new("study_purpose", DataType::Utf8, true),
+            Field::new(
+                "scenario_tags",
+                DataType::List(Arc::new(Field::new("item", DataType::Utf8, false))),
+                true,
+            ),
         ],
         schema_metadata(),
     )
@@ -401,6 +410,58 @@ pub fn branches_schema() -> Schema {
             Field::new("injected_voltage_mag_pu", DataType::Float64, true),
             Field::new("injected_voltage_angle_deg", DataType::Float64, true),
             Field::new("facts_params", map_string_f64(), true),
+            // v0.8.8: multi-section logical-line linkage columns.
+            Field::new("parent_line_id", DataType::Int32, true),
+            Field::new("section_index", DataType::Int32, true),
+        ],
+        schema_metadata(),
+    )
+}
+
+/// `multi_section_lines` table schema (v0.8.8+).
+pub fn multi_section_lines_schema() -> Schema {
+    Schema::new_with_metadata(
+        vec![
+            Field::new("line_id", DataType::Int32, false),
+            Field::new("from_bus_id", DataType::Int32, false),
+            Field::new("to_bus_id", DataType::Int32, false),
+            Field::new("ckt", DataType::Utf8, false),
+            Field::new(
+                "section_branch_ids",
+                DataType::List(Arc::new(Field::new("item", DataType::Int32, false))),
+                false,
+            ),
+            Field::new("total_r_pu", DataType::Float64, false),
+            Field::new("total_x_pu", DataType::Float64, false),
+            Field::new("total_b_pu", DataType::Float64, false),
+            Field::new("rate_a_mva", DataType::Float64, false),
+            Field::new("rate_b_mva", DataType::Float64, true),
+            Field::new("status", DataType::Boolean, false),
+            Field::new("name", DataType::Utf8, true),
+        ],
+        schema_metadata(),
+    )
+}
+
+/// `dc_lines_2w` table schema (v0.8.8+).
+pub fn dc_lines_2w_schema() -> Schema {
+    Schema::new_with_metadata(
+        vec![
+            Field::new("dc_line_id", DataType::Int32, false),
+            Field::new("from_bus_id", DataType::Int32, false),
+            Field::new("to_bus_id", DataType::Int32, false),
+            Field::new("ckt", DataType::Utf8, false),
+            Field::new("r_ohm", DataType::Float64, false),
+            Field::new("l_henry", DataType::Float64, true),
+            Field::new("control_mode", DataType::Utf8, false),
+            Field::new("p_setpoint_mw", DataType::Float64, true),
+            Field::new("i_setpoint_ka", DataType::Float64, true),
+            Field::new("v_setpoint_kv", DataType::Float64, true),
+            Field::new("q_from_mvar", DataType::Float64, true),
+            Field::new("q_to_mvar", DataType::Float64, true),
+            Field::new("status", DataType::Boolean, false),
+            Field::new("name", DataType::Utf8, true),
+            Field::new("converter_type", DataType::Utf8, false),
         ],
         schema_metadata(),
     )
@@ -480,6 +541,40 @@ pub fn switched_shunts_schema() -> Schema {
             // synthesized as "{bus_id}_shunt_{n}" (1-indexed).  Nullable for
             // backward compatibility; writers must populate when available.
             Field::new("shunt_id", dict_utf8(), true),
+        ],
+        schema_metadata(),
+    )
+}
+
+/// `switched_shunt_banks` table schema (v0.8.8+).
+pub fn switched_shunt_banks_schema() -> Schema {
+    Schema::new_with_metadata(
+        vec![
+            Field::new("shunt_id", DataType::Int32, false),
+            Field::new("bank_id", DataType::Int32, false),
+            Field::new("b_mvar", DataType::Float64, false),
+            Field::new("status", DataType::Boolean, false),
+            Field::new("step", DataType::Int32, false),
+        ],
+        schema_metadata(),
+    )
+}
+
+/// `ibr_devices` table schema (v0.8.8+).
+pub fn ibr_devices_schema() -> Schema {
+    Schema::new_with_metadata(
+        vec![
+            Field::new("device_id", DataType::Int32, false),
+            Field::new("bus_id", DataType::Int32, false),
+            Field::new("device_type", DataType::Utf8, false),
+            Field::new("rated_mva", DataType::Float64, false),
+            Field::new("p_max_mw", DataType::Float64, false),
+            Field::new("q_min_mvar", DataType::Float64, false),
+            Field::new("q_max_mvar", DataType::Float64, false),
+            Field::new("control_mode", DataType::Utf8, false),
+            Field::new("status", DataType::Boolean, false),
+            Field::new("params", map_string_f64(), true),
+            Field::new("name", DataType::Utf8, true),
         ],
         schema_metadata(),
     )
@@ -894,10 +989,14 @@ pub fn all_table_schemas() -> Vec<(&'static str, Schema)> {
         (TABLE_METADATA, metadata_schema()),
         (TABLE_BUSES, buses_schema()),
         (TABLE_BRANCHES, branches_schema()),
+        (TABLE_MULTI_SECTION_LINES, multi_section_lines_schema()),
+        (TABLE_DC_LINES_2W, dc_lines_2w_schema()),
         (TABLE_GENERATORS, generators_schema()),
+        (TABLE_IBR_DEVICES, ibr_devices_schema()),
         (TABLE_LOADS, loads_schema()),
         (TABLE_FIXED_SHUNTS, fixed_shunts_schema()),
         (TABLE_SWITCHED_SHUNTS, switched_shunts_schema()),
+        (TABLE_SWITCHED_SHUNT_BANKS, switched_shunt_banks_schema()),
         (TABLE_TRANSFORMERS_2W, transformers_2w_schema()),
         (TABLE_TRANSFORMERS_3W, transformers_3w_schema()),
         (TABLE_AREAS, areas_schema()),
@@ -915,10 +1014,14 @@ pub fn table_schema(table_name: &str) -> Option<Schema> {
         TABLE_METADATA => Some(metadata_schema()),
         TABLE_BUSES => Some(buses_schema()),
         TABLE_BRANCHES => Some(branches_schema()),
+        TABLE_MULTI_SECTION_LINES => Some(multi_section_lines_schema()),
+        TABLE_DC_LINES_2W => Some(dc_lines_2w_schema()),
         TABLE_GENERATORS => Some(generators_schema()),
+        TABLE_IBR_DEVICES => Some(ibr_devices_schema()),
         TABLE_LOADS => Some(loads_schema()),
         TABLE_FIXED_SHUNTS => Some(fixed_shunts_schema()),
         TABLE_SWITCHED_SHUNTS => Some(switched_shunts_schema()),
+        TABLE_SWITCHED_SHUNT_BANKS => Some(switched_shunt_banks_schema()),
         TABLE_TRANSFORMERS_2W => Some(transformers_2w_schema()),
         TABLE_TRANSFORMERS_3W => Some(transformers_3w_schema()),
         TABLE_AREAS => Some(areas_schema()),
@@ -1011,7 +1114,7 @@ mod tests {
     #[test]
     fn branches_schema_appends_facts_columns() {
         let branches = branches_schema();
-        assert_eq!(branches.fields().len(), 24);
+        assert_eq!(branches.fields().len(), 26);
         assert_eq!(branches.field(16).name(), "device_type");
         assert_eq!(branches.field(17).name(), "control_mode");
         assert_eq!(branches.field(18).name(), "control_target_flow_mw");
@@ -1020,6 +1123,8 @@ mod tests {
         assert_eq!(branches.field(21).name(), "injected_voltage_mag_pu");
         assert_eq!(branches.field(22).name(), "injected_voltage_angle_deg");
         assert_eq!(branches.field(23).name(), "facts_params");
+        assert_eq!(branches.field(24).name(), "parent_line_id");
+        assert_eq!(branches.field(25).name(), "section_index");
     }
 
     #[test]

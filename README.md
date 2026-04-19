@@ -95,9 +95,9 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 | Connectivity detail | `--connectivity-detail` | Granular ConnectivityNode bus mapping; emits optional `connectivity_groups` table |
 | Node-breaker | `--connectivity-detail --node-breaker` | Adds switch-topology detail tables for operational and viewer workflows |
 
-### Output tables (schema contract v0.8.6)
+### Output tables (schema contract v0.8.8)
 
-**15 canonical tables (always emitted):** `metadata`, `buses`, `branches`, `generators`, `loads`, `fixed_shunts`, `switched_shunts`, `transformers_2w`, `transformers_3w`, `areas`, `zones`, `owners`, `contingencies`, `interfaces`, `dynamics_models`
+**19 canonical tables (always emitted):** `metadata`, `buses`, `branches`, `multi_section_lines`, `dc_lines_2w`, `generators`, `ibr_devices`, `loads`, `fixed_shunts`, `switched_shunts`, `switched_shunt_banks`, `transformers_2w`, `transformers_3w`, `areas`, `zones`, `owners`, `contingencies`, `interfaces`, `dynamics_models`
 
 **Optional tables (emitted on demand):**
 - `connectivity_groups` — with `--connectivity-detail`
@@ -130,7 +130,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 
 ## Data Contract (Locked)
 
-- Current schema contract: v0.8.6 (CGMES 3.0+ only)
+- Current schema contract: v0.8.8 (CGMES 3.0+ only)
 - Canonical source: raptrix-cim-arrow/src/schema.rs
 - Contract policy and semantics: docs/schema-contract.md
 - Plain-English field guide: [docs/rpf-field-guide.md](docs/rpf-field-guide.md)
@@ -143,15 +143,15 @@ RPF standardization here is intentional: it enables direct CIM-to-powerflow inte
 
 ### Versioning Policy
 
-Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is now locked at schema `v0.8.6` for interoperability and deterministic CGMES 3.0+ ingest behavior, while the converter crate release tracks implementation maturity and is currently `0.2.7`.
+Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is now locked at schema `v0.8.8` for interoperability and deterministic CGMES 3.0+ ingest behavior, while the converter crate release tracks implementation maturity and is currently `0.2.8`.
 
-This split preserves compatibility guarantees for downstream tools: existing `v0.5.2` Parquet artifacts remain valid to read on the core path, and new `v0.8.0` optional features (diagram layout via DL profile) are additive only. **Breaking change in v0.8.0**: CGMES 2.4.x support was removed. All ingest is now CGMES 3.0+ only.
+This split preserves compatibility guarantees for downstream tools at a given contract version. **Breaking change in v0.8.8**: readers in this repository now accept only v0.8.8 files; contracts below v0.8.8 must be migrated before ingestion.
 
-**v0.8.6**: Adds additive FACTS support (`facts_devices`, optional `facts_solved`, branch FACTS control fields, and FACTS feature metadata) while preserving compatibility with v0.8.5 readers and writers.
+**v0.8.8**: Adds first-class modern-grid tables (`multi_section_lines`, `dc_lines_2w`, `switched_shunt_banks`, `ibr_devices`), modern-grid metadata fields, and branch section-linkage fields (`parent_line_id`, `section_index`).
 
 To keep crate and documentation versions consistent, use the version sync helper:
 
-- `./scripts/sync-versions.ps1 -Version 0.2.6`
+- `./scripts/sync-versions.ps1 -Version 0.2.8`
 - CI also enforces this via `.github/workflows/version-consistency.yml`.
 
 For third-party implementers, [docs/schema-contract.md](docs/schema-contract.md) is the authoritative reader/writer contract. It now documents the `.rpf` Arrow IPC container layout, canonical root column ordering, row-count metadata trimming rules, optional table detection, and full column/type references needed to build a compatible parser.
@@ -218,7 +218,7 @@ All conversions are zero-copy headless — no readback or post-write validation 
 
 ## Project Layout
 
-- raptrix-cim-arrow/src/schema.rs: v0.8.6 table schemas, metadata constants, and schema registry helpers
+- raptrix-cim-arrow/src/schema.rs: v0.8.8 table schemas, metadata constants, and schema registry helpers
 - raptrix-cim-arrow/src/io.rs: generic root `.rpf` assembly, validation, readback, and summary helpers
 - src/models: CIM data structures and traits
 - src/parser.rs: parse helpers and EQ-to-branch mapping
@@ -226,6 +226,14 @@ All conversions are zero-copy headless — no readback or post-write validation 
 
 ### Locked contract: v0.8.x notable fields
 
+
+
+- v0.8.8 additions:
+	- Required modern-grid tables: `multi_section_lines`, `dc_lines_2w`, `switched_shunt_banks`, `ibr_devices`
+	- Required metadata fields: `modern_grid_profile`, `has_ibr`, `has_smart_valve`, `has_multi_terminal_dc`
+	- Nullable metadata fields: `ibr_penetration_pct`, `study_purpose`, `scenario_tags`
+	- Branch linkage columns: `parent_line_id`, `section_index`
+	- `switched_shunts.b_steps` now capacitive-only; inductive steps are represented in `switched_shunt_banks`
 
 - v0.8.6 additions:
 	- Optional `facts_devices` table for explicit FACTS device identity and control metadata
@@ -389,7 +397,7 @@ Enable `rdf:about` fallback diagnostics only when debugging parser edge cases:
 The repository includes a standalone pytest validator at `tests/inspect_rpf.py` that:
 
 - runs the CLI to generate a `.rpf` file from SmallGrid EQ input
-- validates one canonical root IPC batch with all 15 required struct columns
+- validates one canonical root IPC batch with all 19 required struct columns
 - verifies `raptrix.branding` and `raptrix.version` metadata
 - checks bus and branch row counts against source EQ XML topology
 - spot-checks first branch `r`/`x` values against EQ XML
