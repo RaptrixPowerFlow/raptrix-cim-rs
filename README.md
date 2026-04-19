@@ -143,15 +143,15 @@ RPF standardization here is intentional: it enables direct CIM-to-powerflow inte
 
 ### Versioning Policy
 
-Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is now locked at schema `v0.8.8` for interoperability and deterministic CGMES 3.0+ ingest behavior, while the converter crate release tracks implementation maturity and is currently `0.2.8`.
+Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is now locked at schema `v0.8.9` for interoperability and deterministic CGMES 3.0+ ingest behavior, while the converter crate release tracks implementation maturity and is currently `0.2.9`.
 
-This split preserves compatibility guarantees for downstream tools at a given contract version. **Breaking change in v0.8.8**: readers in this repository now accept only v0.8.8 files; contracts below v0.8.8 must be migrated before ingestion.
+This split preserves compatibility guarantees for downstream tools at a given contract version. **Breaking change in v0.8.9**: readers in this repository now accept only v0.8.9 files; contracts below v0.8.9 must be migrated before ingestion.
 
-**v0.8.8**: Adds first-class modern-grid tables (`multi_section_lines`, `dc_lines_2w`, `switched_shunt_banks`, `ibr_devices`), modern-grid metadata fields, and branch section-linkage fields (`parent_line_id`, `section_index`).
+**v0.8.9**: Adds first-class modern-grid tables (`multi_section_lines`, `dc_lines_2w`, `switched_shunt_banks`, `ibr_devices`), modern-grid metadata fields, and branch section-linkage fields (`parent_line_id`, `section_index`).
 
 To keep crate and documentation versions consistent, use the version sync helper:
 
-- `./scripts/sync-versions.ps1 -Version 0.2.8`
+- `./scripts/sync-versions.ps1 -Version 0.2.9`
 - CI also enforces this via `.github/workflows/version-consistency.yml`.
 
 For third-party implementers, [docs/schema-contract.md](docs/schema-contract.md) is the authoritative reader/writer contract. It now documents the `.rpf` Arrow IPC container layout, canonical root column ordering, row-count metadata trimming rules, optional table detection, and full column/type references needed to build a compatible parser.
