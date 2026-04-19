@@ -1,0 +1,75 @@
+name: Build and publish release binaries
+
+on:
+  workflow_run:
+    workflows: ["CI", "Build", "cargo-check"]
+    types: [completed]
+
+jobs:
+  build:
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+
+      - name: Build release
+        run: cargo build --release --bins
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p artifacts
+          tar -czf artifacts/raptrix-cim-rs-linux.tar.gz -C target/release raptrix-cim-rs
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p artifacts
+          tar -czf artifacts/raptrix-cim-rs-macos.tar.gz -C target/release raptrix-cim-rs
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          Compress-Archive -Path target\release\raptrix-cim-rs.exe -DestinationPath artifacts\raptrix-cim-rs-windows.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: raptrix-${{ matrix.os }}
+          path: artifacts/*
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: artifacts
+
+      - name: Get package version
+        id: get_version
+        run: |
+          VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create release and upload assets
+        uses: ncipollo/release-action@v1
+        with:
+          tag: v${{ steps.get_version.outputs.version }}
+          name: v${{ steps.get_version.outputs.version }}
+          files: artifacts/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
