@@ -10,11 +10,17 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
 Copyright (c) 2026 Raptrix PowerFlow
 
 ## [Schema Contract 0.8.4] - 2026-04-07
+
 ## [Schema Contract 0.8.5] - 2026-04-09
+
 ## [Schema Contract 0.8.6] - 2026-04-13
+
 ## [Schema Contract 0.8.7] - 2026-04-17
+
 ## [Schema Contract 0.8.8] - 2026-04-19
+
 ## [Schema Contract 0.8.9] - 2026-04-19
+
 ## [Schema Contract 0.9.0] - 2026-04-23
 
 ### Converter release: Crate version 0.3.0 (raptrix-cim-arrow) / 0.3.0 (raptrix-cim-rs) | Arrow schema v0.9.0
