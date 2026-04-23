@@ -21,3 +21,4 @@ jobs:
           globs: |
             **/*.md
             !dist/**/*.md
+            !tests/data/external/results/**/*.md
