@@ -52,10 +52,10 @@ use crate::arrow_schema::{
     TABLE_SWITCHED_SHUNTS, TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, TABLE_ZONES, areas_schema,
     branches_schema, buses_schema, connectivity_groups_schema, connectivity_nodes_schema,
     contingencies_schema, dc_lines_2w_schema, diagram_objects_schema, diagram_points_schema,
-    dynamics_models_schema, fixed_shunts_schema, generators_schema,
-    interfaces_schema, loads_schema, metadata_schema, multi_section_lines_schema,
-    node_breaker_detail_schema, owners_schema, switch_detail_schema, switched_shunt_banks_schema,
-    switched_shunts_schema, transformers_2w_schema, transformers_3w_schema, zones_schema,
+    dynamics_models_schema, fixed_shunts_schema, generators_schema, interfaces_schema,
+    loads_schema, metadata_schema, multi_section_lines_schema, node_breaker_detail_schema,
+    owners_schema, switch_detail_schema, switched_shunt_banks_schema, switched_shunts_schema,
+    transformers_2w_schema, transformers_3w_schema, zones_schema,
 };
 use crate::parser;
 

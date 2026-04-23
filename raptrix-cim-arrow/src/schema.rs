@@ -354,10 +354,10 @@ pub fn metadata_schema() -> Schema {
             // v0.9.0: Sentinel-readiness fields
             // case_mode now also accepts "hour_ahead_advisory" in addition to existing values
             Field::new("hour_ahead_uncertainty_band", DataType::Float64, true), // e.g. 2.0 = ±2% load forecast error
-            Field::new("commitment_source", DataType::Utf8, true),              // "day_ahead_market", "operator_plan"
+            Field::new("commitment_source", DataType::Utf8, true), // "day_ahead_market", "operator_plan"
             Field::new("solver_q_limit_infeasible_count", DataType::Int32, true),
             Field::new("pv_to_pq_switch_count", DataType::Int32, true),
-            Field::new("real_time_discovery", DataType::Boolean, true),         // true if from live SE analysis
+            Field::new("real_time_discovery", DataType::Boolean, true), // true if from live SE analysis
         ],
         schema_metadata(),
     )
@@ -594,9 +594,9 @@ pub fn scenario_context_schema() -> Schema {
             Field::new("scenario_context_id", DataType::Int32, false),
             // case_id links to metadata.case_fingerprint
             Field::new("case_id", DataType::Utf8, false),
-            Field::new("source_type", DataType::Utf8, false),    // "real_time", "hour_ahead_advisory", "planning_study"
-            Field::new("priority", DataType::Utf8, false),       // "critical", "high", "medium", "low"
-            Field::new("violation_type", DataType::Utf8, true),  // "voltage_collapse", "q_limit_infeasible", "unrecoverable_n2", "limit_violation"
+            Field::new("source_type", DataType::Utf8, false), // "real_time", "hour_ahead_advisory", "planning_study"
+            Field::new("priority", DataType::Utf8, false),    // "critical", "high", "medium", "low"
+            Field::new("violation_type", DataType::Utf8, true), // "voltage_collapse", "q_limit_infeasible", "unrecoverable_n2", "limit_violation"
             Field::new("nerc_recovery_status", DataType::Utf8, true), // "recoverable_15min_lte", "not_recoverable", "unknown"
             Field::new("recovery_time_min", DataType::Float64, true),
             Field::new("cleared_by_reserves", DataType::Boolean, true),
@@ -1105,9 +1105,9 @@ pub fn branch_schema() -> Schema {
 #[cfg(test)]
 mod tests {
     use super::{
-        all_table_schemas, branches_schema, contingencies_schema, diagram_objects_schema,
-        diagram_points_schema, facts_devices_schema, facts_solved_schema,
-        normalize_facts_device_type, table_schema, SUPPORTED_RPF_VERSIONS,
+        SUPPORTED_RPF_VERSIONS, all_table_schemas, branches_schema, contingencies_schema,
+        diagram_objects_schema, diagram_points_schema, facts_devices_schema, facts_solved_schema,
+        normalize_facts_device_type, table_schema,
     };
     use arrow::datatypes::DataType;
 
@@ -1130,7 +1130,11 @@ mod tests {
             !all.iter().any(|(n, _)| *n == "scenario_context"),
             "scenario_context must NOT appear in all_table_schemas()"
         );
-        assert_eq!(all.len(), 18, "all_table_schemas() must return 18 canonical tables");
+        assert_eq!(
+            all.len(),
+            18,
+            "all_table_schemas() must return 18 canonical tables"
+        );
 
         // version gate
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.9.0"));
