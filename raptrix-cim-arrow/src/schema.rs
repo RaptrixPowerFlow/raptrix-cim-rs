@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.8.9 profile.
+//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.9.0 profile.
 //!
 //! **CGMES 3.0+ Only**: This module targets CGMES v3.0 and later (v17+ CIM) merged profiles.
 //! Support for legacy CGMES 2.4.x was dropped in this release for simplicity and performance.
@@ -10,6 +10,12 @@
 //! This module exposes one exact Arrow schema per required table in the locked
 //! `.rpf` contract, plus deterministic schema registry helpers used by both
 //! writers and readers.
+//!
+//! ## v0.9.0 — 18 canonical tables
+//! The `ibr_devices` table was removed. IBRs are now modeled exclusively in the unified
+//! `generators` table using `is_ibr = true` + `ibr_subtype`. The `contingencies` table gains
+//! 6 nullable operational-outcome columns for Sentinel. The `metadata` table gains 5 nullable
+//! Sentinel-readiness fields. A new optional `scenario_context` table is introduced.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -17,21 +23,19 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, Schema};
 
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.8.9 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.9.0 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.";
 
 /// Canonical RPF format version tag embedded as file-level metadata.
-pub const RPF_VERSION: &str = "0.8.9";
+pub const RPF_VERSION: &str = "0.9.0";
 
 /// Supported RPF versions accepted by generic Arrow IPC readers.
 ///
-/// v0.8.9 is a breaking contract release and is now the only accepted reader target.
+/// v0.9.0 is a breaking contract release and is now the only accepted reader target.
 /// Older files must be migrated before ingestion.
-/// v0.8.9 adds first-class modern-grid tables (`multi_section_lines`, `dc_lines_2w`,
-/// `switched_shunt_banks`, `ibr_devices`), metadata fields
-/// (`modern_grid_profile`, `ibr_penetration_pct`, `has_ibr`, `has_smart_valve`,
-/// `has_multi_terminal_dc`, `study_purpose`, `scenario_tags`), and additive branch linkage
-/// fields (`parent_line_id`, `section_index`), plus the hierarchical `generators` table.
-pub const SUPPORTED_RPF_VERSIONS: &[&str] = &["v0.8.9", "0.8.9"];
+/// v0.9.0 removes `ibr_devices` (IBRs now use `generators.is_ibr`), extends `contingencies`
+/// with 6 nullable operational-outcome columns, extends `metadata` with 5 Sentinel fields,
+/// and introduces the optional `scenario_context` table.
+pub const SUPPORTED_RPF_VERSIONS: &[&str] = &["v0.9.0", "0.9.0"];
 
 /// Backward-compatible alias retained for older call sites.
 pub const SCHEMA_VERSION: &str = RPF_VERSION;
@@ -126,8 +130,6 @@ pub const TABLE_MULTI_SECTION_LINES: &str = "multi_section_lines";
 pub const TABLE_DC_LINES_2W: &str = "dc_lines_2w";
 /// Canonical generators table name.
 pub const TABLE_GENERATORS: &str = "generators";
-/// Canonical inverter-based resource table name (v0.8.8+).
-pub const TABLE_IBR_DEVICES: &str = "ibr_devices";
 /// Canonical loads table name.
 pub const TABLE_LOADS: &str = "loads";
 /// Canonical fixed shunts table name.
@@ -154,6 +156,8 @@ pub const TABLE_INTERFACES: &str = "interfaces";
 pub const TABLE_DYNAMICS_MODELS: &str = "dynamics_models";
 /// Optional FACTS devices table name.
 pub const TABLE_FACTS_DEVICES: &str = "facts_devices";
+/// Optional Sentinel scenario context table name (v0.9.0+).
+pub const TABLE_SCENARIO_CONTEXT: &str = "scenario_context";
 /// Optional detail table emitted only when connectivity-detail mode is enabled.
 pub const TABLE_CONNECTIVITY_GROUPS: &str = "connectivity_groups";
 /// Optional detail table emitted only when node-breaker detail mode is enabled.
@@ -347,6 +351,13 @@ pub fn metadata_schema() -> Schema {
                 DataType::List(Arc::new(Field::new("item", DataType::Utf8, false))),
                 true,
             ),
+            // v0.9.0: Sentinel-readiness fields
+            // case_mode now also accepts "hour_ahead_advisory" in addition to existing values
+            Field::new("hour_ahead_uncertainty_band", DataType::Float64, true), // e.g. 2.0 = ±2% load forecast error
+            Field::new("commitment_source", DataType::Utf8, true),              // "day_ahead_market", "operator_plan"
+            Field::new("solver_q_limit_infeasible_count", DataType::Int32, true),
+            Field::new("pv_to_pq_switch_count", DataType::Int32, true),
+            Field::new("real_time_discovery", DataType::Boolean, true),         // true if from live SE analysis
         ],
         schema_metadata(),
     )
@@ -571,21 +582,31 @@ pub fn switched_shunt_banks_schema() -> Schema {
     )
 }
 
-/// `ibr_devices` table schema (v0.8.8+).
-pub fn ibr_devices_schema() -> Schema {
+/// `scenario_context` table schema (v0.9.0+, optional).
+///
+/// Stores rich structured context for every flagged/exported case.
+/// Used by Sentinel for real-time intelligent contingency analysis
+/// and rich `.rpf` export for planning feedback.
+/// This is an optional table — present in Sentinel exports, absent in standard planning files.
+pub fn scenario_context_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
-            Field::new("device_id", DataType::Int32, false),
-            Field::new("bus_id", DataType::Int32, false),
-            Field::new("device_type", DataType::Utf8, false),
-            Field::new("rated_mva", DataType::Float64, false),
-            Field::new("p_max_mw", DataType::Float64, false),
-            Field::new("q_min_mvar", DataType::Float64, false),
-            Field::new("q_max_mvar", DataType::Float64, false),
-            Field::new("control_mode", DataType::Utf8, false),
-            Field::new("status", DataType::Boolean, false),
+            Field::new("scenario_context_id", DataType::Int32, false),
+            // case_id links to metadata.case_fingerprint
+            Field::new("case_id", DataType::Utf8, false),
+            Field::new("source_type", DataType::Utf8, false),    // "real_time", "hour_ahead_advisory", "planning_study"
+            Field::new("priority", DataType::Utf8, false),       // "critical", "high", "medium", "low"
+            Field::new("violation_type", DataType::Utf8, true),  // "voltage_collapse", "q_limit_infeasible", "unrecoverable_n2", "limit_violation"
+            Field::new("nerc_recovery_status", DataType::Utf8, true), // "recoverable_15min_lte", "not_recoverable", "unknown"
+            Field::new("recovery_time_min", DataType::Float64, true),
+            Field::new("cleared_by_reserves", DataType::Boolean, true),
+            Field::new("planning_feedback_flag", DataType::Boolean, false),
+            Field::new("planning_assumption_violated", DataType::Utf8, true),
+            Field::new("recommended_action", DataType::Utf8, true),
+            Field::new("investigation_summary", DataType::Utf8, true),
+            Field::new("load_forecast_error_pct", DataType::Float64, true), // for hour-ahead cases
+            Field::new("created_timestamp_utc", DataType::Utf8, false),
             Field::new("params", map_string_f64(), true),
-            Field::new("name", DataType::Utf8, true),
         ],
         schema_metadata(),
     )
@@ -698,6 +719,13 @@ pub fn contingencies_schema() -> Schema {
         vec![
             Field::new("contingency_id", dict_utf8(), false),
             Field::new("elements", contingencies_elements_type(), false),
+            // v0.9.0: Sentinel operational-outcome columns (nullable; null in planning/stub files)
+            Field::new("risk_score", DataType::Float64, true),
+            Field::new("cleared_by_reserves", DataType::Boolean, true),
+            Field::new("voltage_collapse_flag", DataType::Boolean, true),
+            Field::new("recovery_possible", DataType::Boolean, true),
+            Field::new("recovery_time_min", DataType::Float64, true),
+            Field::new("greedy_reserve_summary", DataType::Utf8, true),
         ],
         schema_metadata(),
     )
@@ -1006,7 +1034,6 @@ pub fn all_table_schemas() -> Vec<(&'static str, Schema)> {
         (TABLE_MULTI_SECTION_LINES, multi_section_lines_schema()),
         (TABLE_DC_LINES_2W, dc_lines_2w_schema()),
         (TABLE_GENERATORS, generators_schema()),
-        (TABLE_IBR_DEVICES, ibr_devices_schema()),
         (TABLE_LOADS, loads_schema()),
         (TABLE_FIXED_SHUNTS, fixed_shunts_schema()),
         (TABLE_SWITCHED_SHUNTS, switched_shunts_schema()),
@@ -1031,7 +1058,7 @@ pub fn table_schema(table_name: &str) -> Option<Schema> {
         TABLE_MULTI_SECTION_LINES => Some(multi_section_lines_schema()),
         TABLE_DC_LINES_2W => Some(dc_lines_2w_schema()),
         TABLE_GENERATORS => Some(generators_schema()),
-        TABLE_IBR_DEVICES => Some(ibr_devices_schema()),
+        TABLE_SCENARIO_CONTEXT => Some(scenario_context_schema()),
         TABLE_LOADS => Some(loads_schema()),
         TABLE_FIXED_SHUNTS => Some(fixed_shunts_schema()),
         TABLE_SWITCHED_SHUNTS => Some(switched_shunts_schema()),
@@ -1078,10 +1105,38 @@ pub fn branch_schema() -> Schema {
 #[cfg(test)]
 mod tests {
     use super::{
-        branches_schema, contingencies_schema, diagram_objects_schema, diagram_points_schema,
-        facts_devices_schema, facts_solved_schema, normalize_facts_device_type,
+        all_table_schemas, branches_schema, contingencies_schema, diagram_objects_schema,
+        diagram_points_schema, facts_devices_schema, facts_solved_schema,
+        normalize_facts_device_type, table_schema, SUPPORTED_RPF_VERSIONS,
     };
     use arrow::datatypes::DataType;
+
+    #[test]
+    fn v090_schema_contract_spot_check() {
+        // contingencies must have exactly 8 fields (2 base + 6 Sentinel outcome cols)
+        let c = contingencies_schema();
+        assert_eq!(c.fields().len(), 8, "contingencies should have 8 fields");
+        assert_eq!(c.field(0).name(), "contingency_id");
+        assert_eq!(c.field(2).name(), "risk_score");
+        assert_eq!(c.field(7).name(), "greedy_reserve_summary");
+
+        // scenario_context resolvable via table_schema() but absent from all_table_schemas()
+        assert!(
+            table_schema("scenario_context").is_some(),
+            "scenario_context must resolve via table_schema()"
+        );
+        let all = all_table_schemas();
+        assert!(
+            !all.iter().any(|(n, _)| *n == "scenario_context"),
+            "scenario_context must NOT appear in all_table_schemas()"
+        );
+        assert_eq!(all.len(), 18, "all_table_schemas() must return 18 canonical tables");
+
+        // version gate
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.9.0"));
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.9.0"));
+        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 2);
+    }
 
     #[test]
     fn diagram_object_and_point_schemas_match_contract() {

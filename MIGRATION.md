@@ -111,6 +111,60 @@ use raptrix_cim_arrow::METADATA_KEY_TRANSFORMER_REPRESENTATION_MODE;
 
 ---
 
+## Schema Contract 0.9.0 (Breaking)
+
+**Schema version**: v0.9.0 | **Crate version**: 0.3.0
+
+v0.9.0 is a hard breaking release. v0.8.9 files are rejected by the version gate in `io.rs`
+even if their `ibr_devices` table was empty — they cannot be ingested without migration.
+`SUPPORTED_RPF_VERSIONS` now accepts only `v0.9.0` / `0.9.0`.
+
+### Removed: `ibr_devices` table
+
+The `ibr_devices` table is permanently removed from the canonical table list. Writers must not
+emit an `ibr_devices` root column in v0.9.0+ files.
+
+**Migration**: Any code previously writing to `ibr_devices` must instead write IBRs into the
+`generators` table with `is_ibr = true` and the appropriate `ibr_subtype` (e.g. `"SolarPV"`,
+`"Wind"`, `"BESS"`, `"GenericIBR"`). The `generators` table has supported `is_ibr` and
+`ibr_subtype` since v0.8.9.
+
+### Extended: `contingencies` table — 6 new nullable columns
+
+Six nullable Sentinel operational-outcome columns are appended after `elements`. These are null
+in standard planning files and populated by Sentinel in real-time analysis exports:
+
+- `risk_score` (Float64, nullable)
+- `cleared_by_reserves` (Boolean, nullable)
+- `voltage_collapse_flag` (Boolean, nullable)
+- `recovery_possible` (Boolean, nullable)
+- `recovery_time_min` (Float64, nullable)
+- `greedy_reserve_summary` (Utf8, nullable)
+
+Readers that previously expected `contingencies` to have exactly 2 columns must be updated to
+accept 8.
+
+### Extended: `metadata` table — 5 new nullable fields
+
+Five nullable Sentinel-readiness fields are appended at the end of the `metadata` row:
+
+- `hour_ahead_uncertainty_band` (Float64, nullable)
+- `commitment_source` (Utf8, nullable)
+- `solver_q_limit_infeasible_count` (Int32, nullable)
+- `pv_to_pq_switch_count` (Int32, nullable)
+- `real_time_discovery` (Boolean, nullable)
+
+`case_mode` now accepts the additional value `"hour_ahead_advisory"` in addition to the
+existing `flat_start_planning`, `warm_start_planning`, and `solved_snapshot` values.
+
+### New optional table: `scenario_context`
+
+The `scenario_context` table is an optional Sentinel export table. It is absent from standard
+planning files. Writers producing Sentinel analysis exports should populate this table with one
+row per flagged case. See `docs/schema-contract.md` for the full column reference.
+
+---
+
 ## Schema Contract 0.8.9 (Breaking)
 
 **Schema version**: v0.8.9 | **Crate version**: 0.2.9

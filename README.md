@@ -1,4 +1,5 @@
 # raptrix-cim-rs
+
 raptrix-cim-rs — the world’s first high-performance zero-copy Rust implementation of IEC 61970 CIM optimized for real-time power flow and SCED.
 
 We close the physics gap — planning to real time.
@@ -6,6 +7,7 @@ We close the physics gap — planning to real time.
 Part of the Raptrix PowerFlow ecosystem.
 
 Related repositories:
+
 - [raptrix-psse-rs](https://github.com/RaptrixPowerFlow/raptrix-psse-rs) - Unlimited-size PSS/E to RPF converter
 - [raptrix-studio](https://github.com/RaptrixPowerFlow/raptrix-studio) - Free unlimited RPF viewer/editor
 - [RaptrixPowerFlow organization](https://github.com/RaptrixPowerFlow/) - Full open converter suite
@@ -20,7 +22,7 @@ cargo run --release -- convert --input-dir cgmes_case/ --output case.rpf
 
 Most users should start with precompiled binaries instead of building from source.
 
-- Latest binaries: https://github.com/RaptrixPowerFlow/raptrix-cim-rs/releases
+- Latest binaries: [GitHub Releases](https://github.com/RaptrixPowerFlow/raptrix-cim-rs/releases)
 - Current release targets: Windows x86_64, Linux x86_64, macOS arm64 (Apple Silicon)
 - Use source builds only when you need local development changes or custom tooling integration.
 
@@ -29,14 +31,14 @@ MPL 2.0 - free to use, modify, and distribute.
 
 Production-grid usage is supported through the commercial Raptrix core platform: [raptrix-core](https://github.com/RaptrixPowerFlow/raptrix-core).
 
-Enterprise and academic options: Flexible commercial licensing - contact us for seats, enterprise, or cloud options via [Raptrix website](https://www.raptrixpowerflow.com/) or [RaptrixPowerFlow on GitHub](https://github.com/RaptrixPowerFlow/).
+Enterprise and academic inquiries: contact us via [Raptrix website](https://www.raptrixpowerflow.com/) or [RaptrixPowerFlow on GitHub](https://github.com/RaptrixPowerFlow/).
 
 ## Why RPF? CIM Direct to Power Flow, No Vendor Detour
 
 CIM/XML profile exchange is rich and interoperable, but it was not designed as a zero-copy runtime handoff format for modern security analysis pipelines. RPF exists to close that gap.
 
 | CIM exchange reality | How RPF solves it |
-|---|---|
+| --- | --- |
 | **Profile joins at runtime are expensive** — EQ/TP/SV/SSH/DY/DL data must be stitched repeatedly before solve-stage workflows | **Single canonical Arrow IPC payload** — profiles are normalized once into deterministic tables, then memory-mapped downstream |
 | **Semantic ambiguity across toolchains** — planning vs. solved intent can be unclear and inconsistently encoded | **Explicit case semantics** — `case_mode` and solved-state metadata are first-class, validated contract fields |
 | **Operational pipelines inherit vendor friction** — many teams round-trip through legacy vendor workflows before contingency or SCED analysis | **Direct CIM-to-RPF path** — `raptrix-cim-rs` maps IEC 61970 input straight to solver-ready interchange without requiring a PSS/E conversion step |
@@ -77,7 +79,7 @@ This project is CIM-first and IEC 61970-native for both North American and Europ
 ### Profile ingest (CGMES 3.0+ only)
 
 | Profile | Coverage |
-|---|---|
+| --- | --- |
 | EQ | Full topology: AC lines, power transformers (2W/3W), synchronous machines, energy consumers, fixed/switched shunts, static VAr compensators, phase tap changers, ratio tap changers, base voltages, substations, voltage levels, terminals, connectivity nodes |
 | TP | TopologicalNode bus collapse (default) or ConnectivityNode granularity on demand |
 | SV | Solved state: bus voltage angles and magnitudes, branch active/reactive flows |
@@ -90,16 +92,17 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 ### Bus resolution modes
 
 | Mode | Flag | Description |
-|---|---|---|
+| --- | --- | --- |
 | Topological | *(default)* | Bus IDs collapse to TP TopologicalNode for solver interoperability |
 | Connectivity detail | `--connectivity-detail` | Granular ConnectivityNode bus mapping; emits optional `connectivity_groups` table |
 | Node-breaker | `--connectivity-detail --node-breaker` | Adds switch-topology detail tables for operational and viewer workflows |
 
-### Output tables (schema contract v0.8.9)
+### Output tables (schema contract v0.9.0)
 
-**19 canonical tables (always emitted):** `metadata`, `buses`, `branches`, `multi_section_lines`, `dc_lines_2w`, `generators`, `ibr_devices`, `loads`, `fixed_shunts`, `switched_shunts`, `switched_shunt_banks`, `transformers_2w`, `transformers_3w`, `areas`, `zones`, `owners`, `contingencies`, `interfaces`, `dynamics_models`
+**18 canonical tables (always emitted):** `metadata`, `buses`, `branches`, `multi_section_lines`, `dc_lines_2w`, `generators`, `loads`, `fixed_shunts`, `switched_shunts`, `switched_shunt_banks`, `transformers_2w`, `transformers_3w`, `areas`, `zones`, `owners`, `contingencies`, `interfaces`, `dynamics_models`
 
 **Optional tables (emitted on demand):**
+
 - `connectivity_groups` — with `--connectivity-detail`
 - `node_breaker_detail`, `switch_detail`, `connectivity_nodes` — with `--node-breaker`
 - `diagram_objects`, `diagram_points` — when DL profile is present (suppress with `--no-diagram`)
@@ -109,7 +112,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 ### Detached island policy
 
 | Policy | Flag | Behavior |
-|---|---|---|
+| --- | --- | --- |
 | Permissive | `--detached-island-policy permissive` *(default)* | Islands without a slack bus are kept with a warning |
 | Strict | `--detached-island-policy strict` | Aborts if any detached island is found |
 | Prune | `--detached-island-policy prune-detached` | Silently removes detached islands before writing |
@@ -117,7 +120,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 ### Tested CGMES v3.0 conformity cases (11/11 passing, 44 variants)
 
 | Case | Profiles | Notes |
-|---|---|---|
+| --- | --- | --- |
 | FullGrid-Merged | EQ + TP | Large multi-TSO assembled case |
 | MiniGrid-Merged | EQ + TP | Minimal conformity case |
 | SmallGrid-Merged | EQ + TP + DL | Standard small test grid with diagram layout |
@@ -130,7 +133,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 
 ## Data Contract (Locked)
 
-- Current schema contract: v0.8.9 (CGMES 3.0+ only)
+- Current schema contract: v0.9.0 (CGMES 3.0+ only)
 - Canonical source: raptrix-cim-arrow/src/schema.rs
 - Contract policy and semantics: docs/schema-contract.md
 - Plain-English field guide: [docs/rpf-field-guide.md](docs/rpf-field-guide.md)
@@ -143,15 +146,15 @@ RPF standardization here is intentional: it enables direct CIM-to-powerflow inte
 
 ### Versioning Policy
 
-Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is now locked at schema `v0.8.9` for interoperability and deterministic CGMES 3.0+ ingest behavior, while the converter crate release tracks implementation maturity and is currently `0.2.9`.
+Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is now locked at schema `v0.9.0` for interoperability and deterministic CGMES 3.0+ ingest behavior, while the converter crate release tracks implementation maturity and is currently `0.3.0`.
 
-This split preserves compatibility guarantees for downstream tools at a given contract version. **Breaking change in v0.8.9**: readers in this repository now accept only v0.8.9 files; contracts below v0.8.9 must be migrated before ingestion.
+This split preserves compatibility guarantees for downstream tools at a given contract version. **Breaking change in v0.9.0**: readers in this repository now accept only v0.9.0 files; contracts below v0.9.0 must be migrated before ingestion.
 
-**v0.8.9**: Adds first-class modern-grid tables (`multi_section_lines`, `dc_lines_2w`, `switched_shunt_banks`, `ibr_devices`), modern-grid metadata fields, and branch section-linkage fields (`parent_line_id`, `section_index`).
+**v0.9.0**: Removes `ibr_devices` table (IBRs unified into `generators` via `is_ibr`), adds Sentinel operational-outcome columns to `contingencies`, adds Sentinel-readiness fields to `metadata`, and introduces the optional `scenario_context` table.
 
 To keep crate and documentation versions consistent, use the version sync helper:
 
-- `./scripts/sync-versions.ps1 -Version 0.2.9`
+- `./scripts/sync-versions.ps1 -Version 0.3.0`
 - CI also enforces this via `.github/workflows/version-consistency.yml`.
 
 For third-party implementers, [docs/schema-contract.md](docs/schema-contract.md) is the authoritative reader/writer contract. It now documents the `.rpf` Arrow IPC container layout, canonical root column ordering, row-count metadata trimming rules, optional table detection, and full column/type references needed to build a compatible parser.
@@ -197,28 +200,33 @@ Contribution guidance:
 - Follow the `SynchronousMachine` model/parser pattern when adding new CIM classes.
 - Keep zero-copy semantics in hot parsing/mapping paths (`Cow`, borrowed refs, deterministic dense IDs).
 
-Note: `.rpf` Arrow IPC container support is the locked target profile; current demo writer still emits Parquet while ingestion and mapping layers evolve.
+Note: `.rpf` Arrow IPC is the locked target profile and the default writer output for this repository.
 
 Current implementation priority is a clean and testable path to Arrow/Parquet output, while keeping APIs simple for incremental model coverage.
 
 ## Performance Snapshot
 
-Real-world end-to-end conversion times (release binary, pre-built, including file write) from the CGMES v3.0 conformity suite:
+Release-mode local benchmarks (WSL2 Ubuntu, optimized build, April 23 2026):
 
-| Case | Topological | Connectivity Detail | Node-Breaker |
-|---|---|---|---|
-| PowerFlow (6-bus) | ~0.27s | ~0.25s | ~0.25s |
-| PST Type1–3 | ~0.24–0.44s | ~0.24–0.36s | ~0.23–0.31s |
-| MiniGrid, SmallGrid | ~0.32–0.44s | ~0.26–0.45s | ~0.27–0.46s |
-| Svedala | ~0.35s | ~0.36s | ~0.35s |
-| FullGrid | ~0.34s | ~0.35s | ~0.35s |
-| RealGrid (largest) | ~1.69s | ~1.71s | ~1.73s |
+Parser fragment throughput (`cargo test --release benchmark_fragment_parse_speed -- --nocapture`):
 
-All conversions are zero-copy headless — no readback or post-write validation pass. Times measured on Windows with a pre-built release binary.
+- `ACLineSegment`: 50,000 parses in 66.283 ms (~754,344 parses/s)
+- `EnergyConsumer`: 50,000 parses in 55.156 ms (~906,528 parses/s)
+
+RPF write/read throughput (`cargo test --release benchmark_write_complete_rpf_round_trip -- --ignored --nocapture`):
+
+- 1,000-branch case:
+  - Write: 42 ms, 2.54 MiB output, ~23,268 branches/s
+  - Read: 18 tables in ~0 ms, ~21,311 tables/s
+- 10,000-branch case:
+  - Write: 738 ms, 24.60 MiB output, ~13,546 branches/s
+  - Read: 18 tables in 4 ms, ~4,443 tables/s
+
+These are local engineering reference numbers, not vendor comparison claims. Use them for regression tracking between commits and release tags.
 
 ## Project Layout
 
-- raptrix-cim-arrow/src/schema.rs: v0.8.9 table schemas, metadata constants, and schema registry helpers
+- raptrix-cim-arrow/src/schema.rs: v0.9.0 table schemas, metadata constants, and schema registry helpers
 - raptrix-cim-arrow/src/io.rs: generic root `.rpf` assembly, validation, readback, and summary helpers
 - src/models: CIM data structures and traits
 - src/parser.rs: parse helpers and EQ-to-branch mapping
@@ -226,69 +234,60 @@ All conversions are zero-copy headless — no readback or post-write validation 
 
 ### 2026 First-Principles Mandate (short)
 
-v0.8.9 formalizes the design decision to treat modern-grid constructs (IBRs, DERs,
+v0.9.0 formalizes the design decision to treat modern-grid constructs (IBRs, DERs,
 Smart Valves, and DC workflows) as first-class components of the RPF interchange.
 This README points to `docs/schema-contract.md` for the full normative rationale and
 required writer obligations.
 
-### Locked contract: v0.8.x notable fields
+### Locked contract v0.9.x notable fields
 
-
-
-- v0.8.9 additions:
-	- Required modern-grid tables: `multi_section_lines`, `dc_lines_2w`, `switched_shunt_banks`, `ibr_devices`
-	- Required metadata fields: `modern_grid_profile`, `has_ibr`, `has_smart_valve`, `has_multi_terminal_dc`
-	- Nullable metadata fields: `ibr_penetration_pct`, `study_purpose`, `scenario_tags`
-	- Branch linkage columns: `parent_line_id`, `section_index`
-	- `switched_shunts.b_steps` now capacitive-only; inductive steps are represented in `switched_shunt_banks`
-
+- v0.9.0 additions:
+  - Removed `ibr_devices` table; IBRs now use `generators.is_ibr = true` + `ibr_subtype`
+  - `contingencies` table: 6 new nullable Sentinel operational-outcome columns
+  - `metadata` table: 5 new nullable Sentinel-readiness fields; `case_mode` now accepts `hour_ahead_advisory`
+  - New optional `scenario_context` table for Sentinel export context
 - v0.8.6 additions:
-	- Optional `facts_devices` table for explicit FACTS device identity and control metadata
-	- Optional `facts_solved` table for solved FACTS replay semantics
-	- FACTS branch control columns and metadata feature flags (`raptrix.features.facts`, `raptrix.features.facts_solved`)
-
+  - Optional `facts_devices` table for explicit FACTS device identity and control metadata
+  - Optional `facts_solved` table for solved FACTS replay semantics
+  - FACTS branch control columns and metadata feature flags (`raptrix.features.facts`, `raptrix.features.facts_solved`)
 - v0.8.5 additions:
-	- Optional `switched_shunts_solved` table for solved shunt switching state round-trip
-	- `metadata.slack_bus_id_solved` and `metadata.angle_reference_deg` for explicit solved angle-reference provenance
-	- `metadata.solved_shunt_state_presence` for solved shunt-state availability semantics
-
+  - Optional `switched_shunts_solved` table for solved shunt switching state round-trip
+  - `metadata.slack_bus_id_solved` and `metadata.angle_reference_deg` for explicit solved angle-reference provenance
+  - `metadata.solved_shunt_state_presence` for solved shunt-state availability semantics
 - v0.8.4 additions (planning-vs-solved semantics):
-	- `metadata.case_mode` required — `flat_start_planning` | `warm_start_planning` | `solved_snapshot`
-	- `metadata.solved_state_presence` nullable — `actual_solved` | `not_available` | `not_computed`
-	- `metadata.solver_version`, `solver_iterations`, `solver_accuracy`, `solver_mode` nullable — only populated for `solved_snapshot` cases
-	- Optional `buses_solved` and `generators_solved` tables — only present for `solved_snapshot` cases
-	- Hard validation: exporter rejects NaN planning fields; rejects `solved_snapshot` without solver provenance; rejects solver provenance on planning cases
-	- See [docs/rpf-field-guide.md](docs/rpf-field-guide.md) for a plain-English explanation of these semantics
-
+  - `metadata.case_mode` required — `flat_start_planning` | `warm_start_planning` | `solved_snapshot`
+  - `metadata.solved_state_presence` nullable — `actual_solved` | `not_available` | `not_computed`
+  - `metadata.solver_version`, `solver_iterations`, `solver_accuracy`, `solver_mode` nullable — only populated for `solved_snapshot` cases
+  - Optional `buses_solved` and `generators_solved` tables — only present for `solved_snapshot` cases
+  - Hard validation: exporter rejects NaN planning fields; rejects `solved_snapshot` without solver provenance; rejects solver provenance on planning cases
+  - See [docs/rpf-field-guide.md](docs/rpf-field-guide.md) for a plain-English explanation of these semantics
 - v0.8.3 additions:
-	- `switched_shunts.b_init_pu` nullable authoritative initial susceptance per-unit field
-	- Readers should prefer `b_init_pu` when present instead of reconstructing from `b_steps + current_step`
-
+  - `switched_shunts.b_init_pu` nullable authoritative initial susceptance per-unit field
+  - Readers should prefer `b_init_pu` when present instead of reconstructing from `b_steps + current_step`
 - v0.8.2 required additions:
-	- `buses.bus_uuid` is required (non-null)
-	- `metadata.source_case_id` required
-	- `metadata.snapshot_timestamp_utc` required
-	- `metadata.case_fingerprint` required
-	- `metadata.validation_mode` required (`topology_only` or `solved_ready`)
-
+  - `buses.bus_uuid` is required (non-null)
+  - `metadata.source_case_id` required
+  - `metadata.snapshot_timestamp_utc` required
+  - `metadata.case_fingerprint` required
+  - `metadata.validation_mode` required (`topology_only` or `solved_ready`)
 - Added optional dictionary-encoded `name` columns to:
-	- branches
-	- generators
-	- loads
-	- transformers_2w
-	- transformers_3w
+  - branches
+  - generators
+  - loads
+  - transformers_2w
+  - transformers_3w
 - Added nullable nominal-kV columns to:
-	- buses
-	- branches
-	- transformers_2w
-	- transformers_3w
+  - buses
+  - branches
+  - transformers_2w
+  - transformers_3w
 - Added generic contingency element identity fields:
-	- `equipment_kind`
-	- `equipment_id`
+  - `equipment_kind`
+  - `equipment_id`
 - Existing `buses.name` remains required and now prioritizes CIM human-readable names with deterministic fallback.
-- src/main.rs: production CLI for CGMES-to-RPF conversion
-- src/test_utils.rs: test-only path helper for external CGMES data
-- tests/integration_parse.rs: ignored live-data integration test
+- `src/main.rs`: production CLI for CGMES-to-RPF conversion
+- `src/test_utils.rs`: test-only path helper for external CGMES data
+- `tests/integration_parse.rs`: ignored live-data integration test
 
 ## CLI Usage
 
@@ -361,7 +360,7 @@ Use `write_complete_rpf` for the simple one-call form:
 use raptrix_cim_rs::write_complete_rpf;
 
 fn convert(eq_path: &str, output_path: &str) -> anyhow::Result<()> {
-	write_complete_rpf(&[eq_path], output_path)
+  write_complete_rpf(&[eq_path], output_path)
 }
 ```
 
@@ -376,6 +375,14 @@ See MIGRATION.md for the rationale and exact ownership boundary.
 ## Running in VS Code (Beginner-Friendly)
 
 Open the repository in VS Code, then use Terminal -> New Terminal.
+
+If Windows Application Control (WAC) blocks native test binaries (`os error 4551`), run tests through WSL2:
+
+- `./scripts/test-wsl.ps1 -CargoCommand "test --workspace"`
+
+VS Code task shortcut:
+
+- `Terminal -> Run Task -> Test Workspace (WSL)`
 
 Run all normal tests:
 
@@ -404,7 +411,7 @@ Enable `rdf:about` fallback diagnostics only when debugging parser edge cases:
 The repository includes a standalone pytest validator at `tests/inspect_rpf.py` that:
 
 - runs the CLI to generate a `.rpf` file from SmallGrid EQ input
-- validates one canonical root IPC batch with all 19 required struct columns
+- validates one canonical root IPC batch with all 18 required struct columns
 - verifies `raptrix.branding` and `raptrix.version` metadata
 - checks bus and branch row counts against source EQ XML topology
 - spot-checks first branch `r`/`x` values against EQ XML
@@ -449,15 +456,15 @@ Interpretation of failures:
 - If conversion fails, no `.rpf` is emitted for that run (fail-fast behavior).
 - This does **not** indicate a corrupted `.rpf`; it indicates conversion aborted.
 - In strict mode, SSH/DY failures indicate profile-ingest coverage gaps and can
-	imply missing operational/dynamic context in outputs if those profiles are
-	excluded.
+  imply missing operational/dynamic context in outputs if those profiles are
+  excluded.
 
 ## External CGMES Setup
 
 1. Download ENTSO-E CGMES v3.0 test configurations from:
-	 https://www.entsoe.eu/data/cim/cim-for-grid-models-exchange/
+  [ENTSO-E CIM for Grid Models Exchange](https://www.entsoe.eu/data/cim/cim-for-grid-models-exchange/)
 2. Unzip to a local path, for example:
-	 C:\raptrix-cim-tests\CGMES_ConformityAssessmentScheme_TestConfigurations_v3-0-3\CGMES_ConformityAssessmentScheme_TestConfigurations_v3-0-3\v3.0
+   C:\raptrix-cim-tests\CGMES_ConformityAssessmentScheme_TestConfigurations_v3-0-3\CGMES_ConformityAssessmentScheme_TestConfigurations_v3-0-3\v3.0
 3. Set RAPTRIX_TEST_DATA_ROOT to that v3.0 folder.
 
 Expected SmallGrid EQ location pattern:
@@ -532,6 +539,4 @@ to implementation tasks with much less ambiguity.
 Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
 
 Copyright (c) 2026 Raptrix PowerFlow
-
-
-
+`n`n

@@ -194,7 +194,7 @@ fn supported_external_v3_fixtures_match_expected_optional_tables() -> Result<()>
 }
 
 #[test]
-fn generated_v080_outputs_make_detail_levels_explicit() -> Result<()> {
+fn generated_v090_outputs_make_detail_levels_explicit() -> Result<()> {
     let eq_path = write_eq_fixture_with_breaker()?;
     let eq_owned = eq_path.to_string_lossy().into_owned();
     let inputs = vec![eq_owned.as_str()];
@@ -219,7 +219,7 @@ fn generated_v080_outputs_make_detail_levels_explicit() -> Result<()> {
         },
     )?;
     let topological_tables = table_names(&topological_output)?;
-    assert_eq!(topological_tables.len(), 19);
+    assert_eq!(topological_tables.len(), 18);
     assert!(
         !topological_tables
             .iter()
@@ -273,7 +273,7 @@ fn generated_v080_outputs_make_detail_levels_explicit() -> Result<()> {
         },
     )?;
     let connectivity_tables = table_names(&connectivity_output)?;
-    assert_eq!(connectivity_tables.len(), 19);
+    assert_eq!(connectivity_tables.len(), 18);
     assert!(
         !connectivity_tables
             .iter()
@@ -319,7 +319,7 @@ fn generated_v080_outputs_make_detail_levels_explicit() -> Result<()> {
         },
     )?;
     let node_breaker_tables = table_names(&node_breaker_output)?;
-    assert_eq!(node_breaker_tables.len(), 22);
+    assert_eq!(node_breaker_tables.len(), 21);
     assert!(
         !node_breaker_tables
             .iter()

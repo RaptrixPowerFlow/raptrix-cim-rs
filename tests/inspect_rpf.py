@@ -22,8 +22,8 @@ except ImportError:  # pragma: no cover - handled by skip branch below
     ipc = None
 
 
-BRANDING = "Raptrix CIM-Arrow / PowerFlow Interchange v0.8.9 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow."
-SCHEMA_VERSION = "0.8.9"
+BRANDING = "Raptrix CIM-Arrow / PowerFlow Interchange v0.9.0 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow."
+SCHEMA_VERSION = "0.9.0"
 CANONICAL_TABLE_ORDER = [
     "metadata",
     "buses",
@@ -31,7 +31,6 @@ CANONICAL_TABLE_ORDER = [
     "multi_section_lines",
     "dc_lines_2w",
     "generators",
-    "ibr_devices",
     "loads",
     "fixed_shunts",
     "switched_shunts",
@@ -53,7 +52,7 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 def _read_rpf_tables(path: Path) -> list[tuple[str, pa.RecordBatch]]:
-    """Read canonical per-table batches from the single-root v0.7.0 RPF file."""
+    """Read canonical per-table batches from the single-root RPF file."""
     reader = ipc.RecordBatchFileReader(pa.memory_map(str(path), "r"))
     file_metadata = reader.schema.metadata or {}
     tables: list[tuple[str, pa.RecordBatch]] = []
@@ -348,16 +347,16 @@ def _run_profile_validation(
         tables = _read_rpf_tables(output_path)
         _emit_table_row_report(profile_name, tables, capsys)
 
-        expected_table_count = 19
+        expected_table_count = 18
         assert len(tables) == expected_table_count, (
             f"Expected {expected_table_count} canonical tables, got {len(tables)}"
         )
 
         observed_names = [name for name, _ in tables]
-        assert observed_names[:19] == CANONICAL_TABLE_ORDER, (
+        assert observed_names[:18] == CANONICAL_TABLE_ORDER, (
             f"Unexpected core table order: {observed_names}"
         )
-        for table_idx, (table_name, batch) in enumerate(tables[:19]):
+        for table_idx, (table_name, batch) in enumerate(tables[:18]):
             expected_table_name = CANONICAL_TABLE_ORDER[table_idx]
             assert table_name == expected_table_name, (
                 f"Table order mismatch at index {table_idx}: expected {expected_table_name}, got {table_name}"
