@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Local safety gate: require explicit opt-in before pushing.
+if [[ "${RAPTRIX_ALLOW_PUSH:-}" != "1" ]]; then
+  echo "Push blocked by local safety rule."
+  echo "Set RAPTRIX_ALLOW_PUSH=1 for this shell when you have reviewed and approved changes."
+  echo "Example: RAPTRIX_ALLOW_PUSH=1 git push origin main"
+  exit 1
+fi
+
+exit 0
