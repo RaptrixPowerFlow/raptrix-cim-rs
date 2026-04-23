@@ -116,6 +116,8 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     if: github.ref_type == 'tag' || github.event.inputs.publish_release == 'true'
+    permissions:
+      contents: write
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
     steps:
