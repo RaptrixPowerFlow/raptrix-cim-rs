@@ -209,6 +209,7 @@ Copyright (c) 2026 Raptrix PowerFlow
 - New file-level metadata key `rpf.solver.solved_shunt_state_presence` (written only when `solved_state_presence = actual_solved`).
 
 **New public Rust types in `rpf_writer`:**
+
 - `SolvedShuntStatePresence` enum (`ActualSolved` | `NotAvailable`).
 - `SolverProvenance.slack_bus_id_solved`, `.angle_reference_deg`, `.solved_shunt_state_presence` fields.
 - `SwitchedShuntRow.shunt_id` field (CIM mRID populated by CIM exporter).
