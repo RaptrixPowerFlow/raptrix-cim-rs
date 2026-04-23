@@ -1,0 +1,37 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Test Workspace (WSL)",
+      "type": "shell",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/test-wsl.ps1",
+        "-CargoCommand",
+        "test --workspace"
+      ],
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "Test integration_parse (WSL)",
+      "type": "shell",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/test-wsl.ps1",
+        "-CargoCommand",
+        "test -p raptrix-cim-rs --test integration_parse -- --nocapture"
+      ],
+      "group": "test",
+      "problemMatcher": []
+    }
+  ]
+}

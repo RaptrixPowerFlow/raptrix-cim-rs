@@ -47,12 +47,12 @@ use crate::arrow_schema::{
     METADATA_KEY_VALIDATION_MODE, SCHEMA_VERSION, TABLE_AREAS, TABLE_BRANCHES, TABLE_BUSES,
     TABLE_CONNECTIVITY_NODES, TABLE_CONTINGENCIES, TABLE_DC_LINES_2W, TABLE_DIAGRAM_OBJECTS,
     TABLE_DIAGRAM_POINTS, TABLE_DYNAMICS_MODELS, TABLE_FIXED_SHUNTS, TABLE_GENERATORS,
-    TABLE_IBR_DEVICES, TABLE_INTERFACES, TABLE_LOADS, TABLE_METADATA, TABLE_MULTI_SECTION_LINES,
+    TABLE_INTERFACES, TABLE_LOADS, TABLE_METADATA, TABLE_MULTI_SECTION_LINES,
     TABLE_NODE_BREAKER_DETAIL, TABLE_OWNERS, TABLE_SWITCH_DETAIL, TABLE_SWITCHED_SHUNT_BANKS,
     TABLE_SWITCHED_SHUNTS, TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, TABLE_ZONES, areas_schema,
     branches_schema, buses_schema, connectivity_groups_schema, connectivity_nodes_schema,
     contingencies_schema, dc_lines_2w_schema, diagram_objects_schema, diagram_points_schema,
-    dynamics_models_schema, fixed_shunts_schema, generators_schema, ibr_devices_schema,
+    dynamics_models_schema, fixed_shunts_schema, generators_schema,
     interfaces_schema, loads_schema, metadata_schema, multi_section_lines_schema,
     node_breaker_detail_schema, owners_schema, switch_detail_schema, switched_shunt_banks_schema,
     switched_shunts_schema, transformers_2w_schema, transformers_3w_schema, zones_schema,
@@ -1684,10 +1684,6 @@ pub fn write_complete_rpf_with_options(
         RecordBatch::new_empty(Arc::new(dc_lines_2w_schema())),
     );
     table_batches.insert(TABLE_GENERATORS, generators_batch.clone());
-    table_batches.insert(
-        TABLE_IBR_DEVICES,
-        RecordBatch::new_empty(Arc::new(ibr_devices_schema())),
-    );
     table_batches.insert(TABLE_LOADS, loads_batch.clone());
     table_batches.insert(TABLE_FIXED_SHUNTS, fixed_shunts_batch.clone());
     table_batches.insert(TABLE_SWITCHED_SHUNTS, switched_shunts_batch.clone());
@@ -3744,6 +3740,12 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
         DataType::List(field) => field,
         _ => Arc::new(Field::new("item", DataType::Utf8, false)),
     });
+    // v0.9.0 builders
+    let mut hour_ahead_uncertainty_band_b = Float64Builder::new();
+    let mut commitment_source_b = StringBuilder::new();
+    let mut solver_q_limit_infeasible_count_b = Int32Builder::new();
+    let mut pv_to_pq_switch_count_b = Int32Builder::new();
+    let mut real_time_discovery_b = BooleanBuilder::new();
 
     base_mva_b.append_value(row.base_mva);
     frequency_b.append_value(row.frequency_hz);
@@ -3813,6 +3815,12 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
         scenario_tags_b.values().append_value(tag.as_ref());
     }
     scenario_tags_b.append(true);
+    // v0.9.0 — all nullable; null in standard planning files
+    hour_ahead_uncertainty_band_b.append_null();
+    commitment_source_b.append_null();
+    solver_q_limit_infeasible_count_b.append_null();
+    pv_to_pq_switch_count_b.append_null();
+    real_time_discovery_b.append_null();
 
     let custom_metadata_type = schema.field(11).data_type().clone();
     let custom_metadata_array = new_null_array(&custom_metadata_type, 1);
@@ -3848,6 +3856,12 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
         Arc::new(has_multi_terminal_dc_b.finish()) as ArrayRef,
         Arc::new(study_purpose_b.finish()) as ArrayRef,
         Arc::new(scenario_tags_b.finish()) as ArrayRef,
+        // v0.9.0
+        Arc::new(hour_ahead_uncertainty_band_b.finish()) as ArrayRef,
+        Arc::new(commitment_source_b.finish()) as ArrayRef,
+        Arc::new(solver_q_limit_infeasible_count_b.finish()) as ArrayRef,
+        Arc::new(pv_to_pq_switch_count_b.finish()) as ArrayRef,
+        Arc::new(real_time_discovery_b.finish()) as ArrayRef,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build metadata record batch")
@@ -4984,9 +4998,25 @@ fn build_contingencies_batch(rows: &[ContingencyRow<'_>]) -> Result<RecordBatch>
         elements_b.append(true);
     }
 
+    let n = rows.len();
+
+    // v0.9.0: 6 nullable operational-outcome columns — null in planning/stub files.
+    let risk_score_arr = new_null_array(&DataType::Float64, n);
+    let cleared_by_reserves_arr = new_null_array(&DataType::Boolean, n);
+    let voltage_collapse_flag_arr = new_null_array(&DataType::Boolean, n);
+    let recovery_possible_arr = new_null_array(&DataType::Boolean, n);
+    let recovery_time_min_arr = new_null_array(&DataType::Float64, n);
+    let greedy_reserve_summary_arr = new_null_array(&DataType::Utf8, n);
+
     let arrays: Vec<ArrayRef> = vec![
         Arc::new(contingency_id_b.finish()) as ArrayRef,
         Arc::new(elements_b.finish()) as ArrayRef,
+        risk_score_arr,
+        cleared_by_reserves_arr,
+        voltage_collapse_flag_arr,
+        recovery_possible_arr,
+        recovery_time_min_arr,
+        greedy_reserve_summary_arr,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build contingencies record batch")
@@ -5225,8 +5255,8 @@ mod tests {
 
         assert_schema_shape_matches(tables[1].1.schema().as_ref(), &buses_schema());
         assert_schema_shape_matches(tables[2].1.schema().as_ref(), &branches_schema());
-        assert_schema_shape_matches(tables[12].1.schema().as_ref(), &contingencies_schema());
-        assert_schema_shape_matches(tables[14].1.schema().as_ref(), &dynamics_models_schema());
+        assert_schema_shape_matches(tables[15].1.schema().as_ref(), &contingencies_schema());
+        assert_schema_shape_matches(tables[17].1.schema().as_ref(), &dynamics_models_schema());
 
         let buses_batch = &tables[1].1;
         let bus_uuid_dict = buses_batch

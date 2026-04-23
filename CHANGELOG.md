@@ -15,6 +15,44 @@ Copyright (c) 2026 Raptrix PowerFlow
 ## [Schema Contract 0.8.7] - 2026-04-17
 ## [Schema Contract 0.8.8] - 2026-04-19
 ## [Schema Contract 0.8.9] - 2026-04-19
+## [Schema Contract 0.9.0] - 2026-04-23
+
+### Converter release: Crate version 0.3.0 (raptrix-cim-arrow) / 0.3.0 (raptrix-cim-rs) | Arrow schema v0.9.0
+
+### Removed
+
+- `ibr_devices` table permanently removed. IBRs are now modeled exclusively in the unified `generators` table using `is_ibr = true` and `ibr_subtype`. Writers must not emit an `ibr_devices` root column in v0.9.0+ files.
+
+### Added
+
+- `contingencies` table: 6 new nullable Sentinel operational-outcome columns appended after `elements`:
+  - `risk_score` (Float64, nullable)
+  - `cleared_by_reserves` (Boolean, nullable)
+  - `voltage_collapse_flag` (Boolean, nullable)
+  - `recovery_possible` (Boolean, nullable)
+  - `recovery_time_min` (Float64, nullable)
+  - `greedy_reserve_summary` (Utf8, nullable)
+- `metadata` table: 5 new nullable Sentinel-readiness fields:
+  - `hour_ahead_uncertainty_band` (Float64, nullable)
+  - `commitment_source` (Utf8, nullable)
+  - `solver_q_limit_infeasible_count` (Int32, nullable)
+  - `pv_to_pq_switch_count` (Int32, nullable)
+  - `real_time_discovery` (Boolean, nullable)
+- New optional `scenario_context` table (15 fields) for Sentinel export context: real-time, hour-ahead advisory, and planning feedback records.
+- `case_mode` metadata field now accepts `"hour_ahead_advisory"` in addition to existing values.
+
+### Changed
+
+- Branding/schema constants bumped to v0.9.0.
+- `SUPPORTED_RPF_VERSIONS` now only accepts v0.9.0 (`"v0.9.0"`, `"0.9.0"`).
+- Canonical table count reduced from 19 to 18.
+
+### Breaking change note
+
+- v0.9.0 is a hard schema break with no backward compatibility to v0.8.9 and earlier.
+- v0.8.9 files are rejected at the version gate in `io.rs` even if their `ibr_devices` table was empty.
+
+
 
 ### Converter release: Crate version 0.2.9 (raptrix-cim-arrow) / 0.2.9 (raptrix-cim-rs) | Arrow schema v0.8.9
 

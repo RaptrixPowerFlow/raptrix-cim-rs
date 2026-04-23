@@ -31,7 +31,7 @@ use crate::schema::{
     METADATA_KEY_VERSION, SCHEMA_VERSION, SUPPORTED_RPF_VERSIONS, TABLE_BRANCHES, TABLE_BUSES,
     TABLE_BUSES_SOLVED, TABLE_DC_LINES_2W, TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS,
     TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED, TABLE_GENERATORS, TABLE_GENERATORS_SOLVED,
-    TABLE_IBR_DEVICES, TABLE_LOADS, TABLE_MULTI_SECTION_LINES, TABLE_SWITCHED_SHUNT_BANKS,
+    TABLE_LOADS, TABLE_MULTI_SECTION_LINES, TABLE_SWITCHED_SHUNT_BANKS,
     TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, all_table_schemas, diagram_layout_table_schemas,
     facts_table_schemas, node_breaker_table_schemas, schema_metadata, solved_state_table_schemas,
     table_schema,
@@ -678,12 +678,6 @@ pub fn validate_rpf_file(path: impl AsRef<Path>, options: &RootWriteOptions) -> 
     require_non_null_count_equals_len(TABLE_DC_LINES_2W, dc_lines, "from_bus_id")?;
     require_non_null_count_equals_len(TABLE_DC_LINES_2W, dc_lines, "to_bus_id")?;
 
-    let ibr_devices = by_name
-        .get(TABLE_IBR_DEVICES)
-        .context("post-write contract violation: missing ibr_devices table")?;
-    require_non_null_count_equals_len(TABLE_IBR_DEVICES, ibr_devices, "device_id")?;
-    require_non_null_count_equals_len(TABLE_IBR_DEVICES, ibr_devices, "bus_id")?;
-
     let generators = by_name
         .get(TABLE_GENERATORS)
         .context("post-write contract violation: missing generators table")?;
@@ -1033,7 +1027,7 @@ mod tests {
             branches.schema().fields().len(),
             branches_schema().fields().len()
         );
-        assert_eq!(SCHEMA_VERSION, "0.8.9");
+        assert_eq!(SCHEMA_VERSION, "0.9.0");
         Ok(())
     }
 }

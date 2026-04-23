@@ -1,13 +1,23 @@
-# Schema Contract (Locked contract: v0.8.9 — CGMES 3.0+ Only)
+# Schema Contract (Locked contract: v0.9.0 — CGMES 3.0+ Only)
 
 This repository is the authoritative source of truth for the Raptrix PowerFlow Interchange (`.rpf`) wire contract used by CIM-first conversion pipelines.
 
-v0.8.9 is the current contract and is a breaking release in this repository.
+v0.9.0 is the current contract and is a breaking release in this repository.
+
+## v0.9.0 Breaking Changes
+
+- **`ibr_devices` table removed.** IBRs are now modeled exclusively in the `generators` table using `is_ibr = true` and `ibr_subtype`. Files claiming v0.9.0 must not include an `ibr_devices` root column.
+- **`contingencies` table extended** with 6 new nullable operational-outcome columns for Sentinel: `risk_score`, `cleared_by_reserves`, `voltage_collapse_flag`, `recovery_possible`, `recovery_time_min`, `greedy_reserve_summary`. These are null in standard planning files.
+- **`metadata` table extended** with 5 new nullable Sentinel-readiness fields. `case_mode` now accepts the additional value `"hour_ahead_advisory"`.
+- **New optional table `scenario_context`** for structured Sentinel export context (real-time, hour-ahead advisory, planning feedback).
+- **Canonical table count**: 18 required tables (was 19).
+- `SUPPORTED_RPF_VERSIONS` now accepts only `v0.9.0` / `0.9.0`. v0.8.9 files are rejected at the version gate.
 
 ## 2026 First-Principles Mandate
 
-- The v0.8.9 contract is designed from power-system first principles for 2026+ networks, including inverter-based resources (IBR), DER-heavy operation, Smart Valve controls, and modern DC workflows.
-- Required modern-grid tables (`multi_section_lines`, `dc_lines_2w`, `switched_shunt_banks`, `ibr_devices`) are first-class contract elements, not side extensions.
+- The v0.9.0 contract is designed from power-system first principles for 2026+ networks, including inverter-based resources (IBR), DER-heavy operation, Smart Valve controls, modern DC workflows, and real-time Sentinel analysis.
+- Required modern-grid tables (`multi_section_lines`, `dc_lines_2w`, `switched_shunt_banks`) are first-class contract elements, not side extensions.
+- IBR modeling is unified in the `generators` table (`is_ibr = true`, `ibr_subtype`); no separate `ibr_devices` table.
 - Arrow-native list and map types are used deliberately so parsers and solvers can ingest table payloads without lossy flattening.
 
 ## Beyond Parity
@@ -49,11 +59,11 @@ Every `.rpf` file must include:
 
 Current locked values:
 
-- `raptrix.version = 0.8.9`
-- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.8.9 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.`
+- `raptrix.version = 0.9.0`
+- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.9.0 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.`
 - `rpf.case_fingerprint = <required deterministic case identity fingerprint>`
 - `rpf.validation_mode = topology_only | solved_ready`
-- `rpf.case_mode = flat_start_planning | warm_start_planning | solved_snapshot` (v0.8.4+, required)
+- `rpf.case_mode = flat_start_planning | warm_start_planning | solved_snapshot | hour_ahead_advisory` (v0.8.4+, required; `hour_ahead_advisory` added in v0.9.0)
 - `rpf.solved_state_presence = actual_solved | not_available | not_computed` (v0.8.4+, required)
 
 Optional file-level metadata keys:
@@ -96,32 +106,32 @@ Required root columns are in this exact order:
 4. `multi_section_lines`
 5. `dc_lines_2w`
 6. `generators`
-7. `ibr_devices`
-8. `loads`
-9. `fixed_shunts`
-10. `switched_shunts`
-11. `switched_shunt_banks`
-12. `transformers_2w`
-13. `transformers_3w`
-14. `areas`
-15. `zones`
-16. `owners`
-17. `contingencies`
-18. `interfaces`
-19. `dynamics_models`
+7. `loads`
+8. `fixed_shunts`
+9. `switched_shunts`
+10. `switched_shunt_banks`
+11. `transformers_2w`
+12. `transformers_3w`
+13. `areas`
+14. `zones`
+15. `owners`
+16. `contingencies`
+17. `interfaces`
+18. `dynamics_models`
 
 Optional root columns, when present, are appended after the required columns in this order:
 
-20. `node_breaker_detail`
-21. `switch_detail`
-22. `connectivity_nodes`
-23. `diagram_objects`
-24. `diagram_points`
-25. `buses_solved`
-26. `generators_solved`
-27. `switched_shunts_solved`
-28. `facts_devices`
-29. `facts_solved`
+19. `node_breaker_detail`
+20. `switch_detail`
+21. `connectivity_nodes`
+22. `diagram_objects`
+23. `diagram_points`
+24. `buses_solved`
+25. `generators_solved`
+26. `switched_shunts_solved`
+27. `facts_devices`
+28. `facts_solved`
+29. `scenario_context` (v0.9.0+, Sentinel export)
 
 `connectivity_groups` is an optional detail table emitted only in connectivity-detail mode and is appended after the required root columns when that mode is active.
 
@@ -158,7 +168,6 @@ Required tables (empty tables allowed):
 - `multi_section_lines`
 - `dc_lines_2w`
 - `generators`
-- `ibr_devices`
 - `loads`
 - `fixed_shunts`
 - `switched_shunts`
@@ -232,6 +241,11 @@ This section is normative for external parser authors.
 - `has_multi_terminal_dc`: Boolean, required (v0.8.9+)
 - `study_purpose`: Utf8, nullable (v0.8.9+)
 - `scenario_tags`: List<Utf8>, nullable (v0.8.9+)
+- `hour_ahead_uncertainty_band`: Float64, nullable (v0.9.0+) — load forecast uncertainty band as a percentage, e.g. `2.0` = ±2%
+- `commitment_source`: Utf8, nullable (v0.9.0+) — e.g. `"day_ahead_market"`, `"operator_plan"`
+- `solver_q_limit_infeasible_count`: Int32, nullable (v0.9.0+) — number of buses where Q-limit infeasibility was detected
+- `pv_to_pq_switch_count`: Int32, nullable (v0.9.0+) — number of PV→PQ bus-type switches during solve
+- `real_time_discovery`: Boolean, nullable (v0.9.0+) — `true` if this case originated from live State Estimator analysis
 
 ### buses
 
@@ -350,19 +364,7 @@ Recommended `control_mode` tokens for `dc_lines_2w` are `power`, `current`, `vol
 
 ### ibr_devices
 
-- `device_id`: Int32, required
-- `bus_id`: Int32, required
-- `device_type`: Utf8, required
-- `rated_mva`: Float64, required
-- `p_max_mw`: Float64, required
-- `q_min_mvar`: Float64, required
-- `q_max_mvar`: Float64, required
-- `control_mode`: Utf8, required
-- `status`: Boolean, required
-- `params`: Map<String, Float64>, nullable
-- `name`: Utf8, nullable
-
-Recommended `device_type` tokens for `ibr_devices` are `solar_pv`, `wind`, `bess`, and `generic_ibr`.
+> **Removed in v0.9.0.** IBRs are now modeled in the `generators` table using `is_ibr = true` and `ibr_subtype`. Writers must not emit an `ibr_devices` root column in v0.9.0+ files.
 
 ### loads
 
@@ -475,6 +477,12 @@ Inductive steps must be represented in `switched_shunt_banks`.
 
 - `contingency_id`: Dictionary<Int32, Utf8>, required
 - `elements`: List<Struct>, required
+- `risk_score`: Float64, nullable (v0.9.0+) — Sentinel-computed composite risk score
+- `cleared_by_reserves`: Boolean, nullable (v0.9.0+) — true if contingency was cleared by greedy reserve dispatch
+- `voltage_collapse_flag`: Boolean, nullable (v0.9.0+) — true if voltage collapse was detected
+- `recovery_possible`: Boolean, nullable (v0.9.0+) — true if system recovery is achievable within NERC criteria
+- `recovery_time_min`: Float64, nullable (v0.9.0+) — estimated recovery time in minutes
+- `greedy_reserve_summary`: Utf8, nullable (v0.9.0+) — short text description of greedy reserve dispatch actions
 
 `elements` fields:
 
@@ -511,9 +519,9 @@ Dynamics population rules for downstream consumers:
 - `model_type` is an open string vocabulary. Writers MAY emit CIM class names (for example `SynchronousMachineDynamics`) or extension names (for example `raptrix.smart_valve.v1`).
 - For non-CIM extensions, writers SHOULD use namespaced `model_type` values and namespaced `params` keys to avoid collisions.
 - Provenance keys currently emitted in `params` are:
-	- `source_dy = 1.0` for DY-linked rows
-	- `source_eq_fallback = 1.0` for EQ fallback rows
-	- `source_stub = 1.0` for placeholder rows
+  - `source_dy = 1.0` for DY-linked rows
+  - `source_eq_fallback = 1.0` for EQ fallback rows
+  - `source_stub = 1.0` for placeholder rows
 
 ### facts_devices
 
@@ -555,6 +563,26 @@ Solved presence convention (v0.8.6+):
 
 - `rpf.facts_solved_state_presence = actual_solved` when `facts_solved` is emitted.
 - `rpf.facts_solved_state_presence = not_available` when `facts_devices` is emitted but solved replay values are not present.
+
+### scenario_context (optional, v0.9.0+)
+
+Stores structured context for every flagged or exported case produced by Sentinel (real-time intelligent contingency analysis). This table is optional — present in Sentinel exports, absent in standard planning files.
+
+- `scenario_context_id`: Int32, required — primary key
+- `case_id`: Utf8, required — links to `metadata.case_fingerprint`
+- `source_type`: Utf8, required — `"real_time"` | `"hour_ahead_advisory"` | `"planning_study"`
+- `priority`: Utf8, required — `"critical"` | `"high"` | `"medium"` | `"low"`
+- `violation_type`: Utf8, nullable — e.g. `"voltage_collapse"`, `"q_limit_infeasible"`, `"unrecoverable_n2"`, `"limit_violation"`
+- `nerc_recovery_status`: Utf8, nullable — `"recoverable_15min_lte"` | `"not_recoverable"` | `"unknown"`
+- `recovery_time_min`: Float64, nullable — estimated recovery time in minutes
+- `cleared_by_reserves`: Boolean, nullable — true if cleared by greedy reserve dispatch
+- `planning_feedback_flag`: Boolean, required — true if this case should trigger a planning study review
+- `planning_assumption_violated`: Utf8, nullable — description of the violated planning assumption
+- `recommended_action`: Utf8, nullable — operator-readable recommended corrective action
+- `investigation_summary`: Utf8, nullable — Sentinel analysis narrative
+- `load_forecast_error_pct`: Float64, nullable — forecast error contribution for hour-ahead cases
+- `created_timestamp_utc`: Utf8, required — ISO 8601 UTC timestamp when this context record was created
+- `params`: Map<String, Float64>, nullable — extensible key/value parameters
 
 Schema-level example: parallel PST + SmartValve on one corridor
 
@@ -751,7 +779,7 @@ ConnectivityNode granularity while preserving CIM semantics.
 Identifier compatibility note:
 
 - TP parsing accepts either `rdf:ID` or `rdf:about` for `TopologicalNode` and
-	`ConnectivityNode` identity extraction.
+  `ConnectivityNode` identity extraction.
 - When `rdf:about` is used, a leading `#` is stripped before mRID mapping.
 
 ### 6) Split-bus preservation via `connectivity_groups`
