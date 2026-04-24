@@ -35,12 +35,11 @@ use sha2::{Digest, Sha256};
 
 use crate::arrow_schema::{
     METADATA_KEY_CASE_FINGERPRINT, METADATA_KEY_CASE_MODE, METADATA_KEY_FEATURE_TOPOLOGY_ONLY,
-    METADATA_KEY_FEATURE_ZERO_INJECTION_STUB, METADATA_KEY_SOLVED_SHUNT_STATE_PRESENCE,
-    METADATA_KEY_SOLVED_STATE_PRESENCE, METADATA_KEY_SOLVER_ACCURACY,
-    METADATA_KEY_SOLVER_ANGLE_REFERENCE_DEG, METADATA_KEY_SOLVER_ITERATIONS,
-    METADATA_KEY_SOLVER_MODE, METADATA_KEY_SOLVER_SLACK_BUS_ID, METADATA_KEY_SOLVER_VERSION,
-    METADATA_KEY_LOADS_ZIP_FIDELITY_PRESENCE,
-    METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_GENERATION_ISLAND_COUNT,
+    METADATA_KEY_FEATURE_ZERO_INJECTION_STUB, METADATA_KEY_LOADS_ZIP_FIDELITY_PRESENCE,
+    METADATA_KEY_SOLVED_SHUNT_STATE_PRESENCE, METADATA_KEY_SOLVED_STATE_PRESENCE,
+    METADATA_KEY_SOLVER_ACCURACY, METADATA_KEY_SOLVER_ANGLE_REFERENCE_DEG,
+    METADATA_KEY_SOLVER_ITERATIONS, METADATA_KEY_SOLVER_MODE, METADATA_KEY_SOLVER_SLACK_BUS_ID,
+    METADATA_KEY_SOLVER_VERSION, METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_GENERATION_ISLAND_COUNT,
     METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_LOAD_ISLAND_COUNT,
     METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_NETWORK_ISLAND_COUNT,
     METADATA_KEY_TOPOLOGY_DETACHED_ISLANDS_PRESENT, METADATA_KEY_TOPOLOGY_ISLAND_COUNT,
@@ -5153,11 +5152,11 @@ mod tests {
 
     use super::{
         BusResolutionMode, DetachedIslandPolicy, GenRow, LoadZipComponentsPu, Transformer2WRow,
-        Transformer3WRow, TransformerRepresentationMode, WriteOptions,
-        infer_dynamics_model_type, map_psse_zip_terms_to_rpf_pu,
-        normalize_transformer_representation, read_rpf_tables, rpf_file_metadata,
-        star_expand_3w_transformers, summarize_rpf, validate_transformer_representation_mode,
-        write_complete_rpf, write_complete_rpf_with_options,
+        Transformer3WRow, TransformerRepresentationMode, WriteOptions, infer_dynamics_model_type,
+        map_psse_zip_terms_to_rpf_pu, normalize_transformer_representation, read_rpf_tables,
+        rpf_file_metadata, star_expand_3w_transformers, summarize_rpf,
+        validate_transformer_representation_mode, write_complete_rpf,
+        write_complete_rpf_with_options,
     };
 
     fn assert_schema_shape_matches(actual: &Schema, expected: &Schema) {
@@ -5275,13 +5274,8 @@ mod tests {
 
     #[test]
     fn map_psse_zip_terms_to_rpf_pu_preserves_signs_and_nulls() -> Result<()> {
-        let mapped = map_psse_zip_terms_to_rpf_pu(
-            Some(50.0),
-            Some(-20.0),
-            None,
-            Some(10.0),
-            100.0,
-        )?;
+        let mapped =
+            map_psse_zip_terms_to_rpf_pu(Some(50.0), Some(-20.0), None, Some(10.0), 100.0)?;
         assert_eq!(
             mapped,
             LoadZipComponentsPu {

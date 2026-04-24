@@ -786,11 +786,11 @@ mod tests {
     use std::sync::Arc;
 
     use anyhow::{Context, Result};
+    use arrow::array::StringDictionaryBuilder;
     use arrow::array::{
         Array, ArrayRef, BooleanArray, Float32Array, Float64Array, Int32Array, StringArray,
         StructArray,
     };
-    use arrow::array::StringDictionaryBuilder;
     use arrow::datatypes::{DataType, Field, Schema};
     use arrow::datatypes::{Int32Type, UInt32Type};
     use arrow::ipc::writer::FileWriter;
