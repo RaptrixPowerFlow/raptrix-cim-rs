@@ -30,7 +30,7 @@ fn fixtures_dir() -> PathBuf {
 fn unique_temp_rpf_path(label: &str) -> PathBuf {
     let seq = OUTPUT_COUNTER.fetch_add(1, Ordering::Relaxed);
     std::env::temp_dir().join(format!(
-        "raptrix_fixture_v090_{}_{}_{}.rpf",
+        "raptrix_fixture_v091_{}_{}_{}.rpf",
         label,
         std::process::id(),
         seq
@@ -99,7 +99,7 @@ fn discover_fixture_cases() -> Result<Vec<FixtureCase>> {
 }
 
 #[test]
-fn all_workspace_fixture_cim_cases_emit_v090_compliant_rpf() -> Result<()> {
+fn all_workspace_fixture_cim_cases_emit_v091_compliant_rpf() -> Result<()> {
     let cases = discover_fixture_cases()?;
     assert!(
         !cases.is_empty(),

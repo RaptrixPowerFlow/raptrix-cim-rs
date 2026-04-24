@@ -1,8 +1,19 @@
-# Schema Contract (Locked contract: v0.9.0 — CGMES 3.0+ Only)
+# Schema Contract (Locked contract: v0.9.1 — CGMES 3.0+ Only)
 
 This repository is the authoritative source of truth for the Raptrix PowerFlow Interchange (`.rpf`) wire contract used by CIM-first conversion pipelines.
 
-v0.9.0 is the current contract and is a breaking release in this repository.
+v0.9.1 is the current contract and is an additive (non-breaking) release in this repository.
+
+## v0.9.1 Additive Changes
+
+- **`loads` table extended** with 4 new nullable ZIP-fidelity columns appended after `q_pu`:
+  - `p_i_pu` (constant-current active component, per-unit on system base)
+  - `q_i_pu` (constant-current reactive component, per-unit on system base)
+  - `p_y_pu` (constant-admittance active component, per-unit on system base)
+  - `q_y_pu` (constant-admittance reactive component, per-unit on system base)
+- Existing `loads.p_pu` / `loads.q_pu` remain constant-power components with unchanged semantics.
+- `SUPPORTED_RPF_VERSIONS` now accepts only `v0.9.1` / `0.9.1`.
+- v0.9.0 files remain structurally compatible for additive readers that tolerate missing trailing nullable `loads` fields.
 
 ## v0.9.0 Breaking Changes
 
@@ -11,11 +22,11 @@ v0.9.0 is the current contract and is a breaking release in this repository.
 - **`metadata` table extended** with 5 new nullable analysis-readiness fields. `case_mode` now accepts the additional value `"hour_ahead_advisory"`.
 - **New optional table `scenario_context`** for structured analysis context (real-time, hour-ahead advisory, planning feedback).
 - **Canonical table count**: 18 required tables (was 19).
-- `SUPPORTED_RPF_VERSIONS` now accepts only `v0.9.0` / `0.9.0`. v0.8.9 files are rejected at the version gate.
+- `SUPPORTED_RPF_VERSIONS` now accepts `v0.9.1` / `0.9.1` and keeps `v0.9.0` / `0.9.0` for backward-compatible reads.
 
 ## Contract Design Rationale
 
-- The v0.9.0 contract is designed for current grid models, including inverter-based resources (IBR), DER-heavy operation, advanced flow-control devices, and modern DC workflows.
+- The v0.9.1 contract is designed for current grid models, including inverter-based resources (IBR), DER-heavy operation, advanced flow-control devices, and modern DC workflows.
 - Required modern-grid tables (`multi_section_lines`, `dc_lines_2w`, `switched_shunt_banks`) are first-class contract elements, not side extensions.
 - IBR modeling is unified in the `generators` table (`is_ibr = true`, `ibr_subtype`); no separate `ibr_devices` table.
 - Arrow-native list and map types are used deliberately so parsers and solvers can ingest table payloads without lossy flattening.
@@ -59,8 +70,8 @@ Every `.rpf` file must include:
 
 Current locked values:
 
-- `raptrix.version = 0.9.0`
-- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.9.0 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.`
+- `raptrix.version = 0.9.1`
+- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.9.1 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.`
 - `rpf.case_fingerprint = <required deterministic case identity fingerprint>`
 - `rpf.validation_mode = topology_only | solved_ready`
 - `rpf.case_mode = flat_start_planning | warm_start_planning | solved_snapshot | hour_ahead_advisory` (v0.8.4+, required; `hour_ahead_advisory` added in v0.9.0)
@@ -84,6 +95,7 @@ Optional file-level metadata keys:
 - `rpf.solver.solved_shunt_state_presence = actual_solved | not_available` (v0.8.5+, only when solved)
 - `rpf.facts_solved_state_presence = actual_solved | not_available` (v0.8.6+, optional; defaults to `not_available` when `facts_devices` is present and `facts_solved` is absent)
 - `rpf.transformer_representation_mode = native_3w | expanded` (v0.8.7+, **required**; readers treating files from pre-v0.8.7 producers should default to `native_3w` when the key is absent)
+- `rpf.loads.zip_fidelity_presence = not_available | partial | complete` (v0.9.1+, optional; indicates whether `loads` ZIP fidelity columns are populated by source export path)
 
 ## File Container Layout
 
@@ -371,9 +383,38 @@ Recommended `control_mode` tokens for `dc_lines_2w` are `power`, `current`, `vol
 - `bus_id`: Int32, required
 - `id`: Dictionary<Int32, Utf8>, required
 - `status`: Boolean, required
-- `p_pu`: Float64, required
-- `q_pu`: Float64, required
+- `p_pu`: Float64, required — constant-power active component (P term), per-unit on system base
+- `q_pu`: Float64, required — constant-power reactive component (Q term), per-unit on system base
+- `p_i_pu`: Float64, nullable (v0.9.1+) — constant-current active component, per-unit on system base
+- `q_i_pu`: Float64, nullable (v0.9.1+) — constant-current reactive component, per-unit on system base
+- `p_y_pu`: Float64, nullable (v0.9.1+) — constant-admittance active component, per-unit on system base
+- `q_y_pu`: Float64, nullable (v0.9.1+) — constant-admittance reactive component, per-unit on system base
 - `name`: Dictionary<UInt32, Utf8>, nullable
+
+ZIP mapping semantics for PSS/E LOAD records (system base `S_base`):
+
+- `p_pu = PL / S_base`
+- `q_pu = QL / S_base`
+- `p_i_pu = IP / S_base`
+- `q_i_pu = IQ / S_base`
+- `p_y_pu = YP / S_base`
+- `q_y_pu = YQ / S_base`
+
+Sign convention:
+
+- Positive values represent net demand (load consumption) for both active and reactive components.
+- Negative values represent net injection.
+- Writers must preserve source sign without normalization.
+
+Null/default behavior:
+
+- When source data lacks a ZIP component (or the source format does not provide it), writers must emit `null` for that component.
+- Writers must not fabricate zero values to imply absent source data.
+- Legacy files without these fields remain readable; readers should treat missing columns as all-null for backward compatibility.
+- Writers should stamp `rpf.loads.zip_fidelity_presence` as:
+  - `not_available` when source/export path does not provide ZIP decomposition terms
+  - `partial` when ZIP terms are populated for only a subset of load rows
+  - `complete` when ZIP terms are populated (or explicitly zero-valued from source) for all load rows
 
 ### fixed_shunts
 
@@ -828,7 +869,7 @@ Locked contract: v0.7.0 adds optional node-breaker detail tables (`node_breaker_
 An independent parser is considered compliant if it:
 
 1. Opens `.rpf` as Arrow IPC File format.
-2. Verifies `raptrix.version` is in the set of supported contract versions (current: `0.8.6`).
+2. Verifies `raptrix.version` is in the set of supported contract versions (current: `0.9.1`).
 3. Verifies required root columns appear in canonical order.
 4. Uses `rpf.rows.<table_name>` metadata to trim padded null tails.
 5. Treats the 15 required root columns as mandatory even when their logical row counts are zero.

@@ -97,7 +97,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 | Connectivity detail | `--connectivity-detail` | Granular ConnectivityNode bus mapping; emits optional `connectivity_groups` table |
 | Node-breaker | `--connectivity-detail --node-breaker` | Adds switch-topology detail tables for operational and viewer workflows |
 
-### Output tables (schema contract v0.9.0)
+### Output tables (schema contract v0.9.1)
 
 **18 canonical tables (always emitted):** `metadata`, `buses`, `branches`, `multi_section_lines`, `dc_lines_2w`, `generators`, `loads`, `fixed_shunts`, `switched_shunts`, `switched_shunt_banks`, `transformers_2w`, `transformers_3w`, `areas`, `zones`, `owners`, `contingencies`, `interfaces`, `dynamics_models`
 
@@ -133,7 +133,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 
 ## Data Contract (Locked)
 
-- Current schema contract: v0.9.0 (CGMES 3.0+ only)
+- Current schema contract: v0.9.1 (CGMES 3.0+ only)
 - Canonical source: raptrix-cim-arrow/src/schema.rs
 - Contract policy and semantics: docs/schema-contract.md
 - Plain-English field guide: [docs/rpf-field-guide.md](docs/rpf-field-guide.md)
@@ -146,15 +146,16 @@ RPF standardization here is intentional: it enables direct CIM-to-powerflow inte
 
 ### Versioning Policy
 
-Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is now locked at schema `v0.9.0` for interoperability and deterministic CGMES 3.0+ ingest behavior, while the converter crate release tracks implementation maturity and is currently `0.3.0`.
+Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is now locked at schema `v0.9.1` for interoperability and deterministic CGMES 3.0+ ingest behavior, while the converter crate release tracks implementation maturity and is currently `0.3.1`.
 
-This split preserves compatibility guarantees for downstream tools at a given contract version. **Breaking change in v0.9.0**: readers in this repository now accept only v0.9.0 files; contracts below v0.9.0 must be migrated before ingestion.
+This split preserves compatibility guarantees for downstream tools at a given contract version. v0.9.1 is additive: readers in this repository accept v0.9.1 and v0.9.0 files for backward-compatible ingestion.
 
+**v0.9.1**: Adds optional `loads` ZIP fidelity fields (`p_i_pu`, `q_i_pu`, `p_y_pu`, `q_y_pu`) while preserving existing `p_pu`/`q_pu` constant-power semantics and required table shape.
 **v0.9.0**: Removes `ibr_devices` table (IBRs unified into `generators` via `is_ibr`), adds operational-outcome columns to `contingencies`, adds analysis-readiness fields to `metadata`, and introduces the optional `scenario_context` table.
 
 To keep crate and documentation versions consistent, use the version sync helper:
 
-- `./scripts/sync-versions.ps1 -Version 0.3.0`
+- `./scripts/sync-versions.ps1 -Version 0.3.1`
 - CI also enforces this via `.github/workflows/version-consistency.yml`.
 
 For third-party implementers, [docs/schema-contract.md](docs/schema-contract.md) is the authoritative reader/writer contract. It now documents the `.rpf` Arrow IPC container layout, canonical root column ordering, row-count metadata trimming rules, optional table detection, and full column/type references needed to build a compatible parser.
@@ -226,7 +227,7 @@ These are local engineering reference numbers, not vendor comparison claims. Use
 
 ## Project Layout
 
-- raptrix-cim-arrow/src/schema.rs: v0.9.0 table schemas, metadata constants, and schema registry helpers
+- raptrix-cim-arrow/src/schema.rs: v0.9.1 table schemas, metadata constants, and schema registry helpers
 - raptrix-cim-arrow/src/io.rs: generic root `.rpf` assembly, validation, readback, and summary helpers
 - src/models: CIM data structures and traits
 - src/parser.rs: parse helpers and EQ-to-branch mapping
@@ -234,13 +235,15 @@ These are local engineering reference numbers, not vendor comparison claims. Use
 
 ### Contract Design Rationale (short)
 
-v0.9.0 formalizes the design decision to treat modern-grid constructs (IBRs, DERs,
+v0.9.1 continues the design decision to treat modern-grid constructs (IBRs, DERs,
 advanced flow-control devices, and DC workflows) as first-class components of the RPF interchange.
 This README points to `docs/schema-contract.md` for full normative rationale and
 required writer obligations.
 
 ### Locked contract v0.9.x notable fields
 
+- v0.9.1 additions:
+  - `loads` table: additive nullable ZIP fidelity fields (`p_i_pu`, `q_i_pu`, `p_y_pu`, `q_y_pu`)
 - v0.9.0 additions:
   - Removed `ibr_devices` table; IBRs now use `generators.is_ibr = true` + `ibr_subtype`
   - `contingencies` table: 6 new nullable operational-outcome columns
@@ -540,3 +543,4 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
 
 Copyright (c) 2026 Raptrix PowerFlow
 `n`n
+

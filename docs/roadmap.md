@@ -40,6 +40,19 @@
 - DL profile ingest for IEC 61970-453 diagram layout objects and points.
 - Full ENTSO-E CGMES v3.0 conformity suite: 11/11 test cases, 44 variants, 100% pass.
 
+## 0.9.1 Load-Model Fidelity (Delivered, Additive)
+
+- Added additive `loads` ZIP-fidelity columns: `p_i_pu`, `q_i_pu`, `p_y_pu`, `q_y_pu` (nullable).
+- Preserved existing `p_pu` / `q_pu` semantics as constant-power components with no behavior change.
+- Kept required table set/order unchanged and retained backward-compatible read behavior.
+- Documented PSS/E-to-RPF mapping formulas and sign conventions in `docs/schema-contract.md`.
+
+Public positioning (sanitized):
+
+- RPF schema v0.9.1 introduces additive, backward-compatible fidelity extensions for richer source-model preservation while keeping existing workflows stable.
+- These enhancements improve interchange completeness for advanced planning/operations datasets without changing required table structure or breaking current readers.
+- The mapping is rooted in standard per-unit normalization and physical decomposition of ZIP load terms (constant-power, constant-current, constant-admittance), preserving source signs and avoiding fabricated values.
+
 ## Ongoing Focus Areas
 
 - Broaden multi-file CGMES ingest coverage for assembled network cases.
@@ -54,7 +67,21 @@
 - **Safety checks must pass**: run `./scripts/public-safety-check.sh --mode tracked` locally and keep `.github/workflows/public-safety.yml` green.
 - **Release matrix must pass for all target platforms**: Windows x86_64, Linux x86_64, macOS arm64.
 - **No external confidential dataset leakage**: keep utility/partner datasets only in ignored locations such as `tests/data/external/`.
+- **No internal strategy leakage**: keep internal-only roadmap, partner strategy, and GTM artifacts out of tracked files.
 - **Contract/version consistency**: keep README claims, `docs/schema-contract.md`, and `raptrix-cim-arrow/src/schema.rs` aligned on the locked contract version.
+
+## Internal Roadmap Hygiene (Required)
+
+- Public roadmap (`docs/roadmap.md`) must remain sanitized and implementation-focused.
+- Internal roadmap must live only in ignored files (for example `docs/roadmap.internal.md`) or private systems.
+- Do not commit partner-specific commercial plans, confidential timelines, customer names, or non-public dataset references.
+- Before release, run a manual sweep for sensitive terms in docs and commit messages.
+
+## Handoff Alignment (Near-Term)
+
+- Keep schema ownership in this repository: contract semantics, versioning, compatibility policy, and validation behavior.
+- Coordinate exporter-specific population work (for example PSS/E ZIP-field population) in source-format repos after contract release lands.
+- Prioritize seamless planning-to-operations-to-long-term handoff via strict schema governance and explicit provenance semantics.
 
 ## CIM Coverage Risk Checklist (Triple-Check Before Public Announcements)
 

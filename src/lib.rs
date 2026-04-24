@@ -26,6 +26,7 @@ pub use raptrix_cim_arrow::{
 };
 
 pub use rpf_writer::{
-    BusResolutionMode, TransformerRepresentationMode, WriteOptions, WriteSummary,
-    write_complete_rpf, write_complete_rpf_with_options,
+    BusResolutionMode, LoadZipComponentsPu, TransformerRepresentationMode, WriteOptions,
+    WriteSummary, map_psse_zip_terms_to_rpf_pu, write_complete_rpf,
+    write_complete_rpf_with_options,
 };

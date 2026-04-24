@@ -27,9 +27,11 @@ Cargo.lock
 *.pss
 *.PSS
 *.pdf
+*.docx
 
 # Internal-only marketing guide must never be committed.
 INTERNAL-MARKETING-GUIDE.md
+docs/roadmap.internal*
 
 # Local Python virtual environment
 .venv/
@@ -38,6 +40,7 @@ __pycache__/
 
 # Local temp outputs
 /tmp/
+/.raptrix-test-data-root
 
 # Local release packaging outputs (keep old tracked dist history untouched).
 dist/raptrix-cim-rs-v*-windows-x86_64/

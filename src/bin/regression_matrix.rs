@@ -1,4 +1,5 @@
 use std::env;
+use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, ExitCode, Stdio};
 
@@ -55,6 +56,23 @@ fn run_python(
         .status()
 }
 
+fn resolve_test_data_root() -> Option<String> {
+    if let Ok(value) = env::var("RAPTRIX_TEST_DATA_ROOT") {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+
+    let fallback = fs::read_to_string(".raptrix-test-data-root").ok()?;
+    let trimmed = fallback.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
 fn main() -> ExitCode {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let script = repo_root.join("tests").join("generate_rpf_matrix.py");
@@ -66,9 +84,11 @@ fn main() -> ExitCode {
     let cli_args: Vec<String> = env::args().skip(1).collect();
     let (data_root_override, forwarded) = parse_args(cli_args);
 
-    let data_root = data_root_override.or_else(|| env::var("RAPTRIX_TEST_DATA_ROOT").ok());
+    let data_root = data_root_override.or_else(resolve_test_data_root);
     let Some(data_root) = data_root else {
-        eprintln!("RAPTRIX_TEST_DATA_ROOT is not set. Pass --data-root or set the env var.");
+        eprintln!(
+            "RAPTRIX_TEST_DATA_ROOT is not set. Pass --data-root, set the env var, or create .raptrix-test-data-root."
+        );
         print_usage();
         return ExitCode::from(2);
     };

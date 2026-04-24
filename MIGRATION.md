@@ -165,6 +165,46 @@ row per flagged case. See `docs/schema-contract.md` for the full column referenc
 
 ---
 
+## Schema Contract 0.9.1 (Additive)
+
+**Schema version**: v0.9.1 | **Crate version**: 0.3.1
+
+### What changed
+
+`loads` now includes 4 optional ZIP-fidelity columns appended after `q_pu`:
+
+- `p_i_pu` (constant-current active component, per-unit on system base)
+- `q_i_pu` (constant-current reactive component, per-unit on system base)
+- `p_y_pu` (constant-admittance active component, per-unit on system base)
+- `q_y_pu` (constant-admittance reactive component, per-unit on system base)
+
+Existing fields remain unchanged:
+
+- `p_pu` is still constant-power active load.
+- `q_pu` is still constant-power reactive load.
+
+### Mapping guidance (PSS/E LOAD -> RPF loads)
+
+Given system base `S_base`:
+
+- `p_pu = PL / S_base`
+- `q_pu = QL / S_base`
+- `p_i_pu = IP / S_base`
+- `q_i_pu = IQ / S_base`
+- `p_y_pu = YP / S_base`
+- `q_y_pu = YQ / S_base`
+
+Writers must preserve source sign and emit `null` when source ZIP terms are absent.
+
+### Compatibility
+
+- This is a non-breaking additive change.
+- Readers that ignore unknown fields continue to function unchanged.
+- Readers implementing strict schema reconstruction should treat missing trailing nullable
+  load ZIP columns as null when reading older files.
+
+---
+
 ## Schema Contract 0.8.9 (Breaking)
 
 **Schema version**: v0.8.9 | **Crate version**: 0.2.9

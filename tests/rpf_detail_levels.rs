@@ -194,7 +194,7 @@ fn supported_external_v3_fixtures_match_expected_optional_tables() -> Result<()>
 }
 
 #[test]
-fn generated_v090_outputs_make_detail_levels_explicit() -> Result<()> {
+fn generated_v091_outputs_make_detail_levels_explicit() -> Result<()> {
     let eq_path = write_eq_fixture_with_breaker()?;
     let eq_owned = eq_path.to_string_lossy().into_owned();
     let inputs = vec![eq_owned.as_str()];
