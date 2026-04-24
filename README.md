@@ -71,10 +71,10 @@ raptrix-cim-rs is production-ready against the full ENTSO-E CGMES v3.0 conformit
 
 This project is CIM-first and IEC 61970-native for both North American and European workflows:
 
-- **US / NAESB-first framing**: The parser and schema target IEC 61970 CIM 17+ classes and RDF/XML profile exchange directly.
-- **EU / CGMES validation at scale**: ENTSO-E CGMES v3.0.3 conformity datasets are used as the canonical public regression corpus.
-- **Same model foundation**: NAESB exchanges and CGMES profile sets use the same IEC 61970 CIM family (EQ/TP/SV/SSH/DY/DL), so the core ingest architecture is shared.
-- **Public-data reality**: There is no public NAESB CIM 17+ test-configuration bundle equivalent to ENTSO-E CAS; the ENTSO-E suite remains the strongest open validation proxy.
+- **CIM 17+ baseline**: The parser and schema target IEC 61970 CIM classes and RDF/XML profile exchange directly.
+- **Public validation corpus**: ENTSO-E CGMES v3.0.3 conformity datasets are used as the canonical public regression corpus.
+- **Shared model foundation**: Core ingest architecture is built around IEC 61970 profile families (EQ/TP/SV/SSH/DY/DL).
+- **Public-data reality**: ENTSO-E CAS remains the strongest open validation proxy currently available.
 
 ### Profile ingest (CGMES 3.0+ only)
 
@@ -150,7 +150,7 @@ Raptrix uses split versioning by design: schema contract version and crate relea
 
 This split preserves compatibility guarantees for downstream tools at a given contract version. **Breaking change in v0.9.0**: readers in this repository now accept only v0.9.0 files; contracts below v0.9.0 must be migrated before ingestion.
 
-**v0.9.0**: Removes `ibr_devices` table (IBRs unified into `generators` via `is_ibr`), adds Sentinel operational-outcome columns to `contingencies`, adds Sentinel-readiness fields to `metadata`, and introduces the optional `scenario_context` table.
+**v0.9.0**: Removes `ibr_devices` table (IBRs unified into `generators` via `is_ibr`), adds operational-outcome columns to `contingencies`, adds analysis-readiness fields to `metadata`, and introduces the optional `scenario_context` table.
 
 To keep crate and documentation versions consistent, use the version sync helper:
 
@@ -232,20 +232,20 @@ These are local engineering reference numbers, not vendor comparison claims. Use
 - src/parser.rs: parse helpers and EQ-to-branch mapping
 - src/rpf_writer.rs: CIM-specific mapping from parsed CGMES content into canonical table batches
 
-### 2026 First-Principles Mandate (short)
+### Contract Design Rationale (short)
 
 v0.9.0 formalizes the design decision to treat modern-grid constructs (IBRs, DERs,
-Smart Valves, and DC workflows) as first-class components of the RPF interchange.
-This README points to `docs/schema-contract.md` for the full normative rationale and
+advanced flow-control devices, and DC workflows) as first-class components of the RPF interchange.
+This README points to `docs/schema-contract.md` for full normative rationale and
 required writer obligations.
 
 ### Locked contract v0.9.x notable fields
 
 - v0.9.0 additions:
   - Removed `ibr_devices` table; IBRs now use `generators.is_ibr = true` + `ibr_subtype`
-  - `contingencies` table: 6 new nullable Sentinel operational-outcome columns
-  - `metadata` table: 5 new nullable Sentinel-readiness fields; `case_mode` now accepts `hour_ahead_advisory`
-  - New optional `scenario_context` table for Sentinel export context
+  - `contingencies` table: 6 new nullable operational-outcome columns
+  - `metadata` table: 5 new nullable analysis-readiness fields; `case_mode` now accepts `hour_ahead_advisory`
+  - New optional `scenario_context` table for structured analysis context
 - v0.8.6 additions:
   - Optional `facts_devices` table for explicit FACTS device identity and control metadata
   - Optional `facts_solved` table for solved FACTS replay semantics

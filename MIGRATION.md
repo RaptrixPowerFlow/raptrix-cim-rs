@@ -27,18 +27,18 @@ This repository was refactored from a single crate into a Cargo workspace with t
 - CGMES-specific row construction in `src/rpf_writer.rs`
 - CLI behavior in `src/main.rs`
 
-This boundary is intentional: the shared crate should not know how CIM, PSS/E, MATLAB, or any future format is parsed. It should only know the canonical contract and how to emit and validate a compliant `.rpf` file.
+This boundary is intentional: the shared crate should not know how CIM, PSS/E, MATLAB, or other source formats are parsed. It should only know the canonical contract and how to emit and validate a compliant `.rpf` file.
 
 ## Why The Split Was Done
 
 - keeps the locked RPF contract in one source of truth
-- reduces duplication for future converter repositories
+- reduces duplication for additional converter repositories
 - lets format-specific bugs and parser changes stay isolated from Arrow contract changes
 - makes contract fixes available to every converter that depends on the shared crate
 
-## How Future Converter Crates Should Reuse It
+## How Other Converter Crates Should Reuse It
 
-For a future converter such as `raptrix-psse-rs`:
+For another converter such as `raptrix-psse-rs`:
 
 1. Depend on `raptrix-cim-arrow`
 2. Parse the source format into canonical table rows or `RecordBatch` values
@@ -131,8 +131,8 @@ emit an `ibr_devices` root column in v0.9.0+ files.
 
 ### Extended: `contingencies` table — 6 new nullable columns
 
-Six nullable Sentinel operational-outcome columns are appended after `elements`. These are null
-in standard planning files and populated by Sentinel in real-time analysis exports:
+Six nullable operational-outcome columns are appended after `elements`. These are null
+in standard planning files and populated in real-time analysis exports:
 
 - `risk_score` (Float64, nullable)
 - `cleared_by_reserves` (Boolean, nullable)
@@ -146,7 +146,7 @@ accept 8.
 
 ### Extended: `metadata` table — 5 new nullable fields
 
-Five nullable Sentinel-readiness fields are appended at the end of the `metadata` row:
+Five nullable analysis-readiness fields are appended at the end of the `metadata` row:
 
 - `hour_ahead_uncertainty_band` (Float64, nullable)
 - `commitment_source` (Utf8, nullable)
@@ -159,8 +159,8 @@ existing `flat_start_planning`, `warm_start_planning`, and `solved_snapshot` val
 
 ### New optional table: `scenario_context`
 
-The `scenario_context` table is an optional Sentinel export table. It is absent from standard
-planning files. Writers producing Sentinel analysis exports should populate this table with one
+The `scenario_context` table is an optional analysis export table. It is absent from standard
+planning files. Writers producing analysis exports should populate this table with one
 row per flagged case. See `docs/schema-contract.md` for the full column reference.
 
 ---
@@ -169,17 +169,17 @@ row per flagged case. See `docs/schema-contract.md` for the full column referenc
 
 **Schema version**: v0.8.9 | **Crate version**: 0.2.9
 
-### 2026 First-Principles Mandate
+### Design Rationale
 
-v0.8.9 formalizes a modern-grid-first contract. The schema now treats IBR-heavy operation,
-distributed flexibility, Smart Valve-style controls, and modern DC workflows as core model
-features. This is reflected in required root tables and required metadata, not optional add-ons.
+v0.8.9 formalizes contract updates for IBR-heavy operation, distributed flexibility,
+advanced control workflows, and modern DC modeling. This is reflected in required root tables
+and required metadata rather than optional add-ons.
 
-### Beyond Parity
+### Compatibility Position
 
-This release is not a parity-first redesign around legacy interchange formats. Compatibility with
-legacy workflows can still be achieved where practical, but contract design is anchored in
-first-principles network physics and IEC 61970 CIM semantics.
+This release prioritizes a consistent canonical contract while preserving compatibility with
+legacy workflows where practical. Contract design remains aligned with
+IEC 61970 CIM semantics and power-system modeling fundamentals.
 
 ### Breaking support policy
 
