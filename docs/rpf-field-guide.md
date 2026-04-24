@@ -4,7 +4,7 @@
 
 This guide explains every table and field in an `.rpf` file in plain English. It is written for engineers who need to read, validate, or build tools against RPF files without digging into Arrow source code. For the normative type-level contract see [schema-contract.md](schema-contract.md).
 
-This repository is **CIM-first**: it targets IEC 61970 CIM 17+ exchange for both North American and European integrations. Public regression coverage is anchored on ENTSO-E CGMES v3.0.3 datasets because there is no public NAESB test-package equivalent.
+This repository targets IEC 61970 CIM 17+ exchange for North American and European integrations. Public regression coverage is anchored on ENTSO-E CGMES v3.0.3 datasets.
 
 This repo is also the source of truth for the RPF contract. Use `docs/schema-contract.md` for normative reader/writer requirements and this guide for plain-English implementation guidance.
 
@@ -61,7 +61,7 @@ These are key-value strings in the Arrow file header. Every RPF reader should ch
 
 | Key | What it means |
 |---|---|
-| `rpf.solver.version` | Version string of the solver that produced this file (e.g. `raptrix-core 1.4.2`). |
+| `rpf.solver.version` | Version string of the solver that produced this file (for example `solver-name X.Y.Z`). |
 | `rpf.solver.iterations` | Number of Newton-Raphson iterations to convergence. |
 | `rpf.solver.accuracy` | Final mismatch residual norm. Smaller is more accurate. Typical convergence target is 1e-6 or better. |
 | `rpf.solver.mode` | Bus control mode at convergence, e.g. `PV` (voltage-controlled generation) or `PV_to_PQ` (generator hit a reactive limit and switched to constant-Q control). |

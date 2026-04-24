@@ -8,7 +8,7 @@ Describe the exact solver behavior this feature enables.
 
 ## 2) Required Inputs
 
-- CIM profile baseline: IEC 61970 CIM 17+ (US/NAESB and EU/CGMES)
+- CIM profile baseline: IEC 61970 CIM 17+
 - Profile payloads: EQ, TP, SV, SSH, DY, DL, other
 - Required classes/fields:
 - Cardinality assumptions:

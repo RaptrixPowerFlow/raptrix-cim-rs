@@ -4,7 +4,7 @@
 
 raptrix-cim-rs turns CIM RDF/XML (including CGMES profile sets) into Arrow-native outputs for power-flow and related solver pipelines, with a locked v0.8.5 Raptrix PowerFlow Interchange schema contract.
 
-The architecture is CIM-first for both US and EU use: IEC 61970 CIM 17+ is the model baseline, while ENTSO-E CGMES v3.0.3 is used as the public regression corpus.
+The architecture is IEC 61970 CIM 17+ based, with ENTSO-E CGMES v3.0.3 used as the public regression corpus.
 
 ## Design Goals
 
@@ -64,7 +64,7 @@ Locked schema boundaries in v0.8.5:
 - Integration tests print parsed counts and first-item spot checks.
 - Benchmark-style parser test prints approximate parse rates for baseline tracking.
 
-## Near-Term Evolution
+## Ongoing Evolution
 
 - Add TP/SV/SSH joins for richer branch and bus attributes.
 - Keep `.rpf` Arrow IPC writer and reader utilities centralized in `raptrix-cim-arrow`.

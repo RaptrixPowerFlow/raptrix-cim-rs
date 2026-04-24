@@ -4,7 +4,7 @@
 
 - CIM-first messaging: IEC 61970 CIM 17+ baseline for North American and European integrations.
 - EU public validation: ENTSO-E CGMES v3.0.3 conformity suite remains the canonical public regression source.
-- US deployment reality: no public NAESB test-configuration package equivalent is currently available; partner utility data is used for private validation when available.
+- Public dataset reality: equivalent open test-configuration packages are limited outside ENTSO-E CAS.
 
 ## 0.1 Baseline (Delivered)
 
@@ -40,14 +40,14 @@
 - DL profile ingest for IEC 61970-453 diagram layout objects and points.
 - Full ENTSO-E CGMES v3.0 conformity suite: 11/11 test cases, 44 variants, 100% pass.
 
-## Next
+## Ongoing Focus Areas
 
-- **Multi-TSO EQ merge**: Support multiple EQ files (e.g., BE + NL authority sets) as a merged ingest unit, enabling the MicroGrid assembled cases.
-- **Expanded CIM class coverage**: HVDC converters, FACTS devices, and additional shunt compensation types.
-- **CI regression gate**: Automated CGMES conformity runs on pull requests with pass/fail enforcement.
-- **RPF standard stewardship**: Keep `docs/schema-contract.md` authoritative and `docs/rpf-field-guide.md` synchronized as the public human-readable companion.
-- **Performance benchmarking suite**: Deterministic throughput tests on representative datasets with guardrails against regressions.
-- **Python bindings or C FFI**: Expose `write_complete_rpf_with_options` for downstream tooling without requiring a Rust build.
+- Broaden multi-file CGMES ingest coverage for assembled network cases.
+- Expand CIM class coverage for additional converter and shunt equipment families.
+- Keep automated regression checks robust for contract and ingest behavior.
+- Maintain `docs/schema-contract.md` as the normative contract and keep `docs/rpf-field-guide.md` aligned.
+- Strengthen reproducible performance benchmarking guardrails.
+- Improve downstream integration options for non-Rust toolchains.
 
 ## Public Release Readiness Gate (Required Before Public Pushes)
 
@@ -60,8 +60,8 @@
 
 - **Contingencies completeness**: current contract supports contingency rows, but splitter/breaker paths still include stub semantics in some flows and must be called out transparently.
 - **Dynamics completeness**: DY ingest is implemented with EQ fallback; placeholder dynamics rows may still appear when source coverage is missing.
-- **FACTS and HVDC breadth**: schema support is expanding, but class-level ingest coverage should be validated case-by-case before claiming full operational parity.
-- **Public NAESB-style corpus gap**: there is still no public NAESB test-configuration suite equivalent to ENTSO-E CAS, so publish notes should keep that limitation explicit.
+- **FACTS and HVDC breadth**: class-level ingest coverage should be validated case-by-case before claiming full operational parity.
+- **Public corpus gap**: no public test-configuration suite currently matches ENTSO-E CAS coverage; publish notes should keep this limitation explicit.
 
 ## How to Propose Work
 

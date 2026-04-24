@@ -31,20 +31,20 @@ Copyright (c) 2026 Raptrix PowerFlow
 
 ### Added
 
-- `contingencies` table: 6 new nullable Sentinel operational-outcome columns appended after `elements`:
+- `contingencies` table: 6 new nullable operational-outcome columns appended after `elements`:
   - `risk_score` (Float64, nullable)
   - `cleared_by_reserves` (Boolean, nullable)
   - `voltage_collapse_flag` (Boolean, nullable)
   - `recovery_possible` (Boolean, nullable)
   - `recovery_time_min` (Float64, nullable)
   - `greedy_reserve_summary` (Utf8, nullable)
-- `metadata` table: 5 new nullable Sentinel-readiness fields:
+- `metadata` table: 5 new nullable analysis-readiness fields:
   - `hour_ahead_uncertainty_band` (Float64, nullable)
   - `commitment_source` (Utf8, nullable)
   - `solver_q_limit_infeasible_count` (Int32, nullable)
   - `pv_to_pq_switch_count` (Int32, nullable)
   - `real_time_discovery` (Boolean, nullable)
-- New optional `scenario_context` table (15 fields) for Sentinel export context: real-time, hour-ahead advisory, and planning feedback records.
+- New optional `scenario_context` table (15 fields) for export context: real-time, hour-ahead advisory, and planning feedback records.
 - `case_mode` metadata field now accepts `"hour_ahead_advisory"` in addition to existing values.
 
 ### Changed
@@ -247,7 +247,7 @@ Copyright (c) 2026 Raptrix PowerFlow
   - `not_available` — solved data not obtainable on this export path.
   - `not_computed` — no solve has run; planning-only case (default for all CIM exports).
 - Solver provenance columns on `metadata` row (all nullable; populated only when `solved_state_presence = actual_solved`):
-  - `solver_version` (Utf8) — solver software version string, e.g. `"raptrix-core 1.4.2"`.
+  - `solver_version` (Utf8) — solver software version string.
   - `solver_iterations` (Int32) — Newton-Raphson iteration count until convergence.
   - `solver_accuracy` (Float64) — final mismatch residual norm.
   - `solver_mode` (dict) — bus control mode after convergence, e.g. `"PV"`, `"PV_to_PQ"`.
@@ -403,7 +403,7 @@ Copyright (c) 2026 Raptrix PowerFlow
 
 - Added explicit compatibility/versioning rules for forward compatibility and MAJOR/MINOR/PATCH bump criteria in `docs/schema-contract.md`.
 - Added cross-repo release synchronization workflow (`docs/release-sync-workflow.md`) and linked it from README.
-- Added a 0.8 roadmap note that richer dynamics coverage is waiting on feedback from `raptrix-core` and Smart Wires device workflows.
+- Added a 0.8 roadmap note clarifying that richer dynamics coverage remains under active evaluation.
 
 ## [Schema Contract 0.6.0] - 2026-03-22
 

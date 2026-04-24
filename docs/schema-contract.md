@@ -7,23 +7,23 @@ v0.9.0 is the current contract and is a breaking release in this repository.
 ## v0.9.0 Breaking Changes
 
 - **`ibr_devices` table removed.** IBRs are now modeled exclusively in the `generators` table using `is_ibr = true` and `ibr_subtype`. Files claiming v0.9.0 must not include an `ibr_devices` root column.
-- **`contingencies` table extended** with 6 new nullable operational-outcome columns for Sentinel: `risk_score`, `cleared_by_reserves`, `voltage_collapse_flag`, `recovery_possible`, `recovery_time_min`, `greedy_reserve_summary`. These are null in standard planning files.
-- **`metadata` table extended** with 5 new nullable Sentinel-readiness fields. `case_mode` now accepts the additional value `"hour_ahead_advisory"`.
-- **New optional table `scenario_context`** for structured Sentinel export context (real-time, hour-ahead advisory, planning feedback).
+- **`contingencies` table extended** with 6 new nullable operational-outcome columns: `risk_score`, `cleared_by_reserves`, `voltage_collapse_flag`, `recovery_possible`, `recovery_time_min`, `greedy_reserve_summary`. These are null in standard planning files.
+- **`metadata` table extended** with 5 new nullable analysis-readiness fields. `case_mode` now accepts the additional value `"hour_ahead_advisory"`.
+- **New optional table `scenario_context`** for structured analysis context (real-time, hour-ahead advisory, planning feedback).
 - **Canonical table count**: 18 required tables (was 19).
 - `SUPPORTED_RPF_VERSIONS` now accepts only `v0.9.0` / `0.9.0`. v0.8.9 files are rejected at the version gate.
 
-## 2026 First-Principles Mandate
+## Contract Design Rationale
 
-- The v0.9.0 contract is designed from power-system first principles for 2026+ networks, including inverter-based resources (IBR), DER-heavy operation, Smart Valve controls, modern DC workflows, and real-time Sentinel analysis.
+- The v0.9.0 contract is designed for current grid models, including inverter-based resources (IBR), DER-heavy operation, advanced flow-control devices, and modern DC workflows.
 - Required modern-grid tables (`multi_section_lines`, `dc_lines_2w`, `switched_shunt_banks`) are first-class contract elements, not side extensions.
 - IBR modeling is unified in the `generators` table (`is_ibr = true`, `ibr_subtype`); no separate `ibr_devices` table.
 - Arrow-native list and map types are used deliberately so parsers and solvers can ingest table payloads without lossy flattening.
 
-## Beyond Parity
+## Compatibility Rationale
 
-- This contract is not designed as a PSS/E parity-first schema.
-- Interoperability with legacy toolchains may be achieved where practical, but parity is a side-effect of robust physical modeling, not the design goal.
+- This contract is not designed as a parity-first schema for any single legacy format.
+- Interoperability with legacy toolchains may be achieved where practical, but the primary design goal is a stable, physically consistent interchange contract.
 - The normative source remains IEC 61970 CIM semantics mapped into a stable Arrow contract for deterministic downstream ingestion.
 
 ## Contract Policy
@@ -36,8 +36,8 @@ v0.9.0 is the current contract and is a breaking release in this repository.
 
 - **CGMES Ingest Target**: v3.0 and later only (complete merged profiles with EQ, TP, SV, DL, GL, SSH, etc.).
 - **Legacy Support Dropped**: CGMES 2.4.x support was removed in v0.8.0. All ingest is now CGMES 3.0+ only. This enables cleaner parsing logic, better performance, and full alignment with ENTSO-E Conformity Assessment Scheme (v3.0.3 current).
-- **CIM-first for US and EU**: raptrix-cim-rs targets IEC 61970 CIM 17+ classes and RDF/XML profile exchange directly. This aligns with both North American (NAESB-governed) and European (CGMES profile-set) workflows.
-- **Public validation corpus**: ENTSO-E CGMES v3.0.3 CAS remains the canonical public regression dataset. There is no public NAESB test-configuration bundle equivalent to ENTSO-E CAS.
+- **CIM baseline**: raptrix-cim-rs targets IEC 61970 CIM 17+ classes and RDF/XML profile exchange directly.
+- **Public validation corpus**: ENTSO-E CGMES v3.0.3 CAS remains the canonical public regression dataset.
 - The `.rpf` contract is forward compatible for additive changes only. Readers must ignore unknown trailing root columns and unknown file metadata keys.
 - Breaking file-format changes (required column rename/removal/reorder, required table rename/removal/reorder, type change for required fields) require a MAJOR contract bump.
 - Additive changes (new optional columns, new optional tables, new optional metadata keys) require at least a MINOR bump.
@@ -131,7 +131,7 @@ Optional root columns, when present, are appended after the required columns in 
 26. `switched_shunts_solved`
 27. `facts_devices`
 28. `facts_solved`
-29. `scenario_context` (v0.9.0+, Sentinel export)
+29. `scenario_context` (v0.9.0+, optional analysis context)
 
 `connectivity_groups` is an optional detail table emitted only in connectivity-detail mode and is appended after the required root columns when that mode is active.
 
@@ -477,7 +477,7 @@ Inductive steps must be represented in `switched_shunt_banks`.
 
 - `contingency_id`: Dictionary<Int32, Utf8>, required
 - `elements`: List<Struct>, required
-- `risk_score`: Float64, nullable (v0.9.0+) — Sentinel-computed composite risk score
+- `risk_score`: Float64, nullable (v0.9.0+) — composite risk score
 - `cleared_by_reserves`: Boolean, nullable (v0.9.0+) — true if contingency was cleared by greedy reserve dispatch
 - `voltage_collapse_flag`: Boolean, nullable (v0.9.0+) — true if voltage collapse was detected
 - `recovery_possible`: Boolean, nullable (v0.9.0+) — true if system recovery is achievable within NERC criteria
@@ -566,7 +566,7 @@ Solved presence convention (v0.8.6+):
 
 ### scenario_context (optional, v0.9.0+)
 
-Stores structured context for every flagged or exported case produced by Sentinel (real-time intelligent contingency analysis). This table is optional — present in Sentinel exports, absent in standard planning files.
+Stores structured context for flagged or exported analysis cases. This table is optional — present in analysis exports, absent in standard planning files.
 
 - `scenario_context_id`: Int32, required — primary key
 - `case_id`: Utf8, required — links to `metadata.case_fingerprint`
@@ -579,7 +579,7 @@ Stores structured context for every flagged or exported case produced by Sentine
 - `planning_feedback_flag`: Boolean, required — true if this case should trigger a planning study review
 - `planning_assumption_violated`: Utf8, nullable — description of the violated planning assumption
 - `recommended_action`: Utf8, nullable — operator-readable recommended corrective action
-- `investigation_summary`: Utf8, nullable — Sentinel analysis narrative
+- `investigation_summary`: Utf8, nullable — analysis narrative
 - `load_forecast_error_pct`: Float64, nullable — forecast error contribution for hour-ahead cases
 - `created_timestamp_utc`: Utf8, required — ISO 8601 UTC timestamp when this context record was created
 - `params`: Map<String, Float64>, nullable — extensible key/value parameters
