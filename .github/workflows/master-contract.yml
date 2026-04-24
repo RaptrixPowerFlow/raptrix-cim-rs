@@ -20,10 +20,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
+      - name: Setup Rust (stable + rustfmt)
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt
+          rustup default stable
+          rustc --version
+          cargo --version
 
       - name: Cargo fmt check
         run: cargo fmt --all -- --check
