@@ -787,17 +787,21 @@ mod tests {
 
     use anyhow::{Context, Result};
     use arrow::array::{
-        ArrayRef, Float32Array, Float64Array, Int32Array, StringArray, StructArray,
+        Array, ArrayRef, BooleanArray, Float32Array, Float64Array, Int32Array, StringArray,
+        StructArray,
     };
+    use arrow::array::StringDictionaryBuilder;
     use arrow::datatypes::{DataType, Field, Schema};
+    use arrow::datatypes::{Int32Type, UInt32Type};
     use arrow::ipc::writer::FileWriter;
     use arrow::record_batch::RecordBatch;
 
     use crate::schema::{
         METADATA_KEY_RPF_VERSION, METADATA_KEY_VERSION, SCHEMA_VERSION, TABLE_BRANCHES,
         TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED,
-        all_table_schemas, branches_schema, diagram_objects_schema, diagram_points_schema,
-        facts_devices_schema, facts_solved_schema, schema_metadata,
+        TABLE_LOADS, all_table_schemas, branches_schema, diagram_objects_schema,
+        diagram_points_schema, facts_devices_schema, facts_solved_schema, loads_schema,
+        schema_metadata,
     };
 
     use super::{
@@ -1026,7 +1030,152 @@ mod tests {
             branches.schema().fields().len(),
             branches_schema().fields().len()
         );
-        assert_eq!(SCHEMA_VERSION, "0.9.0");
+        assert_eq!(SCHEMA_VERSION, "0.9.1");
+        Ok(())
+    }
+
+    #[test]
+    fn read_supports_older_loads_schema_with_missing_zip_columns() -> Result<()> {
+        let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_backward_loads_read");
+        std::fs::create_dir_all(&tmp_dir)?;
+        let output_path = tmp_dir.join("v090_like_loads.rpf");
+
+        let mut table_batches: HashMap<&'static str, RecordBatch> = all_table_schemas()
+            .into_iter()
+            .map(|(name, schema)| (name, RecordBatch::new_empty(Arc::new(schema))))
+            .collect();
+
+        let old_load_fields: Vec<Field> = loads_schema().fields()[0..6]
+            .iter()
+            .map(|field| field.as_ref().clone())
+            .collect();
+        let old_loads_schema = Schema::new_with_metadata(old_load_fields, schema_metadata());
+        table_batches.insert(
+            TABLE_LOADS,
+            RecordBatch::new_empty(Arc::new(old_loads_schema.clone())),
+        );
+
+        let mut root_fields = Vec::new();
+        let mut root_columns: Vec<ArrayRef> = Vec::new();
+        for (name, _) in all_table_schemas() {
+            let table_batch = table_batches
+                .get(name)
+                .expect("table batch should exist for each required table");
+            let table_schema = table_batch.schema();
+            root_fields.push(Field::new(
+                name,
+                DataType::Struct(table_schema.fields().clone()),
+                true,
+            ));
+            root_columns.push(Arc::new(StructArray::new(
+                table_schema.fields().clone(),
+                table_batch.columns().to_vec(),
+                None,
+            )) as ArrayRef);
+        }
+
+        let mut root_meta = schema_metadata();
+        root_meta.insert(METADATA_KEY_VERSION.to_string(), SCHEMA_VERSION.to_string());
+        root_meta.insert(
+            METADATA_KEY_RPF_VERSION.to_string(),
+            SCHEMA_VERSION.to_string(),
+        );
+        for (name, _) in all_table_schemas() {
+            root_meta.insert(row_count_metadata_key(name), "0".to_string());
+        }
+        let root_schema = Arc::new(Schema::new_with_metadata(root_fields, root_meta));
+        let root_batch = RecordBatch::try_new(root_schema.clone(), root_columns)?;
+
+        let mut out = File::create(&output_path)?;
+        let mut writer = FileWriter::try_new(&mut out, &root_schema)?;
+        writer.write_metadata(METADATA_KEY_VERSION, SCHEMA_VERSION);
+        writer.write_metadata(METADATA_KEY_RPF_VERSION, SCHEMA_VERSION);
+        writer.write(&root_batch)?;
+        writer.finish()?;
+
+        let tables = read_rpf_tables(&output_path)?;
+        let (_, loads) = tables
+            .iter()
+            .find(|(name, _)| name == TABLE_LOADS)
+            .context("missing loads table")?;
+        assert_eq!(loads.schema().fields().len(), loads_schema().fields().len());
+        assert_eq!(loads.column(5).null_count(), 0);
+        assert_eq!(loads.column(6).null_count(), 0);
+        assert_eq!(loads.column(7).null_count(), 0);
+        assert_eq!(loads.column(8).null_count(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn loads_zip_columns_round_trip_when_populated() -> Result<()> {
+        let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_loads_zip_round_trip");
+        std::fs::create_dir_all(&tmp_dir)?;
+        let output_path = tmp_dir.join("loads_zip_round_trip.rpf");
+
+        let mut table_batches: HashMap<&'static str, RecordBatch> = all_table_schemas()
+            .into_iter()
+            .map(|(name, schema)| (name, RecordBatch::new_empty(Arc::new(schema))))
+            .collect();
+
+        let mut id_b = StringDictionaryBuilder::<Int32Type>::new();
+        id_b.append("L1")?;
+        id_b.append("L2")?;
+        let mut name_b = StringDictionaryBuilder::<UInt32Type>::new();
+        name_b.append("ZIP A")?;
+        name_b.append("ZIP B")?;
+
+        let loads_batch = RecordBatch::try_new(
+            Arc::new(loads_schema()),
+            vec![
+                Arc::new(Int32Array::from(vec![101, 102])) as ArrayRef,
+                Arc::new(id_b.finish()) as ArrayRef,
+                Arc::new(BooleanArray::from(vec![true, true])) as ArrayRef,
+                Arc::new(Float64Array::from(vec![1.2, 2.4])) as ArrayRef,
+                Arc::new(Float64Array::from(vec![0.2, -0.1])) as ArrayRef,
+                Arc::new(Float64Array::from(vec![Some(0.5), None])) as ArrayRef,
+                Arc::new(Float64Array::from(vec![Some(0.1), Some(0.0)])) as ArrayRef,
+                Arc::new(Float64Array::from(vec![Some(0.03), None])) as ArrayRef,
+                Arc::new(Float64Array::from(vec![Some(-0.02), Some(0.04)])) as ArrayRef,
+                Arc::new(name_b.finish()) as ArrayRef,
+            ],
+        )?;
+        table_batches.insert(TABLE_LOADS, loads_batch);
+
+        write_root_rpf(&output_path, &table_batches, &RootWriteOptions::default())?;
+
+        let tables = read_rpf_tables(&output_path)?;
+        let loads = tables
+            .iter()
+            .find(|(name, _)| name == TABLE_LOADS)
+            .map(|(_, batch)| batch)
+            .context("expected loads table")?;
+        assert_eq!(loads.num_rows(), 2);
+
+        let p_i = loads
+            .column(5)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .context("loads.p_i_pu must be Float64")?;
+        let q_i = loads
+            .column(6)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .context("loads.q_i_pu must be Float64")?;
+        let p_y = loads
+            .column(7)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .context("loads.p_y_pu must be Float64")?;
+        let q_y = loads
+            .column(8)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .context("loads.q_y_pu must be Float64")?;
+        assert_eq!(p_i.value(0), 0.5);
+        assert!(p_i.is_null(1));
+        assert_eq!(q_i.value(0), 0.1);
+        assert_eq!(p_y.value(0), 0.03);
+        assert_eq!(q_y.value(1), 0.04);
         Ok(())
     }
 }

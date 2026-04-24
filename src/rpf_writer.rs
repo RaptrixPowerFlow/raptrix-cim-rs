@@ -39,6 +39,7 @@ use crate::arrow_schema::{
     METADATA_KEY_SOLVED_STATE_PRESENCE, METADATA_KEY_SOLVER_ACCURACY,
     METADATA_KEY_SOLVER_ANGLE_REFERENCE_DEG, METADATA_KEY_SOLVER_ITERATIONS,
     METADATA_KEY_SOLVER_MODE, METADATA_KEY_SOLVER_SLACK_BUS_ID, METADATA_KEY_SOLVER_VERSION,
+    METADATA_KEY_LOADS_ZIP_FIDELITY_PRESENCE,
     METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_GENERATION_ISLAND_COUNT,
     METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_LOAD_ISLAND_COUNT,
     METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_NETWORK_ISLAND_COUNT,
@@ -100,6 +101,48 @@ pub enum BusResolutionMode {
     Topological,
     /// Detailed mode: keep EQ `ConnectivityNode` granularity.
     ConnectivityDetail,
+}
+
+/// Optional ZIP load-fidelity components in per-unit on system base.
+///
+/// These terms are additive to the existing constant-power load terms (`p_pu`, `q_pu`)
+/// and preserve source sign conventions.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LoadZipComponentsPu {
+    pub p_i_pu: Option<f64>,
+    pub q_i_pu: Option<f64>,
+    pub p_y_pu: Option<f64>,
+    pub q_y_pu: Option<f64>,
+}
+
+/// Maps optional PSS/E ZIP load terms to RPF per-unit ZIP fidelity fields.
+///
+/// First-principles basis:
+/// - Uses standard per-unit normalization on system base (`S_base`).
+/// - Preserves physical ZIP decomposition:
+///   - constant-current terms: `IP`, `IQ`
+///   - constant-admittance terms: `YP`, `YQ`
+/// - Preserves source sign (positive demand, negative injection).
+/// - Keeps missing source terms as `None` (null in Arrow), never fabricates zeros.
+pub fn map_psse_zip_terms_to_rpf_pu(
+    ip_mw: Option<f64>,
+    iq_mvar: Option<f64>,
+    yp_mw: Option<f64>,
+    yq_mvar: Option<f64>,
+    base_mva: f64,
+) -> Result<LoadZipComponentsPu> {
+    if !base_mva.is_finite() || base_mva <= 0.0 {
+        bail!(
+            "invalid base_mva for ZIP normalization: expected finite positive value, got {base_mva}"
+        );
+    }
+
+    Ok(LoadZipComponentsPu {
+        p_i_pu: ip_mw.map(|value| value / base_mva),
+        q_i_pu: iq_mvar.map(|value| value / base_mva),
+        p_y_pu: yp_mw.map(|value| value / base_mva),
+        q_y_pu: yq_mvar.map(|value| value / base_mva),
+    })
 }
 
 /// Writer options for profile merge behavior.
@@ -1759,6 +1802,13 @@ pub fn write_complete_rpf_with_options(
     additional_root_metadata.insert(
         METADATA_KEY_FEATURE_ZERO_INJECTION_STUB.to_string(),
         topology_only_zero_injection.to_string(),
+    );
+    // CIM path currently has no native ZIP decomposition fields for loads in this writer.
+    // Emit explicit provenance so downstream tools can distinguish "absent by source/model"
+    // from "present but zero-valued" without scanning every loads row.
+    additional_root_metadata.insert(
+        METADATA_KEY_LOADS_ZIP_FIDELITY_PRESENCE.to_string(),
+        "not_available".to_string(),
     );
     additional_root_metadata.insert(METADATA_KEY_CASE_FINGERPRINT.to_string(), case_fingerprint);
     additional_root_metadata.insert(
@@ -4193,6 +4243,10 @@ fn build_loads_batch(rows: &[LoadRow<'_>], base_mva: f64) -> Result<RecordBatch>
     let mut status_b = BooleanBuilder::new();
     let mut p_pu_b = Float64Builder::new();
     let mut q_pu_b = Float64Builder::new();
+    let mut p_i_pu_b = Float64Builder::new();
+    let mut q_i_pu_b = Float64Builder::new();
+    let mut p_y_pu_b = Float64Builder::new();
+    let mut q_y_pu_b = Float64Builder::new();
     let mut name_b = StringDictionaryBuilder::<UInt32Type>::new();
 
     for row in rows {
@@ -4201,6 +4255,10 @@ fn build_loads_batch(rows: &[LoadRow<'_>], base_mva: f64) -> Result<RecordBatch>
         status_b.append_value(row.status);
         p_pu_b.append_value(row.p_mw / base_mva);
         q_pu_b.append_value(row.q_mvar / base_mva);
+        p_i_pu_b.append_null();
+        q_i_pu_b.append_null();
+        p_y_pu_b.append_null();
+        q_y_pu_b.append_null();
         name_b.append(row.name.as_ref())?;
     }
 
@@ -4210,6 +4268,10 @@ fn build_loads_batch(rows: &[LoadRow<'_>], base_mva: f64) -> Result<RecordBatch>
         Arc::new(status_b.finish()) as ArrayRef,
         Arc::new(p_pu_b.finish()) as ArrayRef,
         Arc::new(q_pu_b.finish()) as ArrayRef,
+        Arc::new(p_i_pu_b.finish()) as ArrayRef,
+        Arc::new(q_i_pu_b.finish()) as ArrayRef,
+        Arc::new(p_y_pu_b.finish()) as ArrayRef,
+        Arc::new(q_y_pu_b.finish()) as ArrayRef,
         Arc::new(name_b.finish()) as ArrayRef,
     ];
 
@@ -5090,8 +5152,9 @@ mod tests {
     };
 
     use super::{
-        BusResolutionMode, DetachedIslandPolicy, GenRow, Transformer2WRow, Transformer3WRow,
-        TransformerRepresentationMode, WriteOptions, infer_dynamics_model_type,
+        BusResolutionMode, DetachedIslandPolicy, GenRow, LoadZipComponentsPu, Transformer2WRow,
+        Transformer3WRow, TransformerRepresentationMode, WriteOptions,
+        infer_dynamics_model_type, map_psse_zip_terms_to_rpf_pu,
         normalize_transformer_representation, read_rpf_tables, rpf_file_metadata,
         star_expand_3w_transformers, summarize_rpf, validate_transformer_representation_mode,
         write_complete_rpf, write_complete_rpf_with_options,
@@ -5208,6 +5271,34 @@ mod tests {
         assert_eq!(summary.table_rows("buses"), Some(4));
 
         Ok(())
+    }
+
+    #[test]
+    fn map_psse_zip_terms_to_rpf_pu_preserves_signs_and_nulls() -> Result<()> {
+        let mapped = map_psse_zip_terms_to_rpf_pu(
+            Some(50.0),
+            Some(-20.0),
+            None,
+            Some(10.0),
+            100.0,
+        )?;
+        assert_eq!(
+            mapped,
+            LoadZipComponentsPu {
+                p_i_pu: Some(0.5),
+                q_i_pu: Some(-0.2),
+                p_y_pu: None,
+                q_y_pu: Some(0.1),
+            }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn map_psse_zip_terms_to_rpf_pu_rejects_invalid_base_mva() {
+        assert!(map_psse_zip_terms_to_rpf_pu(None, None, None, None, 0.0).is_err());
+        assert!(map_psse_zip_terms_to_rpf_pu(None, None, None, None, -100.0).is_err());
+        assert!(map_psse_zip_terms_to_rpf_pu(None, None, None, None, f64::NAN).is_err());
     }
 
     #[test]
@@ -5557,6 +5648,10 @@ mod tests {
         assert_eq!(
             metadata.get("rpf.features.topology_only"),
             Some(&"true".to_string())
+        );
+        assert_eq!(
+            metadata.get("rpf.loads.zip_fidelity_presence"),
+            Some(&"not_available".to_string())
         );
 
         Ok(())

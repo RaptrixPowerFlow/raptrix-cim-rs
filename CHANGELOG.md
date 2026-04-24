@@ -23,6 +23,28 @@ Copyright (c) 2026 Raptrix PowerFlow
 
 ## [Schema Contract 0.9.0] - 2026-04-23
 
+## [Schema Contract 0.9.1] - 2026-04-24
+
+### Converter release: Crate version 0.3.1 (raptrix-cim-arrow) / 0.3.1 (raptrix-cim-rs) | Arrow schema v0.9.1
+
+### Added
+
+- `loads` table: 4 new nullable ZIP-fidelity columns appended after `q_pu`:
+  - `p_i_pu` (Float64, nullable) - constant-current active component (per-unit on system base)
+  - `q_i_pu` (Float64, nullable) - constant-current reactive component (per-unit on system base)
+  - `p_y_pu` (Float64, nullable) - constant-admittance active component (per-unit on system base)
+  - `q_y_pu` (Float64, nullable) - constant-admittance reactive component (per-unit on system base)
+
+### Changed
+
+- Branding/schema constants bumped to v0.9.1.
+- `SUPPORTED_RPF_VERSIONS` now includes v0.9.1 (`"v0.9.1"`, `"0.9.1"`) while retaining v0.9.0 (`"v0.9.0"`, `"0.9.0"`) for backward-compatible reads.
+- Existing `loads.p_pu` / `loads.q_pu` semantics remain unchanged as constant-power components.
+
+### Migration note
+
+- v0.9.1 adds optional load-model fidelity fields only; existing files remain valid for additive-compatible readers, and writers may leave the new columns null when ZIP source terms are unavailable.
+
 ### Converter release: Crate version 0.3.0 (raptrix-cim-arrow) / 0.3.0 (raptrix-cim-rs) | Arrow schema v0.9.0
 
 ### Removed

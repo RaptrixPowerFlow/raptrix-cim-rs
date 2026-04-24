@@ -133,6 +133,10 @@ def discover_cases() -> list[Case]:
 
     # Optionally include external CGMES corpora when configured.
     data_root = os.environ.get("RAPTRIX_TEST_DATA_ROOT")
+    if not data_root:
+        fallback = REPO_ROOT / ".raptrix-test-data-root"
+        if fallback.is_file():
+            data_root = fallback.read_text(encoding="utf-8").strip()
     if data_root:
         root = Path(data_root)
         if root.is_dir():
@@ -321,10 +325,16 @@ def main() -> int:
         data["output_path"] = _sanitize_path(Path(result.output_path))
         serialized_results.append(data)
 
+    effective_data_root = os.environ.get("RAPTRIX_TEST_DATA_ROOT")
+    if not effective_data_root:
+        fallback = REPO_ROOT / ".raptrix-test-data-root"
+        if fallback.is_file():
+            effective_data_root = fallback.read_text(encoding="utf-8").strip()
+
     report = {
         "repo_root": ".",
         "results_dir": str(RESULTS_DIR.relative_to(REPO_ROOT)).replace("\\", "/"),
-        "raptrix_test_data_root": _sanitize_env_path(os.environ.get("RAPTRIX_TEST_DATA_ROOT")),
+        "raptrix_test_data_root": _sanitize_env_path(effective_data_root),
         "include_ssh_dy": args.include_ssh_dy,
         "cases_with_dy_profile": sum(1 for case in cases if case.dy is not None),
         "cases": serialized_cases,
@@ -341,7 +351,7 @@ def main() -> int:
         "# RPF Matrix Report",
         "",
         f"Results directory: {RESULTS_DIR.relative_to(REPO_ROOT).as_posix()}",
-        f"RAPTRIX_TEST_DATA_ROOT: {_sanitize_env_path(os.environ.get('RAPTRIX_TEST_DATA_ROOT')) or '<unset>'}",
+        f"RAPTRIX_TEST_DATA_ROOT: {_sanitize_env_path(effective_data_root) or '<unset>'}",
         f"Include SSH/DY: {args.include_ssh_dy}",
         f"Cases with DY profile: {sum(1 for case in cases if case.dy is not None)}",
         "",

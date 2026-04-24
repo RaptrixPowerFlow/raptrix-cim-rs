@@ -22,8 +22,8 @@ except ImportError:  # pragma: no cover - handled by skip branch below
     ipc = None
 
 
-BRANDING = "Raptrix CIM-Arrow / PowerFlow Interchange v0.9.0 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow."
-SCHEMA_VERSION = "0.9.0"
+BRANDING = "Raptrix CIM-Arrow / PowerFlow Interchange v0.9.1 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow."
+SCHEMA_VERSION = "0.9.1"
 CANONICAL_TABLE_ORDER = [
     "metadata",
     "buses",
@@ -241,6 +241,18 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+def _resolve_test_data_root() -> str | None:
+    env_root = os.environ.get("RAPTRIX_TEST_DATA_ROOT")
+    if env_root:
+        return env_root
+    fallback = _repo_root() / ".raptrix-test-data-root"
+    if fallback.is_file():
+        value = fallback.read_text(encoding="utf-8").strip()
+        if value:
+            return value
+    return None
+
+
 def _emit_table_row_report(
     profile_name: str,
     tables: list[tuple[str, pa.RecordBatch]],
@@ -264,10 +276,10 @@ def _run_profile_validation(
         request.node.add_marker(pytest.mark.ignore)
         pytest.skip("pyarrow is required for RPF validation")
 
-    data_root = os.environ.get("RAPTRIX_TEST_DATA_ROOT")
+    data_root = _resolve_test_data_root()
     if not data_root:
         request.node.add_marker(pytest.mark.ignore)
-        pytest.skip("RAPTRIX_TEST_DATA_ROOT is not set")
+        pytest.skip("RAPTRIX_TEST_DATA_ROOT is not set and .raptrix-test-data-root is missing")
 
     merged_dir = Path(data_root) / profile_name / f"{profile_name}-Merged"
     eq_path = merged_dir / f"{profile_name}_EQ.xml"

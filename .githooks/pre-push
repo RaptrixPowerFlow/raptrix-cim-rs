@@ -9,4 +9,27 @@ if [[ "${RAPTRIX_ALLOW_PUSH:-}" != "1" ]]; then
   exit 1
 fi
 
+# Local regression gate: run full RPF matrix when test data is configured.
+if [[ "${RAPTRIX_SKIP_REGRESSION:-}" == "1" ]]; then
+  echo "Skipping local RPF regression matrix (RAPTRIX_SKIP_REGRESSION=1)."
+else
+  DATA_ROOT="${RAPTRIX_TEST_DATA_ROOT:-}"
+  if [[ -z "${DATA_ROOT}" && -f ".raptrix-test-data-root" ]]; then
+    DATA_ROOT="$(tr -d '\r' < .raptrix-test-data-root | sed 's/[[:space:]]*$//')"
+  fi
+
+  if [[ -n "${DATA_ROOT}" ]]; then
+    echo "Running local RPF regression matrix before push..."
+    echo "Data root: ${DATA_ROOT}"
+    # Avoid --clean here because OneDrive/Windows file locks can intermittently
+    # block directory removal; generation still updates outputs and report.
+    cargo run --bin regression_matrix -- --profiles both --include-ssh-dy
+  else
+    echo "No CGMES data root configured (RAPTRIX_TEST_DATA_ROOT or .raptrix-test-data-root)."
+    echo "Blocking push to avoid unverified regressions."
+    echo "Set RAPTRIX_SKIP_REGRESSION=1 only for exceptional cases."
+    exit 1
+  fi
+fi
+
 exit 0
