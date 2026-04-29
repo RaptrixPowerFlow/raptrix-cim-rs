@@ -25,6 +25,21 @@ Copyright (c) 2026 Raptrix PowerFlow
 
 ## [Schema Contract 0.9.1] - 2026-04-24
 
+## [Schema Contract 0.9.2] - 2026-04-29
+
+### Converter release: Crate version 0.3.2 (raptrix-cim-arrow) / 0.3.2 (raptrix-cim-rs) | Arrow schema v0.9.2
+
+### Added
+
+- `generators` table now includes required `q_sched_mvar` (Float64) as the per-generator scheduled reactive-power field.
+- `q_sched_mvar` is emitted by the writer from `RotatingMachine.q` when present and defaults to `0.0` when source payload omits the field.
+
+### Changed
+
+- Branding/schema constants bumped to v0.9.2.
+- `SUPPORTED_RPF_VERSIONS` now includes v0.9.2 (`"v0.9.2"`, `"0.9.2"`) while retaining v0.9.1 and v0.9.0.
+- Reader-side contract strictness now treats `generators.q_sched_mvar` as required via non-nullable schema validation.
+
 ### Converter release: Crate version 0.3.1 (raptrix-cim-arrow) / 0.3.1 (raptrix-cim-rs) | Arrow schema v0.9.1
 
 ### Added

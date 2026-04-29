@@ -435,6 +435,7 @@ struct GenRow<'a> {
     parent_generator_id: Option<i32>,
     aggregation_count: Option<i32>,
     p_sched_mw: f64,
+    q_sched_mvar: f64,
     p_min_mw: f64,
     p_max_mw: f64,
     q_min_mvar: f64,
@@ -2944,6 +2945,7 @@ fn parse_eq_topology_rows(
             parent_generator_id: None,
             aggregation_count: None,
             p_sched_mw: machine.p_sched_mw.unwrap_or(0.0),
+            q_sched_mvar: machine.q_sched_mvar.unwrap_or(0.0),
             p_min_mw: machine.p_min_mw.unwrap_or(0.0),
             p_max_mw: machine.p_max_mw.unwrap_or(0.0),
             q_min_mvar: machine.q_min_mvar.unwrap_or(0.0),
@@ -4099,6 +4101,7 @@ fn build_generators_batch(rows: &[GenRow<'_>], _base_mva: f64) -> Result<RecordB
     let mut aggregation_count_b = Int32Builder::new();
     let mut status_b = BooleanBuilder::new();
     let mut p_sched_mw_b = Float64Builder::new();
+    let mut q_sched_mvar_b = Float64Builder::new();
     let mut p_min_mw_b = Float64Builder::new();
     let mut p_max_mw_b = Float64Builder::new();
     let mut q_min_mvar_b = Float64Builder::new();
@@ -4142,6 +4145,7 @@ fn build_generators_batch(rows: &[GenRow<'_>], _base_mva: f64) -> Result<RecordB
         }
         status_b.append_value(row.status);
         p_sched_mw_b.append_value(row.p_sched_mw);
+        q_sched_mvar_b.append_value(row.q_sched_mvar);
         p_min_mw_b.append_value(row.p_min_mw);
         p_max_mw_b.append_value(row.p_max_mw);
         q_min_mvar_b.append_value(row.q_min_mvar);
@@ -4213,6 +4217,7 @@ fn build_generators_batch(rows: &[GenRow<'_>], _base_mva: f64) -> Result<RecordB
         Arc::new(is_ibr_b.finish()) as ArrayRef,
         Arc::new(ibr_subtype_b.finish()) as ArrayRef,
         Arc::new(p_sched_mw_b.finish()) as ArrayRef,
+        Arc::new(q_sched_mvar_b.finish()) as ArrayRef,
         Arc::new(p_min_mw_b.finish()) as ArrayRef,
         Arc::new(p_max_mw_b.finish()) as ArrayRef,
         Arc::new(q_min_mvar_b.finish()) as ArrayRef,
@@ -5804,6 +5809,7 @@ mod tests {
             parent_generator_id: None,
             aggregation_count: None,
             p_sched_mw: 0.0,
+            q_sched_mvar: 0.0,
             p_min_mw: 0.0,
             p_max_mw: 0.0,
             q_min_mvar: 0.0,

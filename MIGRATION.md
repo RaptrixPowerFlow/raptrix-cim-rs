@@ -11,6 +11,12 @@ This repository was refactored from a single crate into a Cargo workspace with t
 - `raptrix-cim-rs`: CIM parsing, CGMES profile handling, row mapping, and CLI orchestration
 - `raptrix-cim-arrow`: locked canonical schema definitions and generic `.rpf` Arrow IPC infrastructure
 
+## v0.3.2 / Schema v0.9.2
+
+- `generators` adds required `q_sched_mvar` (Float64) in canonical schema order immediately after `p_sched_mw`.
+- Writers now populate `q_sched_mvar` from `RotatingMachine.q` when available.
+- Readers enforce presence/type/nullability for `q_sched_mvar` through standard schema validation.
+
 ## What Moved Into `raptrix-cim-arrow`
 
 - all schema definitions previously in `src/arrow_schema.rs`

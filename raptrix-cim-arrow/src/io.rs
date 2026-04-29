@@ -1030,7 +1030,7 @@ mod tests {
             branches.schema().fields().len(),
             branches_schema().fields().len()
         );
-        assert_eq!(SCHEMA_VERSION, "0.9.1");
+        assert_eq!(SCHEMA_VERSION, "0.9.2");
         Ok(())
     }
 

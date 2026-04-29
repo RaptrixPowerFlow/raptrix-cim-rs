@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.9.1 profile.
+//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.9.2 profile.
 //!
 //! **CGMES 3.0+ Only**: This module targets CGMES v3.0 and later (v17+ CIM) merged profiles.
 //! Support for legacy CGMES 2.4.x was dropped in this release for simplicity and performance.
@@ -11,7 +11,7 @@
 //! `.rpf` contract, plus deterministic schema registry helpers used by both
 //! writers and readers.
 //!
-//! ## v0.9.1 — 18 canonical tables
+//! ## v0.9.2 — 18 canonical tables
 //! The `ibr_devices` table was removed. IBRs are now modeled exclusively in the unified
 //! `generators` table using `is_ibr = true` + `ibr_subtype`. The `contingencies` table gains
 //! 6 nullable operational-outcome columns for Sentinel. The `metadata` table gains 5 nullable
@@ -25,18 +25,19 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, Schema};
 
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.9.1 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.9.2 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.";
 
 /// Canonical RPF format version tag embedded as file-level metadata.
-pub const RPF_VERSION: &str = "0.9.1";
+pub const RPF_VERSION: &str = "0.9.2";
 
 /// Supported RPF versions accepted by generic Arrow IPC readers.
 ///
-/// v0.9.1 is the current contract release.
+/// v0.9.2 is the current contract release.
 /// v0.9.1 extends `loads` with 4 nullable ZIP-fidelity columns and preserves existing
 /// constant-power load semantics in `p_pu`/`q_pu`.
 /// v0.9.0 remains accepted for backward-compatible reads.
-pub const SUPPORTED_RPF_VERSIONS: &[&str] = &["v0.9.1", "0.9.1", "v0.9.0", "0.9.0"];
+pub const SUPPORTED_RPF_VERSIONS: &[&str] =
+    &["v0.9.2", "0.9.2", "v0.9.1", "0.9.1", "v0.9.0", "0.9.0"];
 
 /// Backward-compatible alias retained for older call sites.
 pub const SCHEMA_VERSION: &str = RPF_VERSION;
@@ -499,6 +500,7 @@ pub fn generators_schema() -> Schema {
             Field::new("is_ibr", DataType::Boolean, false),
             Field::new("ibr_subtype", DataType::Utf8, true),
             Field::new("p_sched_mw", DataType::Float64, false),
+            Field::new("q_sched_mvar", DataType::Float64, false),
             Field::new("p_min_mw", DataType::Float64, false),
             Field::new("p_max_mw", DataType::Float64, false),
             Field::new("q_min_mvar", DataType::Float64, false),
@@ -1119,12 +1121,12 @@ mod tests {
     use super::{
         SUPPORTED_RPF_VERSIONS, all_table_schemas, branches_schema, contingencies_schema,
         diagram_objects_schema, diagram_points_schema, facts_devices_schema, facts_solved_schema,
-        loads_schema, normalize_facts_device_type, table_schema,
+        generators_schema, loads_schema, normalize_facts_device_type, table_schema,
     };
     use arrow::datatypes::DataType;
 
     #[test]
-    fn v091_schema_contract_spot_check() {
+    fn v092_schema_contract_spot_check() {
         // contingencies must have exactly 8 fields (2 base + 6 Sentinel outcome cols)
         let c = contingencies_schema();
         assert_eq!(c.fields().len(), 8, "contingencies should have 8 fields");
@@ -1149,11 +1151,13 @@ mod tests {
         );
 
         // version gate
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.9.2"));
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.9.2"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.9.1"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.9.1"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.9.0"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.9.0"));
-        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 4);
+        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 6);
     }
 
     #[test]
@@ -1172,6 +1176,14 @@ mod tests {
         assert!(loads.field(7).is_nullable());
         assert_eq!(loads.field(8).name(), "q_y_pu");
         assert!(loads.field(8).is_nullable());
+    }
+
+    #[test]
+    fn generators_schema_includes_required_q_sched_mvar() {
+        let generators = generators_schema();
+        assert_eq!(generators.field(10).name(), "p_sched_mw");
+        assert_eq!(generators.field(11).name(), "q_sched_mvar");
+        assert!(!generators.field(11).is_nullable());
     }
 
     #[test]

@@ -1,8 +1,15 @@
-# Schema Contract (Locked contract: v0.9.1 — CGMES 3.0+ Only)
+# Schema Contract (Locked contract: v0.9.2 — CGMES 3.0+ Only)
 
 This repository is the authoritative source of truth for the Raptrix PowerFlow Interchange (`.rpf`) wire contract used by CIM-first conversion pipelines.
 
-v0.9.1 is the current contract and is an additive (non-breaking) release in this repository.
+v0.9.2 is the current contract and is an additive (non-breaking) release in this repository.
+
+## v0.9.2 Additive Changes
+
+- **`generators` table extended** with required field:
+  - `q_sched_mvar` (scheduled reactive power setpoint, MVAr)
+- `q_sched_mvar` is required on read and always emitted on write.
+- `SUPPORTED_RPF_VERSIONS` now accepts `v0.9.2` / `0.9.2` in addition to prior supported versions.
 
 ## v0.9.1 Additive Changes
 
@@ -12,7 +19,7 @@ v0.9.1 is the current contract and is an additive (non-breaking) release in this
   - `p_y_pu` (constant-admittance active component, per-unit on system base)
   - `q_y_pu` (constant-admittance reactive component, per-unit on system base)
 - Existing `loads.p_pu` / `loads.q_pu` remain constant-power components with unchanged semantics.
-- `SUPPORTED_RPF_VERSIONS` now accepts only `v0.9.1` / `0.9.1`.
+- `SUPPORTED_RPF_VERSIONS` now accepts `v0.9.1` / `0.9.1`.
 - v0.9.0 files remain structurally compatible for additive readers that tolerate missing trailing nullable `loads` fields.
 
 ## v0.9.0 Breaking Changes
@@ -70,8 +77,8 @@ Every `.rpf` file must include:
 
 Current locked values:
 
-- `raptrix.version = 0.9.1`
-- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.9.1 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.`
+- `raptrix.version = 0.9.2`
+- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.9.2 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.`
 - `rpf.case_fingerprint = <required deterministic case identity fingerprint>`
 - `rpf.validation_mode = topology_only | solved_ready`
 - `rpf.case_mode = flat_start_planning | warm_start_planning | solved_snapshot | hour_ahead_advisory` (v0.8.4+, required; `hour_ahead_advisory` added in v0.9.0)
@@ -361,6 +368,7 @@ Recommended `control_mode` tokens for `dc_lines_2w` are `power`, `current`, `vol
 - `is_ibr`: Boolean, required
 - `ibr_subtype`: Utf8, nullable
 - `p_sched_mw`: Float64, required
+- `q_sched_mvar`: Float64, required
 - `p_min_mw`: Float64, required
 - `p_max_mw`: Float64, required
 - `q_min_mvar`: Float64, required
@@ -869,7 +877,7 @@ Locked contract: v0.7.0 adds optional node-breaker detail tables (`node_breaker_
 An independent parser is considered compliant if it:
 
 1. Opens `.rpf` as Arrow IPC File format.
-2. Verifies `raptrix.version` is in the set of supported contract versions (current: `0.9.1`).
+2. Verifies `raptrix.version` is in the set of supported contract versions (current: `0.9.2`).
 3. Verifies required root columns appear in canonical order.
 4. Uses `rpf.rows.<table_name>` metadata to trim padded null tails.
 5. Treats the 15 required root columns as mandatory even when their logical row counts are zero.

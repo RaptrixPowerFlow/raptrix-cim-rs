@@ -887,6 +887,9 @@ pub struct SynchronousMachine<'a> {
     /// Scheduled active power output (MW).
     pub p_sched_mw: Option<f64>,
 
+    /// Scheduled reactive power output (MVAr).
+    pub q_sched_mvar: Option<f64>,
+
     /// Minimum active power output (MW).
     pub p_min_mw: Option<f64>,
 
@@ -946,6 +949,8 @@ struct RawSynchronousMachine<'a> {
     description: Option<Cow<'a, str>>,
     #[serde(rename = "RotatingMachine.p", default)]
     p_sched_mw: Option<f64>,
+    #[serde(rename = "RotatingMachine.q", default)]
+    q_sched_mvar: Option<f64>,
     #[serde(rename = "GeneratingUnit.minOperatingP", default)]
     p_min_mw: Option<f64>,
     #[serde(rename = "GeneratingUnit.maxOperatingP", default)]
@@ -992,6 +997,7 @@ impl<'de: 'a, 'a> Deserialize<'de> for SynchronousMachine<'a> {
                 description: raw.description,
             },
             p_sched_mw: raw.p_sched_mw,
+            q_sched_mvar: raw.q_sched_mvar,
             p_min_mw: raw.p_min_mw,
             p_max_mw: raw.p_max_mw,
             q_min_mvar: raw.q_min_mvar,
@@ -1025,6 +1031,9 @@ impl<'a> Serialize for SynchronousMachine<'a> {
         }
         if let Some(v) = self.p_sched_mw {
             s.serialize_field("RotatingMachine.p", &v)?;
+        }
+        if let Some(v) = self.q_sched_mvar {
+            s.serialize_field("RotatingMachine.q", &v)?;
         }
         if let Some(v) = self.p_min_mw {
             s.serialize_field("GeneratingUnit.minOperatingP", &v)?;
@@ -1081,6 +1090,7 @@ impl<'a> SynchronousMachine<'a> {
         Self {
             base,
             p_sched_mw: None,
+            q_sched_mvar: None,
             p_min_mw: None,
             p_max_mw: None,
             q_min_mvar: None,
@@ -1105,6 +1115,7 @@ impl<'a> SynchronousMachine<'a> {
         SynchronousMachine {
             base: self.base.into_owned(),
             p_sched_mw: self.p_sched_mw,
+            q_sched_mvar: self.q_sched_mvar,
             p_min_mw: self.p_min_mw,
             p_max_mw: self.p_max_mw,
             q_min_mvar: self.q_min_mvar,
