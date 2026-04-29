@@ -34,14 +34,9 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cargo fmt check
-        run: cargo fmt --all -- --check
-
-      - name: Cargo check
-        run: cargo check --workspace --all-targets
-
-      - name: Cargo test
-        run: cargo test --workspace --all-targets
+      - name: Pre-release checkpoint
+        shell: pwsh
+        run: ./scripts/pre-release-check.ps1
 
   build:
     name: Build (${{ matrix.target }})
