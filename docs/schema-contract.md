@@ -1,8 +1,17 @@
-# Schema Contract (Locked contract: v0.9.2 — CGMES 3.0+ Only)
+# Schema Contract (Locked contract: v0.9.3 — CGMES 3.0+ Only)
 
 This repository is the authoritative source of truth for the Raptrix PowerFlow Interchange (`.rpf`) wire contract used by CIM-first conversion pipelines.
 
-v0.9.2 is the current contract and is an additive (non-breaking) release in this repository.
+v0.9.3 is the current contract and is a strict contract release in this repository.
+
+## v0.9.3 Breaking Changes
+
+- `buses.nominal_kv` is now required (`Float64`, non-null).
+- `branches.from_nominal_kv` and `branches.to_nominal_kv` are now required (`Float64`, non-null).
+- `transformers_2w.from_nominal_kv` and `transformers_2w.to_nominal_kv` are now required (`Float64`, non-null).
+- `transformers_3w.nominal_kv_h`, `nominal_kv_m`, `nominal_kv_l` are now required (`Float64`, non-null).
+- Writer validation now enforces these fields as finite and strictly greater than `0.0`.
+- `SUPPORTED_RPF_VERSIONS` accepts only `v0.9.3` / `0.9.3`.
 
 ## v0.9.2 Additive Changes
 
@@ -61,12 +70,11 @@ v0.9.2 is the current contract and is an additive (non-breaking) release in this
 - Additive changes (new optional columns, new optional tables, new optional metadata keys) require at least a MINOR bump.
 - PATCH bumps are reserved for non-structural fixes: bug fixes, metadata text fixes, and documentation clarifications without wire-shape changes.
 
-## 0.8 Nullability Guidance
+## 0.9.3 Nominal-kV Guidance
 
-- The new 0.7 fields are important, but they are not universally recoverable from every accepted CIM dataset.
-- Writers should emit null for `nominal_kv`, `from_nominal_kv`, `to_nominal_kv`, `nominal_kv_h`, `nominal_kv_m`, `nominal_kv_l`, `equipment_kind`, and `equipment_id` when the source payload cannot support an honest value.
-- Writers should not fabricate these fields from lossy heuristics just to satisfy a non-null contract.
-- Solver-ready or production ingestion pipelines may enforce stricter local validation, for example rejecting files with unresolved nominal-kV fields on core network rows.
+- Nominal voltage is a required physical base for per-unit conversion and solver interoperability.
+- Writers must not emit null or non-positive values for required nominal-kV columns.
+- If source payload cannot provide BaseVoltage / BASKV for these fields, writers must fail with a validation error.
 
 ## File Metadata Keys
 
@@ -77,8 +85,8 @@ Every `.rpf` file must include:
 
 Current locked values:
 
-- `raptrix.version = 0.9.2`
-- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.9.2 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.`
+- `raptrix.version = 0.9.3`
+- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.9.3 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.`
 - `rpf.case_fingerprint = <required deterministic case identity fingerprint>`
 - `rpf.validation_mode = topology_only | solved_ready`
 - `rpf.case_mode = flat_start_planning | warm_start_planning | solved_snapshot | hour_ahead_advisory` (v0.8.4+, required; `hour_ahead_advisory` added in v0.9.0)
@@ -287,7 +295,7 @@ This section is normative for external parser authors.
 - `p_min_agg`: Float64, required
 - `p_max_agg`: Float64, required
 - `owner_id`: Int32, nullable
-- `nominal_kv`: Float64, nullable
+- `nominal_kv`: Float64, required (`> 0`)
 - `bus_uuid`: Dictionary<Int32, Utf8>, required
 
 ### branches
@@ -307,8 +315,8 @@ This section is normative for external parser authors.
 - `status`: Boolean, required
 - `name`: Dictionary<UInt32, Utf8>, nullable
 - `owner_id`: Int32, nullable
-- `from_nominal_kv`: Float64, nullable
-- `to_nominal_kv`: Float64, nullable
+- `from_nominal_kv`: Float64, required (`> 0`)
+- `to_nominal_kv`: Float64, required (`> 0`)
 - `device_type`: Dictionary<Int32, Utf8>, nullable (v0.8.6+) — canonical token for SmartValve is `smartvalve`; reader normalization must accept alias `SV` (case-insensitive) and canonicalize to `smartvalve`.
 - `control_mode`: Dictionary<Int32, Utf8>, nullable (v0.8.6+) — open vocabulary; recommended values include `series_impedance`, `phase_shift`, `voltage_injection`, `bypass`.
 - `control_target_flow_mw`: Float64, nullable (v0.8.6+) — flow target used by flow-controlling FACTS.
@@ -476,8 +484,8 @@ Inductive steps must be represented in `switched_shunt_banks`.
 - `rate_c`: Float64, required
 - `status`: Boolean, required
 - `name`: Dictionary<UInt32, Utf8>, nullable
-- `from_nominal_kv`: Float64, nullable
-- `to_nominal_kv`: Float64, nullable
+- `from_nominal_kv`: Float64, required (`> 0`)
+- `to_nominal_kv`: Float64, required (`> 0`)
 
 ### transformers_3w
 
@@ -502,9 +510,9 @@ Inductive steps must be represented in `switched_shunt_banks`.
 - `rate_c`: Float64, required
 - `status`: Boolean, required
 - `name`: Dictionary<UInt32, Utf8>, nullable
-- `nominal_kv_h`: Float64, nullable
-- `nominal_kv_m`: Float64, nullable
-- `nominal_kv_l`: Float64, nullable
+- `nominal_kv_h`: Float64, required (`> 0`)
+- `nominal_kv_m`: Float64, required (`> 0`)
+- `nominal_kv_l`: Float64, required (`> 0`)
 
 ### areas
 
@@ -877,7 +885,7 @@ Locked contract: v0.7.0 adds optional node-breaker detail tables (`node_breaker_
 An independent parser is considered compliant if it:
 
 1. Opens `.rpf` as Arrow IPC File format.
-2. Verifies `raptrix.version` is in the set of supported contract versions (current: `0.9.2`).
+2. Verifies `raptrix.version` is in the set of supported contract versions (current: `0.9.3`).
 3. Verifies required root columns appear in canonical order.
 4. Uses `rpf.rows.<table_name>` metadata to trim padded null tails.
 5. Treats the 15 required root columns as mandatory even when their logical row counts are zero.

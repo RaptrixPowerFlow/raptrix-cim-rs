@@ -41,9 +41,10 @@ fn write_eq_fixture_with_breaker() -> Result<PathBuf> {
         OUTPUT_COUNTER.fetch_add(1, Ordering::Relaxed)
     ));
     let xml = r##"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#">
+<cim:BaseVoltage rdf:ID="BV230"><BaseVoltage.nominalVoltage>230</BaseVoltage.nominalVoltage></cim:BaseVoltage>
 <cim:ConnectivityNode rdf:ID="N1" />
 <cim:ConnectivityNode rdf:ID="N2" />
-<cim:ACLineSegment rdf:ID="L1"><IdentifiedObject.name>Line 1</IdentifiedObject.name><ACLineSegment.r>0.01</ACLineSegment.r><ACLineSegment.x>0.05</ACLineSegment.x><ACLineSegment.bch>0.001</ACLineSegment.bch></cim:ACLineSegment>
+<cim:ACLineSegment rdf:ID="L1"><ConductingEquipment.BaseVoltage rdf:resource="#BV230"/><IdentifiedObject.name>Line 1</IdentifiedObject.name><ACLineSegment.r>0.01</ACLineSegment.r><ACLineSegment.x>0.05</ACLineSegment.x><ACLineSegment.bch>0.001</ACLineSegment.bch></cim:ACLineSegment>
 <cim:Terminal rdf:ID="LT1"><Terminal.ConductingEquipment rdf:resource="#L1"/><Terminal.ConnectivityNode rdf:resource="#N1"/><ACDCTerminal.sequenceNumber>1</ACDCTerminal.sequenceNumber></cim:Terminal>
 <cim:Terminal rdf:ID="LT2"><Terminal.ConductingEquipment rdf:resource="#L1"/><Terminal.ConnectivityNode rdf:resource="#N2"/><ACDCTerminal.sequenceNumber>2</ACDCTerminal.sequenceNumber></cim:Terminal>
 <cim:Breaker rdf:ID="BR1"><IdentifiedObject.name>Breaker 1</IdentifiedObject.name><Switch.open>false</Switch.open><Switch.normalOpen>false</Switch.normalOpen><Switch.retained>true</Switch.retained></cim:Breaker>
@@ -194,7 +195,7 @@ fn supported_external_v3_fixtures_match_expected_optional_tables() -> Result<()>
 }
 
 #[test]
-fn generated_v091_outputs_make_detail_levels_explicit() -> Result<()> {
+fn generated_v093_outputs_make_detail_levels_explicit() -> Result<()> {
     let eq_path = write_eq_fixture_with_breaker()?;
     let eq_owned = eq_path.to_string_lossy().into_owned();
     let inputs = vec![eq_owned.as_str()];
@@ -393,7 +394,7 @@ fn smart_valve_custom_dy_model_round_trips_into_dynamics_models() -> Result<()> 
             timestamp_utc: None,
             ..Default::default()
         },
-    );
+    )?;
 
     let tables = read_rpf_tables(&output_path)?;
     let (_, dynamics_batch) = tables

@@ -43,8 +43,8 @@ function Convert-ContentForVersion {
         "CHANGELOG.md" {
             $updated = [regex]::Replace(
                 $updated,
-                '(?m)^### Converter release: Crate version [0-9]+\.[0-9]+\.[0-9]+ \(raptrix-cim-arrow\) / [0-9]+\.[0-9]+\.[0-9]+ \(raptrix-cim-rs\) \| Arrow schema v0\.8\.6$',
-                "### Converter release: Crate version $TargetVersion (raptrix-cim-arrow) / $TargetVersion (raptrix-cim-rs) | Arrow schema v0.8.6",
+                '(?m)^### Converter release: Crate version [0-9]+\.[0-9]+\.[0-9]+ \(raptrix-cim-arrow\) / [0-9]+\.[0-9]+\.[0-9]+ \(raptrix-cim-rs\) \| Arrow schema v[0-9]+\.[0-9]+\.[0-9]+$',
+                "### Converter release: Crate version $TargetVersion (raptrix-cim-arrow) / $TargetVersion (raptrix-cim-rs) | Arrow schema v0.9.3",
                 1
             )
         }

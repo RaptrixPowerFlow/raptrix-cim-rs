@@ -963,7 +963,7 @@ mod tests {
     }
 
     #[test]
-    fn read_supports_older_branches_schema_with_missing_additive_columns() -> Result<()> {
+    fn read_rejects_branches_schema_missing_required_nominal_kv_columns() -> Result<()> {
         let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_backward_read");
         std::fs::create_dir_all(&tmp_dir)?;
         let output_path = tmp_dir.join("v085_like_branches.rpf");
@@ -1021,16 +1021,11 @@ mod tests {
         writer.write(&root_batch)?;
         writer.finish()?;
 
-        let tables = read_rpf_tables(&output_path)?;
-        let (_, branches) = tables
-            .iter()
-            .find(|(name, _)| name == TABLE_BRANCHES)
-            .context("missing branches table")?;
-        assert_eq!(
-            branches.schema().fields().len(),
-            branches_schema().fields().len()
-        );
-        assert_eq!(SCHEMA_VERSION, "0.9.2");
+        let err = read_rpf_tables(&output_path)
+            .expect_err("v0.9.3 reader should reject missing required nominal_kv fields");
+        let message = format!("{err:#}");
+        assert!(message.contains("missing non-nullable field 'to_nominal_kv'"));
+        assert_eq!(SCHEMA_VERSION, "0.9.3");
         Ok(())
     }
 

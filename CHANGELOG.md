@@ -9,6 +9,25 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
 
 Copyright (c) 2026 Raptrix PowerFlow
 
+## [Schema Contract 0.9.3] - 2026-04-30
+
+### Converter release: Crate version 0.3.3 (raptrix-cim-arrow) / 0.3.3 (raptrix-cim-rs) | Arrow schema v0.9.3
+
+### Changed
+
+- `buses.nominal_kv`, `branches.from_nominal_kv`/`to_nominal_kv`, `transformers_2w.from_nominal_kv`/`to_nominal_kv`, and `transformers_3w.nominal_kv_h`/`nominal_kv_m`/`nominal_kv_l` are now required non-null `Float64`.
+- Writer contract now fails fast on missing BaseVoltage/BASKV or non-positive nominal-kV values; null emission for these columns is no longer allowed.
+- Branding/schema constants bumped to v0.9.3 and `SUPPORTED_RPF_VERSIONS` is now strict to `v0.9.3` / `0.9.3`.
+
+### Added
+
+- CLI migration convenience alias: `raptrix-cim-rs migrate-0.9.2-to-0.9.3 ...` for one-line re-ingest with strict v0.9.3 enforcement.
+- Negative tests for missing and non-positive nominal-kV contract violations.
+
+### Breaking change note
+
+- v0.9.3 is a strict contract break from v0.9.2 for nominal-kV nullability/validation. Any file with null or non-positive values in required nominal-kV columns is rejected.
+
 ## [Schema Contract 0.8.4] - 2026-04-07
 
 ## [Schema Contract 0.8.5] - 2026-04-09

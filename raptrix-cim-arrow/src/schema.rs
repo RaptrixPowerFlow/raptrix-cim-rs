@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.9.2 profile.
+//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.9.3 profile.
 //!
 //! **CGMES 3.0+ Only**: This module targets CGMES v3.0 and later (v17+ CIM) merged profiles.
 //! Support for legacy CGMES 2.4.x was dropped in this release for simplicity and performance.
@@ -11,7 +11,7 @@
 //! `.rpf` contract, plus deterministic schema registry helpers used by both
 //! writers and readers.
 //!
-//! ## v0.9.2 — 18 canonical tables
+//! ## v0.9.3 — 18 canonical tables
 //! The `ibr_devices` table was removed. IBRs are now modeled exclusively in the unified
 //! `generators` table using `is_ibr = true` + `ibr_subtype`. The `contingencies` table gains
 //! 6 nullable operational-outcome columns for Sentinel. The `metadata` table gains 5 nullable
@@ -25,19 +25,25 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, Schema};
 
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.9.2 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.9.3 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.";
 
 /// Canonical RPF format version tag embedded as file-level metadata.
-pub const RPF_VERSION: &str = "0.9.2";
+pub const RPF_VERSION: &str = "0.9.3";
 
 /// Supported RPF versions accepted by generic Arrow IPC readers.
 ///
-/// v0.9.2 is the current contract release.
-/// v0.9.1 extends `loads` with 4 nullable ZIP-fidelity columns and preserves existing
-/// constant-power load semantics in `p_pu`/`q_pu`.
-/// v0.9.0 remains accepted for backward-compatible reads.
-pub const SUPPORTED_RPF_VERSIONS: &[&str] =
-    &["v0.9.2", "0.9.2", "v0.9.1", "0.9.1", "v0.9.0", "0.9.0"];
+/// v0.9.3 is the current contract release.
+pub const SUPPORTED_RPF_VERSIONS: &[&str] = &["v0.9.3", "0.9.3"];
+
+/// Validates a nominal kV value for required network voltage fields.
+pub fn validate_nominal_kv(value: f64, context: &str) -> Result<(), String> {
+    if !value.is_finite() || value <= 0.0 {
+        return Err(format!(
+            "{context} must be finite and > 0.0 kV, got {value}"
+        ));
+    }
+    Ok(())
+}
 
 /// Backward-compatible alias retained for older call sites.
 pub const SCHEMA_VERSION: &str = RPF_VERSION;
@@ -391,7 +397,7 @@ pub fn buses_schema() -> Schema {
             Field::new("v_max", DataType::Float64, false),
             Field::new("p_min_agg", DataType::Float64, false),
             Field::new("p_max_agg", DataType::Float64, false),
-            Field::new("nominal_kv", DataType::Float64, true),
+            Field::new("nominal_kv", DataType::Float64, false),
             Field::new("bus_uuid", dict_utf8(), false),
         ],
         schema_metadata(),
@@ -417,8 +423,8 @@ pub fn branches_schema() -> Schema {
             Field::new("status", DataType::Boolean, false),
             Field::new("owner_id", DataType::Int32, true),
             Field::new("name", dict_utf8_u32(), true),
-            Field::new("from_nominal_kv", DataType::Float64, true),
-            Field::new("to_nominal_kv", DataType::Float64, true),
+            Field::new("from_nominal_kv", DataType::Float64, false),
+            Field::new("to_nominal_kv", DataType::Float64, false),
             // v0.8.6: additive generic FACTS control metadata.
             Field::new("device_type", dict_utf8(), true),
             Field::new("control_mode", dict_utf8(), true),
@@ -650,8 +656,8 @@ pub fn transformers_2w_schema() -> Schema {
             Field::new("rate_c", DataType::Float64, false),
             Field::new("status", DataType::Boolean, false),
             Field::new("name", dict_utf8_u32(), true),
-            Field::new("from_nominal_kv", DataType::Float64, true),
-            Field::new("to_nominal_kv", DataType::Float64, true),
+            Field::new("from_nominal_kv", DataType::Float64, false),
+            Field::new("to_nominal_kv", DataType::Float64, false),
         ],
         schema_metadata(),
     )
@@ -682,9 +688,9 @@ pub fn transformers_3w_schema() -> Schema {
             Field::new("rate_c", DataType::Float64, false),
             Field::new("status", DataType::Boolean, false),
             Field::new("name", dict_utf8_u32(), true),
-            Field::new("nominal_kv_h", DataType::Float64, true),
-            Field::new("nominal_kv_m", DataType::Float64, true),
-            Field::new("nominal_kv_l", DataType::Float64, true),
+            Field::new("nominal_kv_h", DataType::Float64, false),
+            Field::new("nominal_kv_m", DataType::Float64, false),
+            Field::new("nominal_kv_l", DataType::Float64, false),
         ],
         schema_metadata(),
     )
@@ -1126,7 +1132,7 @@ mod tests {
     use arrow::datatypes::DataType;
 
     #[test]
-    fn v092_schema_contract_spot_check() {
+    fn v093_schema_contract_spot_check() {
         // contingencies must have exactly 8 fields (2 base + 6 Sentinel outcome cols)
         let c = contingencies_schema();
         assert_eq!(c.fields().len(), 8, "contingencies should have 8 fields");
@@ -1151,13 +1157,28 @@ mod tests {
         );
 
         // version gate
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.9.2"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.9.2"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.9.1"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.9.1"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.9.0"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.9.0"));
-        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 6);
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.9.3"));
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.9.3"));
+        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 2);
+    }
+
+    #[test]
+    fn nominal_kv_columns_are_required() {
+        let buses = super::buses_schema();
+        assert!(!buses.field(18).is_nullable());
+
+        let branches = super::branches_schema();
+        assert!(!branches.field(15).is_nullable());
+        assert!(!branches.field(16).is_nullable());
+
+        let transformers_2w = super::transformers_2w_schema();
+        assert!(!transformers_2w.field(20).is_nullable());
+        assert!(!transformers_2w.field(21).is_nullable());
+
+        let transformers_3w = super::transformers_3w_schema();
+        assert!(!transformers_3w.field(21).is_nullable());
+        assert!(!transformers_3w.field(22).is_nullable());
+        assert!(!transformers_3w.field(23).is_nullable());
     }
 
     #[test]

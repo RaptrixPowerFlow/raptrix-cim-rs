@@ -55,7 +55,7 @@ use crate::arrow_schema::{
     dynamics_models_schema, fixed_shunts_schema, generators_schema, interfaces_schema,
     loads_schema, metadata_schema, multi_section_lines_schema, node_breaker_detail_schema,
     owners_schema, switch_detail_schema, switched_shunt_banks_schema, switched_shunts_schema,
-    transformers_2w_schema, transformers_3w_schema, zones_schema,
+    transformers_2w_schema, transformers_3w_schema, validate_nominal_kv, zones_schema,
 };
 use crate::parser;
 
@@ -396,7 +396,7 @@ struct BusRow<'a> {
     v_max: f64,
     p_min_agg: f64,
     p_max_agg: f64,
-    nominal_kv: Option<f64>,
+    nominal_kv: f64,
     bus_uuid: Cow<'a, str>,
 }
 
@@ -420,8 +420,8 @@ struct BranchRow<'a> {
     rate_c: f64,
     status: bool,
     owner_id: Option<i32>,
-    from_nominal_kv: Option<f64>,
-    to_nominal_kv: Option<f64>,
+    from_nominal_kv: f64,
+    to_nominal_kv: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -523,8 +523,8 @@ struct Transformer2WRow<'a> {
     rate_b: f64,
     rate_c: f64,
     status: bool,
-    from_nominal_kv: Option<f64>,
-    to_nominal_kv: Option<f64>,
+    from_nominal_kv: f64,
+    to_nominal_kv: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -549,9 +549,9 @@ struct Transformer3WRow<'a> {
     rate_b: f64,
     rate_c: f64,
     status: bool,
-    nominal_kv_h: Option<f64>,
-    nominal_kv_m: Option<f64>,
-    nominal_kv_l: Option<f64>,
+    nominal_kv_h: f64,
+    nominal_kv_m: f64,
+    nominal_kv_l: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -909,7 +909,7 @@ fn star_expand_3w_transformers<'a>(
             rate_c: row.rate_c,
             status: true,
             from_nominal_kv: row.nominal_kv_h,
-            to_nominal_kv: None,
+            to_nominal_kv: row.nominal_kv_h,
         });
 
         // M → star leg.
@@ -935,7 +935,7 @@ fn star_expand_3w_transformers<'a>(
             rate_c: row.rate_c,
             status: true,
             from_nominal_kv: row.nominal_kv_m,
-            to_nominal_kv: None,
+            to_nominal_kv: row.nominal_kv_m,
         });
 
         // L → star leg.
@@ -961,7 +961,7 @@ fn star_expand_3w_transformers<'a>(
             rate_c: row.rate_c,
             status: true,
             from_nominal_kv: row.nominal_kv_l,
-            to_nominal_kv: None,
+            to_nominal_kv: row.nominal_kv_l,
         });
     }
     out
@@ -1077,6 +1077,7 @@ fn validate_pre_write_contract(
         if row.bus_id <= 0 {
             bail!("pre-write contract violation: buses.bus_id must be > 0")
         }
+        validate_nominal_kv(row.nominal_kv, "buses.nominal_kv").map_err(anyhow::Error::msg)?;
     }
     for row in branch_rows {
         if row.branch_id <= 0 {
@@ -1085,6 +1086,10 @@ fn validate_pre_write_contract(
         if row.from_bus_id <= 0 || row.to_bus_id <= 0 {
             bail!("pre-write contract violation: branches.from_bus_id/to_bus_id must be > 0")
         }
+        validate_nominal_kv(row.from_nominal_kv, "branches.from_nominal_kv")
+            .map_err(anyhow::Error::msg)?;
+        validate_nominal_kv(row.to_nominal_kv, "branches.to_nominal_kv")
+            .map_err(anyhow::Error::msg)?;
     }
     for row in gen_rows {
         if row.generator_id <= 0 || row.bus_id <= 0 {
@@ -1100,6 +1105,10 @@ fn validate_pre_write_contract(
         if row.from_bus_id <= 0 || row.to_bus_id <= 0 {
             bail!("pre-write contract violation: transformers_2w.from_bus_id/to_bus_id must be > 0")
         }
+        validate_nominal_kv(row.from_nominal_kv, "transformers_2w.from_nominal_kv")
+            .map_err(anyhow::Error::msg)?;
+        validate_nominal_kv(row.to_nominal_kv, "transformers_2w.to_nominal_kv")
+            .map_err(anyhow::Error::msg)?;
     }
     for row in transformer_3w_rows {
         if row.bus_h_id <= 0 || row.bus_m_id <= 0 || row.bus_l_id <= 0 {
@@ -1107,6 +1116,12 @@ fn validate_pre_write_contract(
                 "pre-write contract violation: transformers_3w.bus_h_id/bus_m_id/bus_l_id must be > 0"
             )
         }
+        validate_nominal_kv(row.nominal_kv_h, "transformers_3w.nominal_kv_h")
+            .map_err(anyhow::Error::msg)?;
+        validate_nominal_kv(row.nominal_kv_m, "transformers_3w.nominal_kv_m")
+            .map_err(anyhow::Error::msg)?;
+        validate_nominal_kv(row.nominal_kv_l, "transformers_3w.nominal_kv_l")
+            .map_err(anyhow::Error::msg)?;
     }
     Ok(())
 }
@@ -2708,34 +2723,41 @@ fn parse_eq_topology_rows(
 
     let bus_rows: Vec<BusRow<'static>> = sorted_bus_keys
         .iter()
-        .map(|bus_key| BusRow {
-            bus_id: bus_key_to_bus_id[bus_key],
-            name: Cow::Owned(bus_name_by_key.get(*bus_key).cloned().unwrap_or_else(|| {
-                bus_fallback_name(
-                    bus_key,
-                    bus_voltage_label_by_key.get(*bus_key).map(String::as_str),
-                )
-            })),
-            bus_type: 1,
-            p_sched: 0.0,
-            q_sched: 0.0,
-            v_mag_set: 1.0,
-            v_ang_set: 0.0,
-            q_min: -9999.0,
-            q_max: 9999.0,
-            g_shunt: 0.0,
-            b_shunt: 0.0,
-            area: 1,
-            zone: 1,
-            owner_id: default_owner_id,
-            v_min: 0.9,
-            v_max: 1.1,
-            p_min_agg: 0.0,
-            p_max_agg: 0.0,
-            nominal_kv: bus_nominal_kv_by_key.get(*bus_key).copied(),
-            bus_uuid: Cow::Owned((*bus_key).to_owned()),
+        .map(|bus_key| {
+            Ok(BusRow {
+                bus_id: bus_key_to_bus_id[bus_key],
+                name: Cow::Owned(bus_name_by_key.get(*bus_key).cloned().unwrap_or_else(|| {
+                    bus_fallback_name(
+                        bus_key,
+                        bus_voltage_label_by_key.get(*bus_key).map(String::as_str),
+                    )
+                })),
+                bus_type: 1,
+                p_sched: 0.0,
+                q_sched: 0.0,
+                v_mag_set: 1.0,
+                v_ang_set: 0.0,
+                q_min: -9999.0,
+                q_max: 9999.0,
+                g_shunt: 0.0,
+                b_shunt: 0.0,
+                area: 1,
+                zone: 1,
+                owner_id: default_owner_id,
+                v_min: 0.9,
+                v_max: 1.1,
+                p_min_agg: 0.0,
+                p_max_agg: 0.0,
+                nominal_kv: bus_nominal_kv_by_key
+                    .get(*bus_key)
+                    .copied()
+                    .with_context(|| {
+                        format!("missing required BaseVoltage nominal_kv for bus key '{bus_key}'")
+                    })?,
+                bus_uuid: Cow::Owned((*bus_key).to_owned()),
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
 
     let mut endpoints_by_line: HashMap<&str, Endpoints> = HashMap::new();
     for (terminal_idx, terminal) in terminals.iter().enumerate() {
@@ -2841,8 +2863,22 @@ fn parse_eq_topology_rows(
             rate_c: 9999.0,
             status: true,
             owner_id: default_owner_id,
-            from_nominal_kv: bus_nominal_kv_by_key.get(from_bus_key).copied(),
-            to_nominal_kv: bus_nominal_kv_by_key.get(to_bus_key).copied(),
+            from_nominal_kv: bus_nominal_kv_by_key
+                .get(from_bus_key)
+                .copied()
+                .with_context(|| {
+                    format!(
+                        "missing required BaseVoltage nominal_kv for branch from bus key '{from_bus_key}'"
+                    )
+                })?,
+            to_nominal_kv: bus_nominal_kv_by_key
+                .get(to_bus_key)
+                .copied()
+                .with_context(|| {
+                    format!(
+                        "missing required BaseVoltage nominal_kv for branch to bus key '{to_bus_key}'"
+                    )
+                })?,
         });
     }
 
@@ -3199,8 +3235,24 @@ fn parse_eq_topology_rows(
                 rate_b,
                 rate_c,
                 status,
-                from_nominal_kv: bus_nominal_kv_by_key.get(from_bus_key.as_str()).copied(),
-                to_nominal_kv: bus_nominal_kv_by_key.get(to_bus_key.as_str()).copied(),
+                from_nominal_kv: bus_nominal_kv_by_key
+                    .get(from_bus_key.as_str())
+                    .copied()
+                    .with_context(|| {
+                        format!(
+                            "missing required BaseVoltage nominal_kv for transformer_2w from bus key '{}'",
+                            from_bus_key
+                        )
+                    })?,
+                to_nominal_kv: bus_nominal_kv_by_key
+                    .get(to_bus_key.as_str())
+                    .copied()
+                    .with_context(|| {
+                        format!(
+                            "missing required BaseVoltage nominal_kv for transformer_2w to bus key '{}'",
+                            to_bus_key
+                        )
+                    })?,
             });
         } else {
             let terminal_h = unique_terminals.first().copied().with_context(|| {
@@ -3265,9 +3317,33 @@ fn parse_eq_topology_rows(
                 rate_b,
                 rate_c,
                 status,
-                nominal_kv_h: bus_nominal_kv_by_key.get(bus_h_key.as_str()).copied(),
-                nominal_kv_m: bus_nominal_kv_by_key.get(bus_m_key.as_str()).copied(),
-                nominal_kv_l: bus_nominal_kv_by_key.get(bus_l_key.as_str()).copied(),
+                nominal_kv_h: bus_nominal_kv_by_key
+                    .get(bus_h_key.as_str())
+                    .copied()
+                    .with_context(|| {
+                        format!(
+                            "missing required BaseVoltage nominal_kv for transformers_3w high bus key '{}'",
+                            bus_h_key
+                        )
+                    })?,
+                nominal_kv_m: bus_nominal_kv_by_key
+                    .get(bus_m_key.as_str())
+                    .copied()
+                    .with_context(|| {
+                        format!(
+                            "missing required BaseVoltage nominal_kv for transformers_3w middle bus key '{}'",
+                            bus_m_key
+                        )
+                    })?,
+                nominal_kv_l: bus_nominal_kv_by_key
+                    .get(bus_l_key.as_str())
+                    .copied()
+                    .with_context(|| {
+                        format!(
+                            "missing required BaseVoltage nominal_kv for transformers_3w low bus key '{}'",
+                            bus_l_key
+                        )
+                    })?,
             });
         }
     }
@@ -3967,11 +4043,7 @@ fn build_buses_batch(rows: &[BusRow<'_>]) -> Result<RecordBatch> {
         v_max_b.append_value(row.v_max);
         p_min_agg_b.append_value(row.p_min_agg);
         p_max_agg_b.append_value(row.p_max_agg);
-        if let Some(nominal_kv) = row.nominal_kv {
-            nominal_kv_b.append_value(nominal_kv);
-        } else {
-            nominal_kv_b.append_null();
-        }
+        nominal_kv_b.append_value(row.nominal_kv);
         bus_uuid_b.append(row.bus_uuid.as_ref())?;
     }
 
@@ -4042,16 +4114,8 @@ fn build_branches_batch(rows: &[BranchRow<'_>]) -> Result<RecordBatch> {
             owner_id_b.append_null();
         }
         name_b.append(row.name.as_ref())?;
-        if let Some(from_nominal_kv) = row.from_nominal_kv {
-            from_nominal_kv_b.append_value(from_nominal_kv);
-        } else {
-            from_nominal_kv_b.append_null();
-        }
-        if let Some(to_nominal_kv) = row.to_nominal_kv {
-            to_nominal_kv_b.append_value(to_nominal_kv);
-        } else {
-            to_nominal_kv_b.append_null();
-        }
+        from_nominal_kv_b.append_value(row.from_nominal_kv);
+        to_nominal_kv_b.append_value(row.to_nominal_kv);
     }
 
     let arrays: Vec<ArrayRef> = vec![
@@ -4332,16 +4396,8 @@ fn build_transformers_2w_batch(rows: &[Transformer2WRow<'_>]) -> Result<RecordBa
         rate_c_b.append_value(row.rate_c);
         status_b.append_value(row.status);
         name_b.append(row.name.as_ref())?;
-        if let Some(from_nominal_kv) = row.from_nominal_kv {
-            from_nominal_kv_b.append_value(from_nominal_kv);
-        } else {
-            from_nominal_kv_b.append_null();
-        }
-        if let Some(to_nominal_kv) = row.to_nominal_kv {
-            to_nominal_kv_b.append_value(to_nominal_kv);
-        } else {
-            to_nominal_kv_b.append_null();
-        }
+        from_nominal_kv_b.append_value(row.from_nominal_kv);
+        to_nominal_kv_b.append_value(row.to_nominal_kv);
     }
 
     let arrays: Vec<ArrayRef> = vec![
@@ -4425,21 +4481,9 @@ fn build_transformers_3w_batch(rows: &[Transformer3WRow<'_>]) -> Result<RecordBa
         rate_c_b.append_value(row.rate_c);
         status_b.append_value(row.status);
         name_b.append(row.name.as_ref())?;
-        if let Some(nominal_kv_h) = row.nominal_kv_h {
-            nominal_kv_h_b.append_value(nominal_kv_h);
-        } else {
-            nominal_kv_h_b.append_null();
-        }
-        if let Some(nominal_kv_m) = row.nominal_kv_m {
-            nominal_kv_m_b.append_value(nominal_kv_m);
-        } else {
-            nominal_kv_m_b.append_null();
-        }
-        if let Some(nominal_kv_l) = row.nominal_kv_l {
-            nominal_kv_l_b.append_value(nominal_kv_l);
-        } else {
-            nominal_kv_l_b.append_null();
-        }
+        nominal_kv_h_b.append_value(row.nominal_kv_h);
+        nominal_kv_m_b.append_value(row.nominal_kv_m);
+        nominal_kv_l_b.append_value(row.nominal_kv_l);
     }
 
     let arrays: Vec<ArrayRef> = vec![
@@ -5179,13 +5223,16 @@ mod tests {
         let mut xml = String::from(
             r#"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#">"#,
         );
+        xml.push_str(
+            r#"<cim:BaseVoltage rdf:ID="BV230"><BaseVoltage.nominalVoltage>230</BaseVoltage.nominalVoltage></cim:BaseVoltage>"#,
+        );
 
         for idx in 0..n_branches {
             let line_id = format!("Line{idx}");
             let from_node = format!("Node{}", idx * 2 + 1);
             let to_node = format!("Node{}", idx * 2 + 2);
             xml.push_str(&format!(
-                r##"<cim:ACLineSegment rdf:ID="{line_id}"><IdentifiedObject.name>Line {idx}</IdentifiedObject.name><ACLineSegment.r>0.01</ACLineSegment.r><ACLineSegment.x>0.05</ACLineSegment.x><ACLineSegment.bch>0.001</ACLineSegment.bch></cim:ACLineSegment><cim:Terminal rdf:ID="T{idx}_1"><Terminal.ConductingEquipment rdf:resource="#{line_id}"/><Terminal.ConnectivityNode rdf:resource="#{from_node}"/><ACDCTerminal.sequenceNumber>1</ACDCTerminal.sequenceNumber></cim:Terminal><cim:Terminal rdf:ID="T{idx}_2"><Terminal.ConductingEquipment rdf:resource="#{line_id}"/><Terminal.ConnectivityNode rdf:resource="#{to_node}"/><ACDCTerminal.sequenceNumber>2</ACDCTerminal.sequenceNumber></cim:Terminal>"##
+                r##"<cim:ACLineSegment rdf:ID="{line_id}"><ConductingEquipment.BaseVoltage rdf:resource="#BV230"/><IdentifiedObject.name>Line {idx}</IdentifiedObject.name><ACLineSegment.r>0.01</ACLineSegment.r><ACLineSegment.x>0.05</ACLineSegment.x><ACLineSegment.bch>0.001</ACLineSegment.bch></cim:ACLineSegment><cim:Terminal rdf:ID="T{idx}_1"><Terminal.ConductingEquipment rdf:resource="#{line_id}"/><Terminal.ConnectivityNode rdf:resource="#{from_node}"/><ACDCTerminal.sequenceNumber>1</ACDCTerminal.sequenceNumber></cim:Terminal><cim:Terminal rdf:ID="T{idx}_2"><Terminal.ConductingEquipment rdf:resource="#{line_id}"/><Terminal.ConnectivityNode rdf:resource="#{to_node}"/><ACDCTerminal.sequenceNumber>2</ACDCTerminal.sequenceNumber></cim:Terminal>"##
             ));
         }
 
@@ -5196,9 +5243,10 @@ mod tests {
     fn generate_eq_fixture_with_breaker() -> String {
         String::from(
             r##"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#">
+<cim:BaseVoltage rdf:ID="BV230"><BaseVoltage.nominalVoltage>230</BaseVoltage.nominalVoltage></cim:BaseVoltage>
 <cim:ConnectivityNode rdf:ID="N1" />
 <cim:ConnectivityNode rdf:ID="N2" />
-<cim:ACLineSegment rdf:ID="L1"><IdentifiedObject.name>Line 1</IdentifiedObject.name><ACLineSegment.r>0.01</ACLineSegment.r><ACLineSegment.x>0.05</ACLineSegment.x><ACLineSegment.bch>0.001</ACLineSegment.bch></cim:ACLineSegment>
+<cim:ACLineSegment rdf:ID="L1"><ConductingEquipment.BaseVoltage rdf:resource="#BV230"/><IdentifiedObject.name>Line 1</IdentifiedObject.name><ACLineSegment.r>0.01</ACLineSegment.r><ACLineSegment.x>0.05</ACLineSegment.x><ACLineSegment.bch>0.001</ACLineSegment.bch></cim:ACLineSegment>
 <cim:Terminal rdf:ID="LT1"><Terminal.ConductingEquipment rdf:resource="#L1"/><Terminal.ConnectivityNode rdf:resource="#N1"/><ACDCTerminal.sequenceNumber>1</ACDCTerminal.sequenceNumber></cim:Terminal>
 <cim:Terminal rdf:ID="LT2"><Terminal.ConductingEquipment rdf:resource="#L1"/><Terminal.ConnectivityNode rdf:resource="#N2"/><ACDCTerminal.sequenceNumber>2</ACDCTerminal.sequenceNumber></cim:Terminal>
 <cim:Breaker rdf:ID="BR1"><IdentifiedObject.name>Breaker 1</IdentifiedObject.name><Switch.open>false</Switch.open><Switch.normalOpen>false</Switch.normalOpen><Switch.retained>true</Switch.retained></cim:Breaker>
@@ -5219,10 +5267,32 @@ mod tests {
         )
     }
 
-    fn generate_eq_fixture_with_generator_dynamics() -> String {
+    fn generate_eq_fixture_missing_base_voltage() -> String {
         String::from(
             r##"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#">
 <cim:ACLineSegment rdf:ID="L1"><ACLineSegment.r>0.01</ACLineSegment.r><ACLineSegment.x>0.05</ACLineSegment.x></cim:ACLineSegment>
+<cim:Terminal rdf:ID="T1"><Terminal.ConductingEquipment rdf:resource="#L1"/><Terminal.ConnectivityNode rdf:resource="#N1"/><ACDCTerminal.sequenceNumber>1</ACDCTerminal.sequenceNumber></cim:Terminal>
+<cim:Terminal rdf:ID="T2"><Terminal.ConductingEquipment rdf:resource="#L1"/><Terminal.ConnectivityNode rdf:resource="#N2"/><ACDCTerminal.sequenceNumber>2</ACDCTerminal.sequenceNumber></cim:Terminal>
+</rdf:RDF>"##,
+        )
+    }
+
+    fn generate_eq_fixture_zero_base_voltage() -> String {
+        String::from(
+            r##"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#">
+<cim:BaseVoltage rdf:ID="BV0"><BaseVoltage.nominalVoltage>0</BaseVoltage.nominalVoltage></cim:BaseVoltage>
+<cim:ACLineSegment rdf:ID="L1"><ConductingEquipment.BaseVoltage rdf:resource="#BV0"/><ACLineSegment.r>0.01</ACLineSegment.r><ACLineSegment.x>0.05</ACLineSegment.x></cim:ACLineSegment>
+<cim:Terminal rdf:ID="T1"><Terminal.ConductingEquipment rdf:resource="#L1"/><Terminal.ConnectivityNode rdf:resource="#N1"/><ACDCTerminal.sequenceNumber>1</ACDCTerminal.sequenceNumber></cim:Terminal>
+<cim:Terminal rdf:ID="T2"><Terminal.ConductingEquipment rdf:resource="#L1"/><Terminal.ConnectivityNode rdf:resource="#N2"/><ACDCTerminal.sequenceNumber>2</ACDCTerminal.sequenceNumber></cim:Terminal>
+</rdf:RDF>"##,
+        )
+    }
+
+    fn generate_eq_fixture_with_generator_dynamics() -> String {
+        String::from(
+            r##"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#">
+<cim:BaseVoltage rdf:ID="BV230"><BaseVoltage.nominalVoltage>230</BaseVoltage.nominalVoltage></cim:BaseVoltage>
+<cim:ACLineSegment rdf:ID="L1"><ConductingEquipment.BaseVoltage rdf:resource="#BV230"/><ACLineSegment.r>0.01</ACLineSegment.r><ACLineSegment.x>0.05</ACLineSegment.x></cim:ACLineSegment>
 <cim:Terminal rdf:ID="LT1"><Terminal.ConductingEquipment rdf:resource="#L1"/><Terminal.ConnectivityNode rdf:resource="#N1"/><ACDCTerminal.sequenceNumber>1</ACDCTerminal.sequenceNumber></cim:Terminal>
 <cim:Terminal rdf:ID="LT2"><Terminal.ConductingEquipment rdf:resource="#L1"/><Terminal.ConnectivityNode rdf:resource="#N2"/><ACDCTerminal.sequenceNumber>2</ACDCTerminal.sequenceNumber></cim:Terminal>
 <cim:SynchronousMachine rdf:ID="G1"><RotatingMachine.ratedS>150.0</RotatingMachine.ratedS><SynchronousMachine.H>4.5</SynchronousMachine.H><SynchronousMachine.xdPrime>0.25</SynchronousMachine.xdPrime><SynchronousMachine.D>1.2</SynchronousMachine.D></cim:SynchronousMachine>
@@ -5234,9 +5304,10 @@ mod tests {
     fn generate_eq_fixture_with_diagram_layout() -> String {
         String::from(
             r##"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#">
+<cim:BaseVoltage rdf:ID="BV230"><BaseVoltage.nominalVoltage>230</BaseVoltage.nominalVoltage></cim:BaseVoltage>
 <cim:ConnectivityNode rdf:ID="N1" />
 <cim:ConnectivityNode rdf:ID="N2" />
-<cim:ACLineSegment rdf:ID="L1"><IdentifiedObject.name>Line 1</IdentifiedObject.name><ACLineSegment.r>0.01</ACLineSegment.r><ACLineSegment.x>0.05</ACLineSegment.x><ACLineSegment.bch>0.001</ACLineSegment.bch></cim:ACLineSegment>
+<cim:ACLineSegment rdf:ID="L1"><ConductingEquipment.BaseVoltage rdf:resource="#BV230"/><IdentifiedObject.name>Line 1</IdentifiedObject.name><ACLineSegment.r>0.01</ACLineSegment.r><ACLineSegment.x>0.05</ACLineSegment.x><ACLineSegment.bch>0.001</ACLineSegment.bch></cim:ACLineSegment>
 <cim:Terminal rdf:ID="LT1"><Terminal.ConductingEquipment rdf:resource="#L1"/><Terminal.ConnectivityNode rdf:resource="#N1"/><ACDCTerminal.sequenceNumber>1</ACDCTerminal.sequenceNumber></cim:Terminal>
 <cim:Terminal rdf:ID="LT2"><Terminal.ConductingEquipment rdf:resource="#L1"/><Terminal.ConnectivityNode rdf:resource="#N2"/><ACDCTerminal.sequenceNumber>2</ACDCTerminal.sequenceNumber></cim:Terminal>
 <cim:Breaker rdf:ID="BR1"><IdentifiedObject.name>Breaker 1</IdentifiedObject.name><Switch.open>false</Switch.open><Switch.normalOpen>false</Switch.normalOpen><Switch.retained>true</Switch.retained></cim:Breaker>
@@ -5937,6 +6008,44 @@ mod tests {
     }
 
     #[test]
+    fn write_complete_rpf_rejects_missing_required_nominal_kv() -> Result<()> {
+        let tmp_dir = std::env::temp_dir().join("raptrix_rpf_missing_nominal_kv_tests");
+        fs::create_dir_all(&tmp_dir)?;
+
+        let eq_path = tmp_dir.join("missing_base_voltage_fixture_eq.xml");
+        fs::write(&eq_path, generate_eq_fixture_missing_base_voltage())?;
+
+        let output_path = tmp_dir.join("missing_base_voltage_fixture.rpf");
+        let eq_path_str = eq_path.to_string_lossy().into_owned();
+        let output_path_str = output_path.to_string_lossy().into_owned();
+
+        let err = write_complete_rpf(&[&eq_path_str], &output_path_str)
+            .expect_err("missing BaseVoltage should fail under v0.9.3");
+        let message = format!("{err:#}");
+        assert!(message.contains("missing required BaseVoltage nominal_kv"));
+        Ok(())
+    }
+
+    #[test]
+    fn write_complete_rpf_rejects_non_positive_nominal_kv() -> Result<()> {
+        let tmp_dir = std::env::temp_dir().join("raptrix_rpf_non_positive_nominal_kv_tests");
+        fs::create_dir_all(&tmp_dir)?;
+
+        let eq_path = tmp_dir.join("zero_base_voltage_fixture_eq.xml");
+        fs::write(&eq_path, generate_eq_fixture_zero_base_voltage())?;
+
+        let output_path = tmp_dir.join("zero_base_voltage_fixture.rpf");
+        let eq_path_str = eq_path.to_string_lossy().into_owned();
+        let output_path_str = output_path.to_string_lossy().into_owned();
+
+        let err = write_complete_rpf(&[&eq_path_str], &output_path_str)
+            .expect_err("non-positive BaseVoltage should fail under v0.9.3");
+        let message = format!("{err:#}");
+        assert!(message.contains("must be finite and > 0.0 kV"));
+        Ok(())
+    }
+
+    #[test]
     fn write_complete_rpf_captures_switch_contingency_identity() -> Result<()> {
         let tmp_dir = std::env::temp_dir().join("raptrix_rpf_contingency_identity_tests");
         fs::create_dir_all(&tmp_dir)?;
@@ -6063,9 +6172,9 @@ mod tests {
             rate_b: 100.0,
             rate_c: 100.0,
             status: active,
-            nominal_kv_h: None,
-            nominal_kv_m: None,
-            nominal_kv_l: None,
+            nominal_kv_h: 230.0,
+            nominal_kv_m: 115.0,
+            nominal_kv_l: 13.8,
         }
     }
 
@@ -6091,8 +6200,8 @@ mod tests {
             rate_b: 100.0,
             rate_c: 100.0,
             status: true,
-            from_nominal_kv: None,
-            to_nominal_kv: None,
+            from_nominal_kv: 230.0,
+            to_nominal_kv: 230.0,
         }
     }
 
@@ -6391,8 +6500,9 @@ mod tests {
     fn generate_eq_fixture_minimal_line() -> String {
         String::from(
             r##"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#">
+<cim:BaseVoltage rdf:ID="BV230"><BaseVoltage.nominalVoltage>230</BaseVoltage.nominalVoltage></cim:BaseVoltage>
 <cim:ConnectivityNode rdf:ID="N1" /><cim:ConnectivityNode rdf:ID="N2" />
-<cim:ACLineSegment rdf:ID="L1"><ACLineSegment.r>0.01</ACLineSegment.r><ACLineSegment.x>0.05</ACLineSegment.x></cim:ACLineSegment>
+<cim:ACLineSegment rdf:ID="L1"><ConductingEquipment.BaseVoltage rdf:resource="#BV230"/><ACLineSegment.r>0.01</ACLineSegment.r><ACLineSegment.x>0.05</ACLineSegment.x></cim:ACLineSegment>
 <cim:Terminal rdf:ID="LT1"><Terminal.ConductingEquipment rdf:resource="#L1"/><Terminal.ConnectivityNode rdf:resource="#N1"/><ACDCTerminal.sequenceNumber>1</ACDCTerminal.sequenceNumber></cim:Terminal>
 <cim:Terminal rdf:ID="LT2"><Terminal.ConductingEquipment rdf:resource="#L1"/><Terminal.ConnectivityNode rdf:resource="#N2"/><ACDCTerminal.sequenceNumber>2</ACDCTerminal.sequenceNumber></cim:Terminal>
 </rdf:RDF>"##,

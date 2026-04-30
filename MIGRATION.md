@@ -4,6 +4,23 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
 
 Copyright (c) 2026 Raptrix PowerFlow
 
+## v0.3.3 / Schema v0.9.3
+
+- Nominal-kV columns are now strict required fields and must be finite and `> 0.0`:
+  - `buses.nominal_kv`
+  - `branches.from_nominal_kv`, `branches.to_nominal_kv`
+  - `transformers_2w.from_nominal_kv`, `transformers_2w.to_nominal_kv`
+  - `transformers_3w.nominal_kv_h`, `transformers_3w.nominal_kv_m`, `transformers_3w.nominal_kv_l`
+- Reader compatibility is strict at v0.9.3 (`SUPPORTED_RPF_VERSIONS = v0.9.3 / 0.9.3`).
+
+One-line re-ingest helper:
+
+```bash
+raptrix-cim-rs migrate-0.9.2-to-0.9.3 --input-dir <cgmes_dir> --output <case_v093.rpf>
+```
+
+If any required nominal-kV cannot be resolved from BaseVoltage (or resolves to non-positive), the writer now errors instead of silently emitting null.
+
 ## What Changed
 
 This repository was refactored from a single crate into a Cargo workspace with two responsibilities:

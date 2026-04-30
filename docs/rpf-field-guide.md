@@ -1,6 +1,6 @@
 # RPF Field Guide — Plain-English Reference
 
-**Schema contract: v0.8.6 | Format: Apache Arrow IPC**
+**Schema contract: v0.9.3 | Format: Apache Arrow IPC**
 
 This guide explains every table and field in an `.rpf` file in plain English. It is written for engineers who need to read, validate, or build tools against RPF files without digging into Arrow source code. For the normative type-level contract see [schema-contract.md](schema-contract.md).
 
@@ -42,7 +42,7 @@ These are key-value strings in the Arrow file header. Every RPF reader should ch
 
 | Key | Example value | What it means |
 |---|---|---|
-| `raptrix.version` | `0.8.6` | The schema contract version this file was written to. Readers should reject files with an unsupported version. |
+| `raptrix.version` | `0.9.3` | The schema contract version this file was written to. Readers should reject files with an unsupported version. |
 | `raptrix.branding` | *(long string)* | Human-readable provenance string identifying the writing tool and copyright. |
 | `rpf.case_fingerprint` | `abc123...` | A deterministic hash of the case identity. Useful for de-duplication and reproducibility checks. |
 | `rpf.validation_mode` | `topology_only` or `solved_ready` | `topology_only` means the file has enough topology to run but may be missing some steady-state parameters. `solved_ready` means all parameters needed for full Newton-Raphson are present. |
@@ -146,7 +146,7 @@ Buses are the nodes of the network. Every generator, load, and branch connects t
 | `v_max` | number | Voltage upper operating limit in per-unit. Typically 1.05. |
 | `p_min_agg` | number | Aggregate minimum generation in per-unit across all generators at this bus. |
 | `p_max_agg` | number | Aggregate maximum generation in per-unit across all generators at this bus. |
-| `nominal_kv` | number | Nominal voltage level in kilovolts from the CIM `BaseVoltage`. Null if the source CIM payload does not have a recoverable base voltage for this bus. |
+| `nominal_kv` | number | Required nominal voltage level in kilovolts from the CIM `BaseVoltage`. Must be finite and strictly greater than 0. |
 | `bus_uuid` | text | The CIM mRID (UUID) of the `TopologicalNode` this bus was collapsed from. Unique and stable across exports of the same case. |
 
 ---
@@ -171,8 +171,8 @@ Branches are the transmission lines between buses.
 | `rate_c` | number | Emergency override rating in per-unit MVA. |
 | `status` | true/false | True = in service, False = out of service. |
 | `name` | text | Human-readable line name. Null if not provided. |
-| `from_nominal_kv` | number | Nominal kV at the from-end bus. Null if not recoverable from the source CIM. |
-| `to_nominal_kv` | number | Nominal kV at the to-end bus. |
+| `from_nominal_kv` | number | Required nominal kV at the from-end bus. Must be finite and strictly greater than 0. |
+| `to_nominal_kv` | number | Required nominal kV at the to-end bus. Must be finite and strictly greater than 0. |
 
 ---
 
@@ -260,7 +260,7 @@ Switched shunts are reactor or capacitor banks that can be switched in discrete 
 | `rate_a`, `rate_b`, `rate_c` | numbers | Normal, short-term, and emergency MVA ratings in per-unit. |
 | `status` | true/false | True = in service. |
 | `name` | text | Human-readable name. |
-| `from_nominal_kv`, `to_nominal_kv` | numbers | Nominal kV on each winding. |
+| `from_nominal_kv`, `to_nominal_kv` | numbers | Required nominal kV on each winding; each value must be finite and strictly greater than 0. |
 
 ---
 
@@ -284,7 +284,7 @@ Three-winding transformers connect three voltage levels. RPF models them with a 
 | `rate_a`, `rate_b`, `rate_c` | numbers | Thermal ratings in per-unit MVA. |
 | `status` | true/false | True = in service. |
 | `name` | text | Human-readable name. |
-| `nominal_kv_h`, `nominal_kv_m`, `nominal_kv_l` | numbers | Nominal kV for each of the three windings. |
+| `nominal_kv_h`, `nominal_kv_m`, `nominal_kv_l` | numbers | Required nominal kV for each of the three windings; each value must be finite and strictly greater than 0. |
 
 ---
 

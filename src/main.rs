@@ -65,6 +65,9 @@ struct Cli {
 enum Commands {
     /// Convert CGMES profiles into a canonical `.rpf` Arrow IPC artifact.
     Convert(ConvertArgs),
+    /// One-line helper: re-ingest source profiles into strict schema v0.9.3 output.
+    #[command(name = "migrate-0.9.2-to-0.9.3")]
+    Migrate092To093(ConvertArgs),
     /// View summary stats from an existing `.rpf` Arrow IPC artifact.
     View(ViewArgs),
 }
@@ -179,6 +182,7 @@ fn run() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Convert(args) => run_convert(args),
+        Commands::Migrate092To093(args) => run_convert(args),
         Commands::View(args) => run_view(args),
     }
 }

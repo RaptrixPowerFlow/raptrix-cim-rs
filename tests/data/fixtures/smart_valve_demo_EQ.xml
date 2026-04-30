@@ -5,7 +5,12 @@
   <cim:ConnectivityNode rdf:ID="SV_N1"/>
   <cim:ConnectivityNode rdf:ID="SV_N2"/>
 
+  <cim:BaseVoltage rdf:ID="BV230">
+    <BaseVoltage.nominalVoltage>230</BaseVoltage.nominalVoltage>
+  </cim:BaseVoltage>
+
   <cim:ACLineSegment rdf:ID="SV_LINE_1">
+    <ConductingEquipment.BaseVoltage rdf:resource="#BV230"/>
     <IdentifiedObject.name>Smart Valve Demo Line</IdentifiedObject.name>
     <ACLineSegment.r>0.01</ACLineSegment.r>
     <ACLineSegment.x>0.05</ACLineSegment.x>
