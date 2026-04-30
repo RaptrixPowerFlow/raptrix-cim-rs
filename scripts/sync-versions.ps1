@@ -41,12 +41,16 @@ function Convert-ContentForVersion {
             )
         }
         "CHANGELOG.md" {
-            $updated = [regex]::Replace(
-                $updated,
-                '(?m)^### Converter release: Crate version [0-9]+\.[0-9]+\.[0-9]+ \(raptrix-cim-arrow\) / [0-9]+\.[0-9]+\.[0-9]+ \(raptrix-cim-rs\) \| Arrow schema v[0-9]+\.[0-9]+\.[0-9]+$',
-                "### Converter release: Crate version $TargetVersion (raptrix-cim-arrow) / $TargetVersion (raptrix-cim-rs) | Arrow schema v0.9.3",
-                1
-            )
+            # Update only the first converter-release line to keep historical sections intact.
+            $lineEnding = if ($updated.Contains("`r`n")) { "`r`n" } else { "`n" }
+            $lines = $updated -split "`r?`n", -1
+            for ($i = 0; $i -lt $lines.Length; $i++) {
+                if ($lines[$i] -match '^### Converter release: Crate version [0-9]+\.[0-9]+\.[0-9]+ \(raptrix-cim-arrow\) / [0-9]+\.[0-9]+\.[0-9]+ \(raptrix-cim-rs\) \| Arrow schema v[0-9]+\.[0-9]+\.[0-9]+$') {
+                    $lines[$i] = "### Converter release: Crate version $TargetVersion (raptrix-cim-arrow) / $TargetVersion (raptrix-cim-rs) | Arrow schema v0.9.3"
+                    break
+                }
+            }
+            $updated = [string]::Join($lineEnding, $lines)
         }
     }
 
