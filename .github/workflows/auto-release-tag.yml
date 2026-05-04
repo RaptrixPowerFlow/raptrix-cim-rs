@@ -1,0 +1,51 @@
+name: Auto release tag
+
+# Creates an annotated semver tag (vX.Y.Z) from the root Cargo.toml [package]
+# version when it changes on main, then pushes it so ``release.yml`` runs.
+#
+# Backfill: Actions → Auto release tag → Run workflow (no inputs required).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Log only — do not create or push a tag"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: auto-release-tag-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  maybe-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Resolve tag decision
+        id: meta
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+        run: python3 scripts/ci/release_auto_tag.py
+
+      - name: Create and push tag
+        if: ${{ steps.meta.outputs.skip == 'false' && !(github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true') }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.meta.outputs.tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release $TAG (${{ steps.meta.outputs.reason }})"
+          git push origin "$TAG"

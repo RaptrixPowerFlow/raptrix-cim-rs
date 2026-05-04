@@ -10,6 +10,17 @@ This repository is the canonical source of truth for the Raptrix `.rpf` schema c
   - `raptrix-core`
   - `raptrix-studio`
 
+## Automatic release tags (CI)
+
+Pushing to ``main`` runs **Auto release tag** (``.github/workflows/auto-release-tag.yml``):
+
+- When the root ``Cargo.toml`` ``[package]`` version for ``raptrix-cim-rs`` **changes** on that push (compared to ``github.event.before``), the workflow creates and pushes an annotated tag ``vX.Y.Z`` matching the new version.
+- Pushing that tag triggers **Release** (``.github/workflows/release.yml``), which builds binaries and publishes the GitHub Release.
+
+**Backfill** (e.g. version was bumped before this automation existed): GitHub → **Actions** → **Auto release tag** → **Run workflow**. If ``v{current Cargo version}`` is missing on the remote, it is created and pushed. Use **dry_run** to print the decision without tagging.
+
+Version bumps must remain the single source of truth in root ``Cargo.toml`` (keep ``raptrix-cim-arrow`` dependency version in sync, e.g. via ``./scripts/sync-versions.ps1``).
+
 ## Release Triggers
 
 Run this workflow on any of the following changes:
