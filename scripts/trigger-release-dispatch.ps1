@@ -14,7 +14,7 @@
 
 .EXAMPLE
   $env:GH_TOKEN = (Get-Content ~\secrets\raptrix_gh_pat.txt -Raw).Trim()
-  ./scripts/trigger-release-dispatch.ps1 -Version 0.3.4
+  ./scripts/trigger-release-dispatch.ps1 -Version 0.3.4 -Ref v0.3.4
 #>
 param(
     [Parameter(Mandatory = $true)]
@@ -22,6 +22,9 @@ param(
 
     [string]$Owner = "RaptrixPowerFlow",
     [string]$Repo = "raptrix-cim-rs",
+
+    # Git ref for the workflow run (branch name or tag, e.g. ``main`` or ``v0.3.4``).
+    [string]$Ref = "main",
 
     [switch]$Draft,
 
@@ -46,7 +49,7 @@ $uri = "https://api.github.com/repos/$Owner/$Repo/actions/workflows/release.yml/
 $publishStr = if ($SkipPublish) { "false" } else { "true" }
 $draftStr = if ($Draft) { "true" } else { "false" }
 $bodyObj = @{
-    ref    = "main"
+    ref    = $Ref
     inputs = @{
         version         = $Version
         publish_release = $publishStr
@@ -56,4 +59,4 @@ $bodyObj = @{
 $body = $bodyObj | ConvertTo-Json -Depth 5
 
 Invoke-RestMethod -Method Post -Headers $headers -Uri $uri -Body $body -ContentType "application/json"
-Write-Host "Dispatched Release workflow on main for version $Version (draft=$($Draft.IsPresent), publish_release=$(-not $SkipPublish))."
+Write-Host "Dispatched Release workflow (ref=$Ref) for version $Version (draft=$($Draft.IsPresent), publish_release=$(-not $SkipPublish))."

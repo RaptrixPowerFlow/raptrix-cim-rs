@@ -16,7 +16,7 @@ Pushing to ``main`` runs **Auto release tag** (``.github/workflows/auto-release-
 
 - Reads the root ``Cargo.toml`` ``[package]`` version for ``raptrix-cim-rs``.
 - If ``refs/tags/vX.Y.Z`` is **not** on ``origin`` for that version, it creates and pushes an annotated tag at the **current** ``main`` commit (works with merge, squash, and rebase — no ``github.event.before`` comparison).
-- Pushing that tag triggers **Release** (``.github/workflows/release.yml``), which builds binaries for Windows / Linux / macOS and publishes the GitHub Release.
+- After the tag push, **Auto release tag** calls ``workflow_dispatch`` on **Release** (``.github/workflows/release.yml``) for that tag ref. This is required because **pushes performed with the default ``GITHUB_TOKEN`` do not start new workflow runs**, so a tag-only push from Actions would otherwise never build binaries.
 
 **Backfill:** GitHub → **Actions** → **Auto release tag** → **Run workflow**. Set **dry_run** to ``true`` to log only.
 

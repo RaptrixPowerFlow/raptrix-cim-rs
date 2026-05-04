@@ -1,7 +1,12 @@
 name: Auto release tag
 
 # Creates an annotated semver tag (vX.Y.Z) from the root Cargo.toml [package]
-# version when it changes on main, then pushes it so ``release.yml`` runs.
+# version when it is missing on origin, then pushes it.
+#
+# GitHub does **not** start new workflows from a ``push`` performed with the
+# default ``GITHUB_TOKEN``. Tag pushes from this job therefore **do not** fire
+# ``release.yml`` on their own. After a successful tag push we call
+# ``workflow_dispatch`` on ``release.yml`` (requires ``actions: write``).
 #
 # Backfill: Actions → Auto release tag → Run workflow (no inputs required).
 
@@ -21,6 +26,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: auto-release-tag-${{ github.ref }}
@@ -50,3 +56,19 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "$TAG" -m "Release $TAG (${{ steps.meta.outputs.reason }})"
           git push origin "$TAG"
+
+      # Pushes using GITHUB_TOKEN do not trigger other workflows (including tag
+      # listeners). Dispatch Release explicitly on the new tag ref.
+      - name: Dispatch Release workflow on tag
+        if: ${{ steps.meta.outputs.skip == 'false' && (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true') }}
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          curl -fsS -X POST \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/release.yml/dispatches" \
+            -d "{\"ref\":\"${TAG}\",\"inputs\":{\"version\":\"${VERSION}\",\"publish_release\":\"true\",\"draft\":\"false\"}}"
