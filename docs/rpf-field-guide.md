@@ -1,6 +1,11 @@
+<!--
+Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
+Copyright (c) 2026 Raptrix PowerFlow
+-->
+
 # RPF Field Guide — Plain-English Reference
 
-**Schema contract: v0.9.3 | Format: Apache Arrow IPC**
+**Schema contract: v0.9.5 | Format: Apache Arrow IPC**
 
 This guide explains every table and field in an `.rpf` file in plain English. It is written for engineers who need to read, validate, or build tools against RPF files without digging into Arrow source code. For the normative type-level contract see [schema-contract.md](schema-contract.md).
 
@@ -42,12 +47,18 @@ These are key-value strings in the Arrow file header. Every RPF reader should ch
 
 | Key | Example value | What it means |
 |---|---|---|
-| `raptrix.version` | `0.9.3` | The schema contract version this file was written to. Readers should reject files with an unsupported version. |
+| `raptrix.version` | `0.9.5` | The schema contract version this file was written to. Readers should reject files with an unsupported version. |
 | `raptrix.branding` | *(long string)* | Human-readable provenance string identifying the writing tool and copyright. |
 | `rpf.case_fingerprint` | `abc123...` | A deterministic hash of the case identity. Useful for de-duplication and reproducibility checks. |
 | `rpf.validation_mode` | `topology_only` or `solved_ready` | `topology_only` means the file has enough topology to run but may be missing some steady-state parameters. `solved_ready` means all parameters needed for full Newton-Raphson are present. |
 | `rpf.case_mode` | `flat_start_planning` | See the case modes table above. Required since v0.8.4. |
 | `rpf.solved_state_presence` | `not_computed` | Describes what solved state is in the file. See table below. |
+
+### Optional: `rpf.default_shunt_control_mode` (v0.9.5+)
+
+| Key | Example | What it means |
+|---|---|---|
+| `rpf.default_shunt_control_mode` | `planning_full` | **Optional.** When present, Raptrix-Sentinel and downstream solvers will default to this shunt mode (`planning_full` \| `real_time_hot_start` \| `real_time_frozen`). Enables fully declarative planning ↔ real-time handoff. Mirrors the nullable `metadata` table column of the same logical value. Planning exports from `raptrix-cim-rs` stamp `planning_full` by default. |
 
 ### `rpf.solved_state_presence` values
 
@@ -119,6 +130,7 @@ This table always has exactly one row and summarizes the case.
 | `slack_bus_id_solved` | integer | The `bus_id` used as the angle reference (slack bus) in the solve. Prevents silent reference-frame mismatch when solved snapshots are re-used. Null for planning cases. (v0.8.5+) |
 | `angle_reference_deg` | number | The angle value in degrees assigned to the slack bus during the solve, almost always 0.0. Null for planning cases. (v0.8.5+) |
 | `solved_shunt_state_presence` | text | `actual_solved` when the `switched_shunts_solved` table is present and authoritative; `not_available` when the solver did not track discrete shunt steps. Null for planning cases. (v0.8.5+) |
+| `default_shunt_control_mode` | text | **(v0.9.5+)** Optional. When present, Raptrix-Sentinel and downstream solvers will default to this shunt mode (`planning_full` \| `real_time_hot_start` \| `real_time_frozen`). Enables fully declarative planning ↔ real-time handoff. Null when unspecified. |
 
 ---
 
@@ -193,6 +205,7 @@ Branches are the transmission lines between buses.
 | `xd_prime` | number | Transient direct-axis reactance in per-unit. Key parameter for dynamic simulation. |
 | `D` | number | Damping coefficient. |
 | `name` | text | Human-readable generator name. |
+| `controlled_bus_id` | integer | **(v0.9.5+, trailing column)** Dense `bus_id` of the bus whose voltage is regulated when the setpoint applies to a **remote** bus (PSS/E **IREG**; CIM **RegulatingControl** target resolved to the same bus numbering as `bus_id`). **`0` or the same value as `bus_id`** means **local** regulation at the generator’s terminal bus. *Backward compatibility:* v0.9.4 files had 24 columns ending at `params`; compliant readers synthesize **`0`** (local) for every row — **zero-copy, zero allocation** when padding short structs to the canonical width. **Example:** generator on `bus_id=12` regulating remote bus `904` → `controlled_bus_id=904`. |
 
 ---
 

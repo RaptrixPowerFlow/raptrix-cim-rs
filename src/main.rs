@@ -1,3 +1,8 @@
+/*
+Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
+Copyright (c) 2026 Raptrix PowerFlow
+*/
+
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
@@ -328,6 +333,7 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
             solver_provenance: None,
             transformer_representation_mode:
                 raptrix_cim_rs::rpf_writer::TransformerRepresentationMode::Native3W,
+            default_shunt_control_mode: None,
         }
     } else {
         WriteOptions {
@@ -351,6 +357,7 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
             solver_provenance: None,
             transformer_representation_mode:
                 raptrix_cim_rs::rpf_writer::TransformerRepresentationMode::Native3W,
+            default_shunt_control_mode: None,
         }
     };
 

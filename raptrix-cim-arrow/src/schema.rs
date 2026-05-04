@@ -1,8 +1,13 @@
+/*
+Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
+Copyright (c) 2026 Raptrix PowerFlow
+*/
+
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.9.4 profile.
+//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.9.5 profile.
 //!
 //! **CGMES 3.0+ Only**: This module targets CGMES v3.0 and later (v17+ CIM) merged profiles.
 //! Support for legacy CGMES 2.4.x was dropped in this release for simplicity and performance.
@@ -10,6 +15,12 @@
 //! This module exposes one exact Arrow schema per required table in the locked
 //! `.rpf` contract, plus deterministic schema registry helpers used by both
 //! writers and readers.
+//!
+//! ## v0.9.5 — 18 canonical tables (additive: generators + metadata)
+//! Adds `generators.controlled_bus_id` (remote voltage regulation / IREG denormalization) and
+//! optional nullable `metadata.default_shunt_control_mode` for declarative planning ↔ real-time
+//! shunt handoff. Prior v0.9.4 tables remain valid; readers synthesize missing `controlled_bus_id`
+//! as `0` (local regulation).
 //!
 //! ## v0.9.4 — 18 canonical tables (breaking: buses gains 2 new required columns)
 //! Adds explicit Q decomposition to the `buses` table: `qd_load_pu` (pure reactive load,
@@ -32,15 +43,16 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, Schema};
 
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.9.4 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.9.5 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.";
 
 /// Canonical RPF format version tag embedded as file-level metadata.
-pub const RPF_VERSION: &str = "v0.9.4";
+pub const RPF_VERSION: &str = "v0.9.5";
 
 /// Supported RPF versions accepted by generic Arrow IPC readers.
 ///
-/// v0.9.4 is the current contract release. v0.9.3 is accepted for backward compatibility.
-pub const SUPPORTED_RPF_VERSIONS: &[&str] = &["v0.9.4", "0.9.4", "v0.9.3", "0.9.3"];
+/// v0.9.5 is the current contract release. v0.9.4 and v0.9.3 remain accepted for backward compatibility.
+pub const SUPPORTED_RPF_VERSIONS: &[&str] =
+    &["v0.9.5", "0.9.5", "v0.9.4", "0.9.4", "v0.9.3", "0.9.3"];
 
 /// Validates a nominal kV value for required network voltage fields.
 pub fn validate_nominal_kv(value: f64, context: &str) -> Result<(), String> {
@@ -84,6 +96,9 @@ pub const METADATA_KEY_FEATURE_ZERO_INJECTION_STUB: &str = "rpf.features.zero_in
 /// Required metadata key describing the case mode (flat_start_planning | warm_start_planning | solved_snapshot).
 /// Added in v0.8.4.
 pub const METADATA_KEY_CASE_MODE: &str = "rpf.case_mode";
+/// Optional metadata key and `metadata` table column: default shunt control mode for Sentinel / solver handoff.
+/// Values: `planning_full` \| `real_time_hot_start` \| `real_time_frozen`. Added in v0.9.5.
+pub const METADATA_KEY_DEFAULT_SHUNT_CONTROL_MODE: &str = "rpf.default_shunt_control_mode";
 /// Required metadata key indicating presence/provenance of solved-state fields.
 /// Values: actual_solved | not_available | not_computed. Added in v0.8.4.
 pub const METADATA_KEY_SOLVED_STATE_PRESENCE: &str = "rpf.solved_state_presence";
@@ -328,6 +343,9 @@ pub fn schema_metadata() -> HashMap<String, String> {
 /// - `solved_state_presence`: actual_solved | not_available | not_computed
 /// - Solver provenance fields (all nullable): solver_version, solver_iterations,
 ///   solver_accuracy, solver_mode. Populated only when solved_state_presence=actual_solved.
+///
+/// v0.9.5 adds nullable `default_shunt_control_mode` (planning_full | real_time_hot_start |
+/// real_time_frozen) for declarative shunt-mode handoff; uncoupled from `case_mode` semantics.
 pub fn metadata_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
@@ -377,6 +395,8 @@ pub fn metadata_schema() -> Schema {
             Field::new("solver_q_limit_infeasible_count", DataType::Int32, true),
             Field::new("pv_to_pq_switch_count", DataType::Int32, true),
             Field::new("real_time_discovery", DataType::Boolean, true), // true if from live SE analysis
+            // v0.9.5: optional declarative shunt mode for planning ↔ real-time interchange
+            Field::new("default_shunt_control_mode", dict_utf8(), true),
         ],
         schema_metadata(),
     )
@@ -536,6 +556,8 @@ pub fn generators_schema() -> Schema {
             Field::new("owner_id", DataType::Int32, true),
             Field::new("market_resource_id", DataType::Utf8, true),
             Field::new("params", map_string_f64(), true),
+            // v0.9.5: remote voltage regulation target (PSS/E IREG; CIM RegulatingControl denormalized)
+            Field::new("controlled_bus_id", DataType::Int32, false),
         ],
         schema_metadata(),
     )
@@ -1174,11 +1196,13 @@ mod tests {
         );
 
         // version gate
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.9.5"));
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.9.5"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.9.4"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.9.4"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.9.3"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.9.3"));
-        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 4);
+        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 6);
     }
 
     #[test]
@@ -1236,6 +1260,15 @@ mod tests {
         assert_eq!(generators.field(10).name(), "p_sched_mw");
         assert_eq!(generators.field(11).name(), "q_sched_mvar");
         assert!(!generators.field(11).is_nullable());
+    }
+
+    #[test]
+    fn generators_schema_v095_controlled_bus_id() {
+        let generators = generators_schema();
+        assert_eq!(generators.fields().len(), 25);
+        assert_eq!(generators.field(24).name(), "controlled_bus_id");
+        assert_eq!(generators.field(24).data_type(), &DataType::Int32);
+        assert!(!generators.field(24).is_nullable());
     }
 
     #[test]

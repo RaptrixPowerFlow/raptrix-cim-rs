@@ -16,12 +16,15 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::Result;
 use raptrix_cim_rs::arrow_schema::{
-    METADATA_KEY_CASE_MODE, METADATA_KEY_SOLVED_STATE_PRESENCE, TABLE_BUSES_SOLVED,
-    TABLE_GENERATORS_SOLVED,
+    METADATA_KEY_CASE_MODE, METADATA_KEY_DEFAULT_SHUNT_CONTROL_MODE,
+    METADATA_KEY_SOLVED_STATE_PRESENCE, TABLE_BUSES_SOLVED, TABLE_GENERATORS_SOLVED,
 };
-use raptrix_cim_rs::rpf_writer::{
-    CaseMode, SolvedStatePresence, SolverProvenance, WriteOptions, rpf_file_metadata,
-    summarize_rpf, write_complete_rpf_with_options,
+use raptrix_cim_rs::{
+    read_rpf_tables,
+    rpf_writer::{
+        CaseMode, SolvedStatePresence, SolverProvenance, WriteOptions, rpf_file_metadata,
+        summarize_rpf, write_complete_rpf_with_options,
+    },
 };
 
 static OUTPUT_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -114,6 +117,20 @@ fn planning_only_export_has_flat_start_metadata() -> Result<()> {
         "flat-start export must write solved_state_presence=not_computed"
     );
 
+    assert_eq!(
+        metadata.get(METADATA_KEY_DEFAULT_SHUNT_CONTROL_MODE),
+        Some(&"planning_full".to_string()),
+        "v0.9.5 planning export must stamp rpf.default_shunt_control_mode=planning_full"
+    );
+
+    let tables = read_rpf_tables(&out)?;
+    let generators = tables
+        .iter()
+        .find(|(name, _)| name == "generators")
+        .map(|(_, batch)| batch)
+        .expect("generators table");
+    assert_eq!(generators.schema().field(24).name(), "controlled_bus_id");
+
     let _ = fs::remove_file(&out);
     Ok(())
 }
@@ -138,6 +155,11 @@ fn warm_start_planning_export_has_not_computed_presence() -> Result<()> {
     assert_eq!(
         presence, "not_computed",
         "warm-start planning must not claim actual_solved"
+    );
+
+    assert_eq!(
+        metadata.get(METADATA_KEY_DEFAULT_SHUNT_CONTROL_MODE),
+        Some(&"planning_full".to_string())
     );
 
     let _ = fs::remove_file(&out);

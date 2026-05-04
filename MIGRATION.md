@@ -4,6 +4,25 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
 
 Copyright (c) 2026 Raptrix PowerFlow
 
+## v0.9.5 (additive — no migration required)
+
+### What changed
+
+- `generators` gains required trailing column **`controlled_bus_id`** (Int32): PSS/E **IREG** / CIM **RegulatingControl** denormalized to dense `bus_id`. `0` or `bus_id` = local regulation.
+- `metadata` gains nullable **`default_shunt_control_mode`** (dictionary-encoded string); optional file-level **`rpf.default_shunt_control_mode`** may mirror it for Sentinel / solver handoff (`planning_full` \| `real_time_hot_start` \| `real_time_frozen`).
+
+### Compatibility
+
+- **No re-export required.** v0.9.4 RPF files remain readable. Readers synthesize missing `controlled_bus_id` as **`0`**. Missing `default_shunt_control_mode` reads as null.
+
+### Reader upgrade (raptrix-core C++)
+
+- Accept **`v0.9.5`** / **`0.9.5`** in the RPF version gate alongside v0.9.4.
+- Import **`controlled_bus_id`** after `params`; use **`0`** when the column is absent on legacy 24-column batches.
+- Optionally read **`default_shunt_control_mode`** from the `metadata` row or `rpf.default_shunt_control_mode` file metadata; default consumer behavior may remain `planning_full` when absent.
+
+---
+
 ## v0.3.4 / Schema v0.9.4 (Breaking)
 
 ### What changed

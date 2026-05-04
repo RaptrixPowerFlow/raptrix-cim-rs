@@ -1,3 +1,8 @@
+/*
+Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
+Copyright (c) 2026 Raptrix PowerFlow
+*/
+
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
@@ -14,7 +19,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
-use arrow::array::{Array, ArrayRef, StructArray, new_null_array};
+use arrow::array::{Array, ArrayRef, Int32Array, StructArray, new_null_array};
 use arrow::buffer::NullBuffer;
 use arrow::compute::concat;
 use arrow::datatypes::{DataType, Field, Schema};
@@ -331,6 +336,16 @@ pub fn read_rpf_tables(path: impl AsRef<Path>) -> Result<Vec<(String, RecordBatc
             for index in struct_array.columns().len()..expected_schema.fields().len() {
                 let expected_field = expected_schema.field(index);
                 if !expected_field.is_nullable() {
+                    // v0.9.5: 24-column `generators` files omit trailing `controlled_bus_id`; synthesize
+                    // local regulation as `0` (same semantics as optional_if_short_struct in C++ readers).
+                    if table_name == TABLE_GENERATORS
+                        && expected_field.name() == "controlled_bus_id"
+                        && expected_field.data_type() == &DataType::Int32
+                    {
+                        trimmed_columns
+                            .push(Arc::new(Int32Array::from_value(0, expected_rows)) as ArrayRef);
+                        continue;
+                    }
                     bail!(
                         "invalid struct column '{table_name}': missing non-nullable field '{}'",
                         expected_field.name()
@@ -682,6 +697,7 @@ pub fn validate_rpf_file(path: impl AsRef<Path>, options: &RootWriteOptions) -> 
         .context("post-write contract violation: missing generators table")?;
     require_non_null_count_equals_len(TABLE_GENERATORS, generators, "generator_id")?;
     require_non_null_count_equals_len(TABLE_GENERATORS, generators, "bus_id")?;
+    require_non_null_count_equals_len(TABLE_GENERATORS, generators, "controlled_bus_id")?;
 
     let loads = by_name
         .get(TABLE_LOADS)
@@ -799,9 +815,9 @@ mod tests {
     use crate::schema::{
         METADATA_KEY_RPF_VERSION, METADATA_KEY_VERSION, SCHEMA_VERSION, TABLE_BRANCHES,
         TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED,
-        TABLE_LOADS, all_table_schemas, branches_schema, diagram_objects_schema,
-        diagram_points_schema, facts_devices_schema, facts_solved_schema, loads_schema,
-        schema_metadata,
+        TABLE_GENERATORS, TABLE_LOADS, all_table_schemas, branches_schema, diagram_objects_schema,
+        diagram_points_schema, facts_devices_schema, facts_solved_schema, generators_schema,
+        loads_schema, schema_metadata,
     };
 
     use super::{
@@ -1025,7 +1041,7 @@ mod tests {
             .expect_err("v0.9.3 reader should reject missing required nominal_kv fields");
         let message = format!("{err:#}");
         assert!(message.contains("missing non-nullable field 'to_nominal_kv'"));
-        assert_eq!(SCHEMA_VERSION, "v0.9.4");
+        assert_eq!(SCHEMA_VERSION, "v0.9.5");
         Ok(())
     }
 
@@ -1098,6 +1114,81 @@ mod tests {
         assert_eq!(loads.column(6).null_count(), 0);
         assert_eq!(loads.column(7).null_count(), 0);
         assert_eq!(loads.column(8).null_count(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn read_supports_v094_generators_missing_controlled_bus_id() -> Result<()> {
+        let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_backward_generators_read");
+        std::fs::create_dir_all(&tmp_dir)?;
+        let output_path = tmp_dir.join("v094_like_generators.rpf");
+
+        let mut table_batches: HashMap<&'static str, RecordBatch> = all_table_schemas()
+            .into_iter()
+            .map(|(name, schema)| (name, RecordBatch::new_empty(Arc::new(schema))))
+            .collect();
+
+        let full = generators_schema();
+        let old_gen_fields: Vec<Field> = full.fields()[0..24]
+            .iter()
+            .map(|field| field.as_ref().clone())
+            .collect();
+        let old_generators_schema = Schema::new_with_metadata(old_gen_fields, schema_metadata());
+        table_batches.insert(
+            TABLE_GENERATORS,
+            RecordBatch::new_empty(Arc::new(old_generators_schema)),
+        );
+
+        let mut root_fields = Vec::new();
+        let mut root_columns: Vec<ArrayRef> = Vec::new();
+        for (name, _) in all_table_schemas() {
+            let table_batch = table_batches
+                .get(name)
+                .expect("table batch should exist for each required table");
+            let table_schema = table_batch.schema();
+            root_fields.push(Field::new(
+                name,
+                DataType::Struct(table_schema.fields().clone()),
+                true,
+            ));
+            root_columns.push(Arc::new(StructArray::new(
+                table_schema.fields().clone(),
+                table_batch.columns().to_vec(),
+                None,
+            )) as ArrayRef);
+        }
+
+        let mut root_meta = schema_metadata();
+        root_meta.insert(METADATA_KEY_VERSION.to_string(), SCHEMA_VERSION.to_string());
+        root_meta.insert(
+            METADATA_KEY_RPF_VERSION.to_string(),
+            SCHEMA_VERSION.to_string(),
+        );
+        for (name, _) in all_table_schemas() {
+            root_meta.insert(row_count_metadata_key(name), "0".to_string());
+        }
+        let root_schema = Arc::new(Schema::new_with_metadata(root_fields, root_meta));
+        let root_batch = RecordBatch::try_new(root_schema.clone(), root_columns)?;
+
+        let mut out = File::create(&output_path)?;
+        let mut writer = FileWriter::try_new(&mut out, &root_schema)?;
+        writer.write_metadata(METADATA_KEY_VERSION, SCHEMA_VERSION);
+        writer.write_metadata(METADATA_KEY_RPF_VERSION, SCHEMA_VERSION);
+        writer.write(&root_batch)?;
+        writer.finish()?;
+
+        let tables = read_rpf_tables(&output_path)?;
+        let (_, generators) = tables
+            .iter()
+            .find(|(name, _)| name == TABLE_GENERATORS)
+            .context("missing generators table")?;
+        assert_eq!(generators.schema().fields().len(), 25);
+        let controlled = generators
+            .column(24)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .context("controlled_bus_id must be Int32")?;
+        assert_eq!(controlled.len(), 0);
         Ok(())
     }
 

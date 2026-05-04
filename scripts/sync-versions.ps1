@@ -46,7 +46,7 @@ function Convert-ContentForVersion {
             $lines = $updated -split "`r?`n", -1
             for ($i = 0; $i -lt $lines.Length; $i++) {
                 if ($lines[$i] -match '^### Converter release: Crate version [0-9]+\.[0-9]+\.[0-9]+ \(raptrix-cim-arrow\) / [0-9]+\.[0-9]+\.[0-9]+ \(raptrix-cim-rs\) \| Arrow schema v[0-9]+\.[0-9]+\.[0-9]+$') {
-                    $lines[$i] = "### Converter release: Crate version $TargetVersion (raptrix-cim-arrow) / $TargetVersion (raptrix-cim-rs) | Arrow schema v0.9.3"
+                    $lines[$i] = "### Converter release: Crate version $TargetVersion (raptrix-cim-arrow) / $TargetVersion (raptrix-cim-rs) | Arrow schema v0.9.5"
                     break
                 }
             }

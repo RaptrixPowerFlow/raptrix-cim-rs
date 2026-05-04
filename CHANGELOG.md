@@ -9,6 +9,23 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
 
 Copyright (c) 2026 Raptrix PowerFlow
 
+## v0.9.5 (2026-05-04)
+
+### Converter release: Crate version 0.3.4 (raptrix-cim-arrow) / 0.3.4 (raptrix-cim-rs) | Arrow schema v0.9.5
+
+### Added
+
+- **`generators.controlled_bus_id`** (Int32, required, trailing column): denormalized remote voltage regulation target — faithful interchange for PSS/E **IREG** and CIM **RegulatingControl** (terminal / TopologicalNode resolved to the same dense `bus_id` space as `generators.bus_id`). Values **`0` or `bus_id`** mean local regulation at the machine bus; any other positive `bus_id` identifies the remote bus whose voltage is held. Closes the gap between solver-side IREG support and the public columnar contract for 2026-era grids (IBRs, multi-terminal HVDC, Smart Valves).
+- **`metadata.default_shunt_control_mode`** (Dictionary\<Int32, Utf8\>, nullable) and file-level **`rpf.default_shunt_control_mode`**: optional declarative default for shunt control (`planning_full` \| `real_time_hot_start` \| `real_time_frozen`). When present, Raptrix-Sentinel and downstream solvers can default to this shunt mode for zero-config **planning ↔ real-time** handoff (bounded shunt steps for sub-10 ms N-100+ screening). Planning exports from `raptrix-cim-rs` stamp `planning_full` by default; solved snapshots omit the key unless explicitly provided via `WriteOptions.default_shunt_control_mode`.
+
+### Changed
+
+- Branding and `RPF_VERSION` / `SCHEMA_VERSION` bumped to **v0.9.5**. `SUPPORTED_RPF_VERSIONS` now includes `v0.9.5` / `0.9.5` while retaining **v0.9.4** and **v0.9.3** aliases for read compatibility.
+
+### Compatibility
+
+- **Full backward compatibility with v0.9.4 files.** Twenty-four-column `generators` tables (without `controlled_bus_id`) continue to load; the missing field is synthesized as **`0`** (local regulation) in `read_rpf_tables` — same semantics as optional short-struct handling (“zero-copy, zero allocation” padding to canonical width). Older `metadata` rows without `default_shunt_control_mode` remain valid; the column is nullable and omitted rows read as null.
+
 ## [Schema Contract 0.9.3] - 2026-04-30
 
 ### Converter release: Crate version 0.3.3 (raptrix-cim-arrow) / 0.3.3 (raptrix-cim-rs) | Arrow schema v0.9.3

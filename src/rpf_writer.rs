@@ -1,3 +1,8 @@
+/*
+Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
+Copyright (c) 2026 Raptrix PowerFlow
+*/
+
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
@@ -34,12 +39,13 @@ pub use raptrix_cim_arrow::{
 use sha2::{Digest, Sha256};
 
 use crate::arrow_schema::{
-    METADATA_KEY_CASE_FINGERPRINT, METADATA_KEY_CASE_MODE, METADATA_KEY_FEATURE_TOPOLOGY_ONLY,
-    METADATA_KEY_FEATURE_ZERO_INJECTION_STUB, METADATA_KEY_LOADS_ZIP_FIDELITY_PRESENCE,
-    METADATA_KEY_SOLVED_SHUNT_STATE_PRESENCE, METADATA_KEY_SOLVED_STATE_PRESENCE,
-    METADATA_KEY_SOLVER_ACCURACY, METADATA_KEY_SOLVER_ANGLE_REFERENCE_DEG,
-    METADATA_KEY_SOLVER_ITERATIONS, METADATA_KEY_SOLVER_MODE, METADATA_KEY_SOLVER_SLACK_BUS_ID,
-    METADATA_KEY_SOLVER_VERSION, METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_GENERATION_ISLAND_COUNT,
+    METADATA_KEY_CASE_FINGERPRINT, METADATA_KEY_CASE_MODE, METADATA_KEY_DEFAULT_SHUNT_CONTROL_MODE,
+    METADATA_KEY_FEATURE_TOPOLOGY_ONLY, METADATA_KEY_FEATURE_ZERO_INJECTION_STUB,
+    METADATA_KEY_LOADS_ZIP_FIDELITY_PRESENCE, METADATA_KEY_SOLVED_SHUNT_STATE_PRESENCE,
+    METADATA_KEY_SOLVED_STATE_PRESENCE, METADATA_KEY_SOLVER_ACCURACY,
+    METADATA_KEY_SOLVER_ANGLE_REFERENCE_DEG, METADATA_KEY_SOLVER_ITERATIONS,
+    METADATA_KEY_SOLVER_MODE, METADATA_KEY_SOLVER_SLACK_BUS_ID, METADATA_KEY_SOLVER_VERSION,
+    METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_GENERATION_ISLAND_COUNT,
     METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_LOAD_ISLAND_COUNT,
     METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_NETWORK_ISLAND_COUNT,
     METADATA_KEY_TOPOLOGY_DETACHED_ISLANDS_PRESENT, METADATA_KEY_TOPOLOGY_ISLAND_COUNT,
@@ -177,6 +183,10 @@ pub struct WriteOptions {
     /// `Native3W` (default): physical 3W units appear as native rows in `transformers_3w`.
     /// `Expanded`: physical 3W units are star-expanded into three 2W legs in `transformers_2w`.
     pub transformer_representation_mode: TransformerRepresentationMode,
+    /// Optional override for `metadata.default_shunt_control_mode` / file-level
+    /// `rpf.default_shunt_control_mode` (v0.9.5+). When `None`, planning exports use
+    /// `planning_full`; solved snapshots omit the field.
+    pub default_shunt_control_mode: Option<String>,
 }
 
 /// Policy for handling detached electrical islands at export time.
@@ -300,6 +310,22 @@ impl SolvedShuntStatePresence {
     }
 }
 
+fn resolved_default_shunt_control_mode(options: &WriteOptions) -> Option<String> {
+    if let Some(ref s) = options.default_shunt_control_mode {
+        let t = s.trim();
+        if t.is_empty() {
+            return None;
+        }
+        return Some(t.to_owned());
+    }
+    match options.case_mode {
+        CaseMode::FlatStartPlanning | CaseMode::WarmStartPlanning => {
+            Some("planning_full".to_string())
+        }
+        CaseMode::SolvedSnapshot => None,
+    }
+}
+
 impl Default for WriteOptions {
     fn default() -> Self {
         Self {
@@ -321,6 +347,7 @@ impl Default for WriteOptions {
             case_mode: CaseMode::FlatStartPlanning,
             solver_provenance: None,
             transformer_representation_mode: TransformerRepresentationMode::Native3W,
+            default_shunt_control_mode: None,
         }
     }
 }
@@ -374,6 +401,8 @@ struct MetadataRow<'a> {
     has_multi_terminal_dc: bool,
     study_purpose: Option<Cow<'a, str>>,
     scenario_tags: Vec<Cow<'a, str>>,
+    /// v0.9.5 optional nullable `metadata.default_shunt_control_mode` dictionary value.
+    default_shunt_control_mode: Option<Cow<'a, str>>,
 }
 
 #[derive(Debug, Clone)]
@@ -457,6 +486,8 @@ struct GenRow<'a> {
     h: f64,
     xd_prime: f64,
     d: f64,
+    /// v0.9.5: PSS/E IREG / CIM RegulatingControl target as dense `bus_id`; `0` or `bus_id` = local.
+    controlled_bus_id: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -1700,6 +1731,7 @@ pub fn write_complete_rpf_with_options(
             .iter()
             .map(|tag| Cow::Borrowed(tag.as_str()))
             .collect(),
+        default_shunt_control_mode: resolved_default_shunt_control_mode(options).map(Cow::Owned),
     };
 
     let metadata_batch = build_metadata_batch(&metadata_row)?;
@@ -1839,6 +1871,12 @@ pub fn write_complete_rpf_with_options(
         METADATA_KEY_CASE_MODE.to_string(),
         options.case_mode.as_str().to_string(),
     );
+    if let Some(ref mode_str) = resolved_default_shunt_control_mode(options) {
+        additional_root_metadata.insert(
+            METADATA_KEY_DEFAULT_SHUNT_CONTROL_MODE.to_string(),
+            mode_str.clone(),
+        );
+    }
     additional_root_metadata.insert(
         METADATA_KEY_SOLVED_STATE_PRESENCE.to_string(),
         solved_state_presence.as_str().to_string(),
@@ -3017,6 +3055,7 @@ fn parse_eq_topology_rows(
             h: machine.h.unwrap_or(0.0),
             xd_prime: machine.xd_prime.unwrap_or(0.0),
             d: machine.d.unwrap_or(0.0),
+            controlled_bus_id: bus_id,
         });
     }
 
@@ -3879,6 +3918,7 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
     let mut solver_q_limit_infeasible_count_b = Int32Builder::new();
     let mut pv_to_pq_switch_count_b = Int32Builder::new();
     let mut real_time_discovery_b = BooleanBuilder::new();
+    let mut default_shunt_control_mode_b = StringDictionaryBuilder::<Int32Type>::new();
 
     base_mva_b.append_value(row.base_mva);
     frequency_b.append_value(row.frequency_hz);
@@ -3954,6 +3994,12 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
     solver_q_limit_infeasible_count_b.append_null();
     pv_to_pq_switch_count_b.append_null();
     real_time_discovery_b.append_null();
+    match &row.default_shunt_control_mode {
+        Some(v) => {
+            default_shunt_control_mode_b.append(v.as_ref())?;
+        }
+        None => default_shunt_control_mode_b.append_null(),
+    }
 
     let custom_metadata_type = schema.field(11).data_type().clone();
     let custom_metadata_array = new_null_array(&custom_metadata_type, 1);
@@ -3995,6 +4041,7 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
         Arc::new(solver_q_limit_infeasible_count_b.finish()) as ArrayRef,
         Arc::new(pv_to_pq_switch_count_b.finish()) as ArrayRef,
         Arc::new(real_time_discovery_b.finish()) as ArrayRef,
+        Arc::new(default_shunt_control_mode_b.finish()) as ArrayRef,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build metadata record batch")
@@ -4191,6 +4238,7 @@ fn build_generators_batch(rows: &[GenRow<'_>], _base_mva: f64) -> Result<RecordB
     let mut ibr_subtype_b = StringBuilder::new();
     let mut owner_id_b = Int32Builder::new();
     let mut market_resource_id_b = StringBuilder::new();
+    let mut controlled_bus_id_b = Int32Builder::new();
     let mut params_b = MapBuilder::new(
         Some(MapFieldNames {
             entry: "entries".to_string(),
@@ -4279,6 +4327,7 @@ fn build_generators_batch(rows: &[GenRow<'_>], _base_mva: f64) -> Result<RecordB
         params_b
             .append(true)
             .context("failed to append generators.params map row")?;
+        controlled_bus_id_b.append_value(row.controlled_bus_id);
     }
 
     let arrays: Vec<ArrayRef> = vec![
@@ -4306,6 +4355,7 @@ fn build_generators_batch(rows: &[GenRow<'_>], _base_mva: f64) -> Result<RecordB
         Arc::new(owner_id_b.finish()) as ArrayRef,
         Arc::new(market_resource_id_b.finish()) as ArrayRef,
         Arc::new(params_b.finish()) as ArrayRef,
+        Arc::new(controlled_bus_id_b.finish()) as ArrayRef,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build generators record batch")
@@ -5910,6 +5960,7 @@ mod tests {
             h: 4.0,
             xd_prime: 0.2,
             d: 0.5,
+            controlled_bus_id: 1,
         };
         assert_eq!(infer_dynamics_model_type(&full), "GENROU");
 

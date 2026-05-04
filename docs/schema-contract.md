@@ -1,8 +1,19 @@
-# Schema Contract (Locked contract: v0.9.3 — CGMES 3.0+ Only)
+<!--
+Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
+Copyright (c) 2026 Raptrix PowerFlow
+-->
+
+# Schema Contract (Locked contract: v0.9.5 — CGMES 3.0+ Only)
 
 This repository is the authoritative source of truth for the Raptrix PowerFlow Interchange (`.rpf`) wire contract used by CIM-first conversion pipelines.
 
-v0.9.3 is the current contract and is a strict contract release in this repository.
+**v0.9.5** is the current additive contract release in this repository (readers still accept v0.9.4 and v0.9.3).
+
+## v0.9.5 Additive Changes
+
+- **`generators.controlled_bus_id`** (Int32, required, 25th column): Remote voltage regulation target bus in the same dense `bus_id` numbering as `generators.bus_id`. Semantics: **`0` or `bus_id`** = local regulation at the generator terminal bus; any other valid `bus_id` = remote **IREG** / **RegulatingControl** target (denormalized from CIM so consumers need not join `RegulatingControl` at load time). **PSS/E mapping:** machine IREG bus number → `controlled_bus_id`. **CIM mapping:** `RegulatingControl` (voltage-regulating) target terminal’s topological / connectivity resolution → `controlled_bus_id`.
+- **Backward compatibility:** 24-column `generators` tables (v0.9.4 shape ending at `params`) continue to load. Canonical readers (for example `raptrix-cim-arrow::read_rpf_tables`) synthesize missing `controlled_bus_id` as **`0`** (local regulation) when extending short structs to the locked schema — **zero-copy, zero allocation** aside from the pre-sized padding column slice.
+- **`metadata.default_shunt_control_mode`** (Dictionary\<Int32, Utf8\>, nullable) and optional file-level **`rpf.default_shunt_control_mode`**: When present, Raptrix-Sentinel and downstream solvers will default to this shunt mode (`planning_full` \| `real_time_hot_start` \| `real_time_frozen`). Enables fully declarative **planning ↔ real-time** handoff alongside `case_mode` (which remains the authoritative planning vs. solved snapshot discriminator).
 
 ## v0.9.3 Breaking Changes
 
@@ -85,8 +96,8 @@ Every `.rpf` file must include:
 
 Current locked values:
 
-- `raptrix.version = 0.9.3`
-- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.9.3 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.`
+- `raptrix.version = 0.9.5` (also accepted as `v0.9.5`)
+- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.9.5 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.`
 - `rpf.case_fingerprint = <required deterministic case identity fingerprint>`
 - `rpf.validation_mode = topology_only | solved_ready`
 - `rpf.case_mode = flat_start_planning | warm_start_planning | solved_snapshot | hour_ahead_advisory` (v0.8.4+, required; `hour_ahead_advisory` added in v0.9.0)
@@ -99,6 +110,7 @@ Optional file-level metadata keys:
 - `raptrix.features.contingencies_stub = true` when contingencies table is populated by placeholder/stub rows
 - `raptrix.features.dynamics_stub = true` when dynamics_models table is populated by placeholder/stub rows
 - `raptrix.features.facts = true` when optional FACTS metadata table(s) are emitted (v0.8.6+)
+- `rpf.default_shunt_control_mode = planning_full | real_time_hot_start | real_time_frozen` (v0.9.5+, optional) — mirrors nullable `metadata.default_shunt_control_mode` when writers stamp file-level keys for tooling that inspects IPC metadata only
 - `raptrix.features.facts_solved = true` when optional `facts_solved` table is emitted (v0.8.6+)
 - `rpf.rows.<table_name> = <row_count>` for each emitted table
 - `rpf.solver.version = <string>` solver software version (only when `solved_state_presence = actual_solved`)
@@ -273,6 +285,7 @@ This section is normative for external parser authors.
 - `solver_q_limit_infeasible_count`: Int32, nullable (v0.9.0+) — number of buses where Q-limit infeasibility was detected
 - `pv_to_pq_switch_count`: Int32, nullable (v0.9.0+) — number of PV→PQ bus-type switches during solve
 - `real_time_discovery`: Boolean, nullable (v0.9.0+) — `true` if this case originated from live State Estimator analysis
+- `default_shunt_control_mode`: Dictionary<Int32, Utf8>, nullable (v0.9.5+) — optional declarative default shunt control mode; see v0.9.5 additive section
 
 ### buses
 
@@ -391,6 +404,7 @@ Recommended `control_mode` tokens for `dc_lines_2w` are `power`, `current`, `vol
 - `owner_id`: Int32, nullable
 - `market_resource_id`: Utf8, nullable
 - `params`: Map<String, Float64>, nullable
+- `controlled_bus_id`: Int32, required (v0.9.5+) — `0` or `bus_id` = local voltage regulation; else dense `bus_id` of remote regulated bus (**PSS/E IREG** / **CIM RegulatingControl** target). v0.9.4 files omit this column; readers must synthesize **`0`** for missing values.
 
 ### ibr_devices
 

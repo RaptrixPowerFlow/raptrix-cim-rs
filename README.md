@@ -1,3 +1,8 @@
+<!--
+Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
+Copyright (c) 2026 Raptrix PowerFlow
+-->
+
 # raptrix-cim-rs
 
 raptrix-cim-rs — the world’s first high-performance zero-copy Rust implementation of IEC 61970 CIM optimized for real-time power flow and SCED.
@@ -97,7 +102,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 | Connectivity detail | `--connectivity-detail` | Granular ConnectivityNode bus mapping; emits optional `connectivity_groups` table |
 | Node-breaker | `--connectivity-detail --node-breaker` | Adds switch-topology detail tables for operational and viewer workflows |
 
-### Output tables (schema contract v0.9.1)
+### Output tables (schema contract v0.9.5)
 
 **18 canonical tables (always emitted):** `metadata`, `buses`, `branches`, `multi_section_lines`, `dc_lines_2w`, `generators`, `loads`, `fixed_shunts`, `switched_shunts`, `switched_shunt_banks`, `transformers_2w`, `transformers_3w`, `areas`, `zones`, `owners`, `contingencies`, `interfaces`, `dynamics_models`
 
@@ -133,7 +138,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 
 ## Data Contract (Locked)
 
-- Current schema contract: v0.9.1 (CGMES 3.0+ only)
+- Current schema contract: v0.9.5 (CGMES 3.0+ only). v0.9.5 adds `generators.controlled_bus_id` (IREG / RegulatingControl handoff) and optional `default_shunt_control_mode` metadata for declarative planning ↔ real-time shunt modes.
 - Canonical source: raptrix-cim-arrow/src/schema.rs
 - Contract policy and semantics: docs/schema-contract.md
 - Plain-English field guide: [docs/rpf-field-guide.md](docs/rpf-field-guide.md)
@@ -146,7 +151,7 @@ RPF standardization here is intentional: it enables direct CIM-to-powerflow inte
 
 ### Versioning Policy
 
-Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is now locked at schema `v0.9.3` for interoperability and deterministic CGMES 3.0+ ingest behavior, while the converter crate release tracks implementation maturity and is currently `0.3.3`.
+Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is now locked at schema `v0.9.5` for interoperability and deterministic CGMES 3.0+ ingest behavior, while the converter crate release tracks implementation maturity and is currently `0.3.4`.
 
 This split preserves compatibility guarantees for downstream tools at a given contract version. v0.9.1 is additive: readers in this repository accept v0.9.1 and v0.9.0 files for backward-compatible ingestion.
 
