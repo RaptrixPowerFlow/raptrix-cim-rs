@@ -410,9 +410,10 @@ pub fn buses_schema() -> Schema {
             Field::new("nominal_kv", DataType::Float64, false),
             Field::new("bus_uuid", dict_utf8(), false),
             // v0.9.4: explicit Q decomposition for unambiguous round-trip fidelity.
-            // qd_load_pu: Σ(in-service load QL) / SBASE (always ≥ 0)
+            // qd_load_pu: Σ(in-service load QL) / SBASE (signed; positive for inductive load,
+            //             negative for capacitive reactive injection via load record)
             // qg_sched_pu: Σ(in-service generator QG) / SBASE (any sign)
-            // Identity: q_sched == qg_sched_pu - qd_load_pu
+            // Identity: q_sched == qg_sched_pu - qd_load_pu  (machine-checkable)
             Field::new("qd_load_pu", DataType::Float64, false),
             Field::new("qg_sched_pu", DataType::Float64, false),
         ],

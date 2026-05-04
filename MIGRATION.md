@@ -10,7 +10,7 @@ Copyright (c) 2026 Raptrix PowerFlow
 
 The `buses` table gains two new **required** (non-nullable) columns at positions 20–21:
 
-- `qd_load_pu` (`Float64`, non-null): sum of in-service load reactive demand (QL) divided by SBASE, always ≥ 0.
+- `qd_load_pu` (`Float64`, non-null): sum of in-service load reactive demand (QL) divided by SBASE; signed (positive for inductive, negative when PSS/E load QL < 0 for capacitive reactive injection).
 - `qg_sched_pu` (`Float64`, non-null): sum of in-service generator scheduled reactive (QG) divided by SBASE, any sign.
 
 The existing `q_sched` column (position 4) retains its canonical meaning as the **net scheduled injection**: `q_sched == qg_sched_pu - qd_load_pu` for all bus types. This identity is machine-checkable.
