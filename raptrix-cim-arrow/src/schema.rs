@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.9.3 profile.
+//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.9.4 profile.
 //!
 //! **CGMES 3.0+ Only**: This module targets CGMES v3.0 and later (v17+ CIM) merged profiles.
 //! Support for legacy CGMES 2.4.x was dropped in this release for simplicity and performance.
@@ -10,6 +10,13 @@
 //! This module exposes one exact Arrow schema per required table in the locked
 //! `.rpf` contract, plus deterministic schema registry helpers used by both
 //! writers and readers.
+//!
+//! ## v0.9.4 — 18 canonical tables (breaking: buses gains 2 new required columns)
+//! Adds explicit Q decomposition to the `buses` table: `qd_load_pu` (pure reactive load,
+//! always ≥ 0) and `qg_sched_pu` (pure scheduled generator reactive, any sign). The existing
+//! `q_sched` column retains its meaning as the net scheduled injection (`qg_sched_pu − qd_load_pu`)
+//! for all bus types. This eliminates the overloaded-column issue where PV/slack buses could have
+//! a different physical meaning written by different converters.
 //!
 //! ## v0.9.3 — 18 canonical tables
 //! The `ibr_devices` table was removed. IBRs are now modeled exclusively in the unified
@@ -25,15 +32,15 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, Schema};
 
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.9.3 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.9.4 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.";
 
 /// Canonical RPF format version tag embedded as file-level metadata.
-pub const RPF_VERSION: &str = "0.9.3";
+pub const RPF_VERSION: &str = "v0.9.4";
 
 /// Supported RPF versions accepted by generic Arrow IPC readers.
 ///
-/// v0.9.3 is the current contract release.
-pub const SUPPORTED_RPF_VERSIONS: &[&str] = &["v0.9.3", "0.9.3"];
+/// v0.9.4 is the current contract release. v0.9.3 is accepted for backward compatibility.
+pub const SUPPORTED_RPF_VERSIONS: &[&str] = &["v0.9.4", "0.9.4", "v0.9.3", "0.9.3"];
 
 /// Validates a nominal kV value for required network voltage fields.
 pub fn validate_nominal_kv(value: f64, context: &str) -> Result<(), String> {
@@ -376,6 +383,9 @@ pub fn metadata_schema() -> Schema {
 }
 
 /// `buses` table schema.
+///
+/// v0.9.4 adds `qd_load_pu` and `qg_sched_pu` at positions 20–21 (after `bus_uuid`).
+/// `q_sched` (pos 4) retains its meaning as `qg_sched_pu − qd_load_pu` for all bus types.
 pub fn buses_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
@@ -399,6 +409,12 @@ pub fn buses_schema() -> Schema {
             Field::new("p_max_agg", DataType::Float64, false),
             Field::new("nominal_kv", DataType::Float64, false),
             Field::new("bus_uuid", dict_utf8(), false),
+            // v0.9.4: explicit Q decomposition for unambiguous round-trip fidelity.
+            // qd_load_pu: Σ(in-service load QL) / SBASE (always ≥ 0)
+            // qg_sched_pu: Σ(in-service generator QG) / SBASE (any sign)
+            // Identity: q_sched == qg_sched_pu - qd_load_pu
+            Field::new("qd_load_pu", DataType::Float64, false),
+            Field::new("qg_sched_pu", DataType::Float64, false),
         ],
         schema_metadata(),
     )
@@ -1157,9 +1173,23 @@ mod tests {
         );
 
         // version gate
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.9.4"));
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.9.4"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.9.3"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.9.3"));
-        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 2);
+        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 4);
+    }
+
+    #[test]
+    fn buses_schema_v094_q_decomposition_columns() {
+        let buses = super::buses_schema();
+        // v0.9.4: 22 total columns
+        assert_eq!(buses.fields().len(), 22);
+        // New columns at indices 20 and 21
+        assert_eq!(buses.field(20).name(), "qd_load_pu");
+        assert!(!buses.field(20).is_nullable());
+        assert_eq!(buses.field(21).name(), "qg_sched_pu");
+        assert!(!buses.field(21).is_nullable());
     }
 
     #[test]

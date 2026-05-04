@@ -4,6 +4,31 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
 
 Copyright (c) 2026 Raptrix PowerFlow
 
+## v0.3.4 / Schema v0.9.4 (Breaking)
+
+### What changed
+
+The `buses` table gains two new **required** (non-nullable) columns at positions 20–21:
+
+- `qd_load_pu` (`Float64`, non-null): sum of in-service load reactive demand (QL) divided by SBASE, always ≥ 0.
+- `qg_sched_pu` (`Float64`, non-null): sum of in-service generator scheduled reactive (QG) divided by SBASE, any sign.
+
+The existing `q_sched` column (position 4) retains its canonical meaning as the **net scheduled injection**: `q_sched == qg_sched_pu - qd_load_pu` for all bus types. This identity is machine-checkable.
+
+### Why
+
+The prior schema had an overloaded `q_sched` column: different converters (Rust psse-rs vs. C++ core) could write different physical quantities into that column for PV/slack buses after the Q-limit enforcement fix in the C++ solver path. The new columns make the decomposition explicit and self-documenting so solvers can derive their internal PV/slack Q seed as `-qd_load_pu` without ambiguity.
+
+### Backward compatibility
+
+`SUPPORTED_RPF_VERSIONS` now accepts both `v0.9.4` / `0.9.4` (new) and `v0.9.3` / `0.9.3` (old) so the Rust reader is backward-compatible with existing v0.9.3 files. Any **writer** (psse-rs, core exporter) producing RPF must now populate both new columns.
+
+### Reader upgrade (raptrix-core C++)
+
+The `rpf_reader.cpp` version gate (`if (*rpf_version != "v0.9.3")`) must be updated to accept `"v0.9.4"`. Read `buses.qd_load_pu` with a fallback of `0.0` when the column is absent to retain backward compatibility with v0.9.3 files.
+
+---
+
 ## v0.3.3 / Schema v0.9.3
 
 - Nominal-kV columns are now strict required fields and must be finite and `> 0.0`:

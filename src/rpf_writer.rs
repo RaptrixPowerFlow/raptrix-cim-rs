@@ -398,6 +398,10 @@ struct BusRow<'a> {
     p_max_agg: f64,
     nominal_kv: f64,
     bus_uuid: Cow<'a, str>,
+    /// v0.9.4: Σ(in-service load QL) / SBASE (always ≥ 0)
+    qd_load_pu: f64,
+    /// v0.9.4: Σ(in-service generator QG) / SBASE (any sign)
+    qg_sched_pu: f64,
 }
 
 const VALIDATION_MODE_TOPOLOGY_ONLY: &str = "topology_only";
@@ -2755,6 +2759,8 @@ fn parse_eq_topology_rows(
                         format!("missing required BaseVoltage nominal_kv for bus key '{bus_key}'")
                     })?,
                 bus_uuid: Cow::Owned((*bus_key).to_owned()),
+                qd_load_pu: 0.0,
+                qg_sched_pu: 0.0,
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -4019,6 +4025,8 @@ fn build_buses_batch(rows: &[BusRow<'_>]) -> Result<RecordBatch> {
     let mut p_max_agg_b = Float64Builder::new();
     let mut nominal_kv_b = Float64Builder::new();
     let mut bus_uuid_b = StringDictionaryBuilder::<Int32Type>::new();
+    let mut qd_load_pu_b = Float64Builder::new();
+    let mut qg_sched_pu_b = Float64Builder::new();
 
     for row in rows {
         bus_id_b.append_value(row.bus_id);
@@ -4045,6 +4053,8 @@ fn build_buses_batch(rows: &[BusRow<'_>]) -> Result<RecordBatch> {
         p_max_agg_b.append_value(row.p_max_agg);
         nominal_kv_b.append_value(row.nominal_kv);
         bus_uuid_b.append(row.bus_uuid.as_ref())?;
+        qd_load_pu_b.append_value(row.qd_load_pu);
+        qg_sched_pu_b.append_value(row.qg_sched_pu);
     }
 
     let arrays: Vec<ArrayRef> = vec![
@@ -4068,6 +4078,8 @@ fn build_buses_batch(rows: &[BusRow<'_>]) -> Result<RecordBatch> {
         Arc::new(p_max_agg_b.finish()) as ArrayRef,
         Arc::new(nominal_kv_b.finish()) as ArrayRef,
         Arc::new(bus_uuid_b.finish()) as ArrayRef,
+        Arc::new(qd_load_pu_b.finish()) as ArrayRef,
+        Arc::new(qg_sched_pu_b.finish()) as ArrayRef,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build buses record batch")

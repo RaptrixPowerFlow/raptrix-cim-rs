@@ -280,7 +280,7 @@ This section is normative for external parser authors.
 - `name`: Dictionary<Int32, Utf8>, required
 - `type`: Int8, required
 - `p_sched`: Float64, required
-- `q_sched`: Float64, required
+- `q_sched`: Float64, required — net scheduled reactive injection = `qg_sched_pu − qd_load_pu` (all bus types)
 - `v_mag_set`: Float64, required
 - `v_ang_set`: Float64, required
 - `q_min`: Float64, required
@@ -297,6 +297,8 @@ This section is normative for external parser authors.
 - `owner_id`: Int32, nullable
 - `nominal_kv`: Float64, required (`> 0`)
 - `bus_uuid`: Dictionary<Int32, Utf8>, required
+- `qd_load_pu`: Float64, required (v0.9.4+) — Σ(in-service load QL) / SBASE; always ≥ 0; zero for buses with no load
+- `qg_sched_pu`: Float64, required (v0.9.4+) — Σ(in-service generator QG) / SBASE; any sign; zero for buses with no generation
 
 ### branches
 
