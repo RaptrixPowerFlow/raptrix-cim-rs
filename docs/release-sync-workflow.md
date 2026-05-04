@@ -14,12 +14,30 @@ This repository is the canonical source of truth for the Raptrix `.rpf` schema c
 
 Pushing to ``main`` runs **Auto release tag** (``.github/workflows/auto-release-tag.yml``):
 
-- When the root ``Cargo.toml`` ``[package]`` version for ``raptrix-cim-rs`` **changes** on that push (compared to ``github.event.before``), the workflow creates and pushes an annotated tag ``vX.Y.Z`` matching the new version.
-- Pushing that tag triggers **Release** (``.github/workflows/release.yml``), which builds binaries and publishes the GitHub Release.
+- Reads the root ``Cargo.toml`` ``[package]`` version for ``raptrix-cim-rs``.
+- If ``refs/tags/vX.Y.Z`` is **not** on ``origin`` for that version, it creates and pushes an annotated tag at the **current** ``main`` commit (works with merge, squash, and rebase — no ``github.event.before`` comparison).
+- Pushing that tag triggers **Release** (``.github/workflows/release.yml``), which builds binaries for Windows / Linux / macOS and publishes the GitHub Release.
 
-**Backfill** (e.g. version was bumped before this automation existed): GitHub → **Actions** → **Auto release tag** → **Run workflow**. If ``v{current Cargo version}`` is missing on the remote, it is created and pushed. Use **dry_run** to print the decision without tagging.
+**Backfill:** GitHub → **Actions** → **Auto release tag** → **Run workflow**. Set **dry_run** to ``true`` to log only.
 
 Version bumps must remain the single source of truth in root ``Cargo.toml`` (keep ``raptrix-cim-arrow`` dependency version in sync, e.g. via ``./scripts/sync-versions.ps1``).
+
+### PAT / permissions (org repositories)
+
+Fine-grained PATs must be **explicitly allowed for the RaptrixPowerFlow organization** and granted at least:
+
+- **Contents:** read/write (push tags, create releases)
+- **Actions:** read/write (optional: dispatch ``release.yml`` manually via API)
+
+If ``git push`` or ``POST .../actions/workflows/.../dispatches`` returns **403 Resource not accessible**, the token is authenticated but **not authorized for this repo** — update the PAT’s repository access or use an org role with push rights.
+
+**Manual release dispatch** (same inputs as the Actions UI), once ``GH_TOKEN`` is set:
+
+```powershell
+./scripts/trigger-release-dispatch.ps1 -Version 0.3.4
+```
+
+Use ``-Draft`` for a draft GitHub Release; ``-SkipPublish`` to build artifacts only (rare).
 
 ## Release Triggers
 
