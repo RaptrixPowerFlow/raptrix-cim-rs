@@ -91,7 +91,14 @@ pub struct RootWriteOptions {
     /// When true, mark dynamics payload as stub-derived.
     pub dynamics_are_stub: bool,
     /// When true, append optional solved-state tables (`buses_solved`,
-    /// `generators_solved`) after all other root columns (v0.8.4+).
+    /// `generators_solved`, `switched_shunts_solved`) after all other root
+    /// columns (v0.8.4+).
+    ///
+    /// Used for both `case_mode = solved_snapshot` (full post-solve payload)
+    /// and `case_mode = warm_start_planning` with
+    /// `solved_state_presence = "seed_only"` (v0.9.6+) — in the latter case
+    /// only `buses_solved` carries data and the other two tables are emitted
+    /// as zero-row, structurally valid placeholders.
     pub include_solved_state: bool,
     /// When true, append optional FACTS metadata table (`facts_devices`).
     pub include_facts_devices: bool,
@@ -1041,7 +1048,7 @@ mod tests {
             .expect_err("v0.9.3 reader should reject missing required nominal_kv fields");
         let message = format!("{err:#}");
         assert!(message.contains("missing non-nullable field 'to_nominal_kv'"));
-        assert_eq!(SCHEMA_VERSION, "v0.9.5");
+        assert_eq!(SCHEMA_VERSION, "v0.9.6");
         Ok(())
     }
 

@@ -96,12 +96,12 @@ Every `.rpf` file must include:
 
 Current locked values:
 
-- `raptrix.version = 0.9.5` (also accepted as `v0.9.5`)
-- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.9.5 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.`
+- `raptrix.version = 0.9.6` (also accepted as `v0.9.6`)
+- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.9.6 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.`
 - `rpf.case_fingerprint = <required deterministic case identity fingerprint>`
 - `rpf.validation_mode = topology_only | solved_ready`
 - `rpf.case_mode = flat_start_planning | warm_start_planning | solved_snapshot | hour_ahead_advisory` (v0.8.4+, required; `hour_ahead_advisory` added in v0.9.0)
-- `rpf.solved_state_presence = actual_solved | not_available | not_computed` (v0.8.4+, required)
+- `rpf.solved_state_presence = actual_solved | not_available | not_computed | seed_only` (v0.8.4+, required; `seed_only` added in v0.9.6 — warm-start initial conditions in `buses_solved` without solver provenance, valid only with `case_mode = warm_start_planning`)
 
 Optional file-level metadata keys:
 
@@ -235,11 +235,11 @@ Optional diagram layout tables (emitted only when `raptrix.features.diagram_layo
 - `diagram_objects`
 - `diagram_points`
 
-Optional solved-state tables (emitted only when `case_mode = solved_snapshot`, v0.8.4+):
+Optional solved-state tables (emitted when `case_mode = solved_snapshot`, v0.8.4+, or when `case_mode = warm_start_planning` with `solved_state_presence = seed_only`, v0.9.6+):
 
-- `buses_solved`
-- `generators_solved`
-- `switched_shunts_solved` (v0.8.5+)
+- `buses_solved` — populated for both `solved_snapshot` and `seed_only`
+- `generators_solved` — populated for `solved_snapshot`; zero rows under `seed_only`
+- `switched_shunts_solved` (v0.8.5+) — populated for `solved_snapshot`; zero rows under `seed_only`
 
 Optional FACTS tables (v0.8.6+, emitted only when FACTS metadata is present):
 
@@ -264,8 +264,8 @@ This section is normative for external parser authors.
 - `case_fingerprint`: Utf8, required
 - `validation_mode`: Dictionary<Int32, Utf8>, required
 - `custom_metadata`: Map<String, String>, nullable
-- `case_mode`: Dictionary<Int32, Utf8>, required — `flat_start_planning` | `warm_start_planning` | `solved_snapshot` (v0.8.4+)
-- `solved_state_presence`: Dictionary<Int32, Utf8>, nullable — `actual_solved` | `not_available` | `not_computed` (v0.8.4+)
+- `case_mode`: Dictionary<Int32, Utf8>, required — `flat_start_planning` | `warm_start_planning` | `solved_snapshot` | `hour_ahead_advisory` (v0.8.4+; `hour_ahead_advisory` added in v0.9.0)
+- `solved_state_presence`: Dictionary<Int32, Utf8>, nullable — `actual_solved` | `not_available` | `not_computed` | `seed_only` (v0.8.4+; `seed_only` added in v0.9.6 — warm-start initial conditions in `buses_solved` without solver provenance, valid only with `case_mode = warm_start_planning`)
 - `solver_version`: Utf8, nullable — populated only when `solved_state_presence = actual_solved` (v0.8.4+)
 - `solver_iterations`: Int32, nullable — Newton-Raphson iteration count (v0.8.4+)
 - `solver_accuracy`: Float64, nullable — final mismatch residual norm (v0.8.4+)
@@ -743,8 +743,12 @@ IEC 61970-453 uses an inverted-Y convention where larger Y values are lower on s
 
 ## Optional Tables: buses_solved, generators_solved, switched_shunts_solved
 
-These tables are emitted only when `case_mode = solved_snapshot` (v0.8.4+/v0.8.5+).
-When `case_mode` is a planning variant, all three tables must be absent.
+These tables are emitted when:
+
+- `case_mode = solved_snapshot` (v0.8.4+/v0.8.5+) — full post-solve payload, all three tables populated; or
+- `case_mode = warm_start_planning` with `solved_state_presence = seed_only` (v0.9.6+) — warm-start initial conditions in `buses_solved` only (`v_mag_pu` / `v_ang_deg` copied from the source case); `generators_solved` and `switched_shunts_solved` are emitted as zero-row, structurally valid placeholders.
+
+When `case_mode = flat_start_planning` (or `warm_start_planning` without `seed_only`), all three tables must be absent.
 
 ### buses_solved
 
@@ -907,9 +911,10 @@ An independent parser is considered compliant if it:
 5. Treats the 15 required root columns as mandatory even when their logical row counts are zero.
 6. Detects optional tables by root column presence and feature metadata, not by guesswork.
 7. Ignores unknown future trailing root columns for forward compatibility.
-8. Reads and validates `rpf.case_mode` (required since v0.8.4): must be `flat_start_planning`, `warm_start_planning`, or `solved_snapshot`.
+8. Reads and validates `rpf.case_mode` (required since v0.8.4): must be `flat_start_planning`, `warm_start_planning`, `solved_snapshot`, or `hour_ahead_advisory` (v0.9.0+).
 9. When `case_mode = solved_snapshot`: expects `rpf.solved_state_presence = actual_solved` and treats `buses_solved` and `generators_solved` as required; treats `switched_shunts_solved` as required when `rpf.solver.solved_shunt_state_presence = actual_solved`.
-10. When `case_mode` is a planning variant: treats `buses_solved`, `generators_solved`, and `switched_shunts_solved` as absent; if found, the file is malformed.
+10. When `case_mode = warm_start_planning` with `rpf.solved_state_presence = seed_only` (v0.9.6+): expects a populated `buses_solved` table carrying warm-start initial conditions; `generators_solved` and `switched_shunts_solved` may be present as zero-row placeholders or absent. Solver provenance keys (`rpf.solver.*`) MUST be absent or null.
+11. When `case_mode = flat_start_planning` (or `warm_start_planning` without `seed_only`): treats `buses_solved`, `generators_solved`, and `switched_shunts_solved` as absent; if found, the file is malformed.
 11. Reads solver provenance keys (`rpf.solver.*`) only when `solved_state_presence = actual_solved`; ignores them otherwise.
 12. When `rpf.solver.solved_shunt_state_presence = not_available`: warns that switched-shunt solved state is absent; does not fail (v0.8.5+).
 13. When `facts_devices.device_type` or `branches.device_type` contains `SV` (case-insensitive), canonicalizes to `smartvalve`.

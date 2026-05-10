@@ -240,6 +240,14 @@ pub enum SolvedStatePresence {
     NotAvailable,
     /// No solve has been run; this is a planning-only case.  Default for CIM exports.
     NotComputed,
+    /// Warm-start initial conditions only (v0.9.6+). The `buses_solved` table is
+    /// populated with `v_mag_pu` / `v_ang_deg` copied from the source case (e.g.,
+    /// PSS/E RAW VM/VA), but no solver was run, so `generators_solved` and
+    /// `switched_shunts_solved` are emitted as zero-row placeholders. Solver
+    /// provenance fields (`solver_version`, `solver_iterations`, `solver_accuracy`,
+    /// `solver_mode`) MUST remain null. Only valid with
+    /// `case_mode = warm_start_planning`.
+    SeedOnly,
 }
 
 impl SolvedStatePresence {
@@ -249,6 +257,7 @@ impl SolvedStatePresence {
             SolvedStatePresence::ActualSolved => "actual_solved",
             SolvedStatePresence::NotAvailable => "not_available",
             SolvedStatePresence::NotComputed => "not_computed",
+            SolvedStatePresence::SeedOnly => "seed_only",
         }
     }
 }
@@ -1206,13 +1215,16 @@ fn validate_planning_fields_finite(bus_rows: &[BusRow<'_>]) -> Result<()> {
 /// - `solved_snapshot` requires `actual_solved`.
 /// - `flat_start_planning` / `warm_start_planning` must not claim `actual_solved`.
 ///   Solvers must use `solved_snapshot` for post-solve results.
+/// - `seed_only` (v0.9.6+) is valid only with `warm_start_planning`. It marks
+///   warm-start initial conditions copied from the source case (no solve was run).
 fn validate_case_mode_consistency(
     case_mode: CaseMode,
     solved_state_presence: SolvedStatePresence,
 ) -> Result<()> {
     match (case_mode, solved_state_presence) {
         (CaseMode::SolvedSnapshot, SolvedStatePresence::NotComputed)
-        | (CaseMode::SolvedSnapshot, SolvedStatePresence::NotAvailable) => {
+        | (CaseMode::SolvedSnapshot, SolvedStatePresence::NotAvailable)
+        | (CaseMode::SolvedSnapshot, SolvedStatePresence::SeedOnly) => {
             bail!(
                 "metadata consistency violation: case_mode=solved_snapshot requires \
                  solved_state_presence=actual_solved, got '{}'",
@@ -1226,6 +1238,13 @@ fn validate_case_mode_consistency(
                  solved_state_presence=actual_solved; use case_mode=solved_snapshot \
                  for post-solve exports",
                 case_mode.as_str()
+            );
+        }
+        (CaseMode::FlatStartPlanning, SolvedStatePresence::SeedOnly) => {
+            bail!(
+                "metadata consistency violation: case_mode=flat_start_planning cannot \
+                 have solved_state_presence=seed_only; use case_mode=warm_start_planning \
+                 to emit a buses_solved seed payload"
             );
         }
         _ => {}

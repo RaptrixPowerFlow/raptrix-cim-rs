@@ -7,7 +7,7 @@ Copyright (c) 2026 Raptrix PowerFlow
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.9.5 profile.
+//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.9.6 profile.
 //!
 //! **CGMES 3.0+ Only**: This module targets CGMES v3.0 and later (v17+ CIM) merged profiles.
 //! Support for legacy CGMES 2.4.x was dropped in this release for simplicity and performance.
@@ -15,6 +15,13 @@ Copyright (c) 2026 Raptrix PowerFlow
 //! This module exposes one exact Arrow schema per required table in the locked
 //! `.rpf` contract, plus deterministic schema registry helpers used by both
 //! writers and readers.
+//!
+//! ## v0.9.6 — 18 canonical tables (additive: warm-start seed semantics)
+//! Adds `solved_state_presence = "seed_only"` to mark warm-start RPF files that emit a
+//! populated `buses_solved` table sourced from the original case's initial conditions
+//! (e.g., PSS/E RAW VM/VA values) without claiming a true post-solve snapshot. Enables
+//! warm-start parity with raw-case ingestion for solver consumers. No table or column
+//! shape changes — only metadata vocabulary and emission policy.
 //!
 //! ## v0.9.5 — 18 canonical tables (additive: generators + metadata)
 //! Adds `generators.controlled_bus_id` (remote voltage regulation / IREG denormalization) and
@@ -43,16 +50,17 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, Schema};
 
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.9.5 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.9.6 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.";
 
 /// Canonical RPF format version tag embedded as file-level metadata.
-pub const RPF_VERSION: &str = "v0.9.5";
+pub const RPF_VERSION: &str = "v0.9.6";
 
 /// Supported RPF versions accepted by generic Arrow IPC readers.
 ///
-/// v0.9.5 is the current contract release. v0.9.4 and v0.9.3 remain accepted for backward compatibility.
-pub const SUPPORTED_RPF_VERSIONS: &[&str] =
-    &["v0.9.5", "0.9.5", "v0.9.4", "0.9.4", "v0.9.3", "0.9.3"];
+/// v0.9.6 is the current contract release. v0.9.5, v0.9.4, and v0.9.3 remain accepted for backward compatibility.
+pub const SUPPORTED_RPF_VERSIONS: &[&str] = &[
+    "v0.9.6", "0.9.6", "v0.9.5", "0.9.5", "v0.9.4", "0.9.4", "v0.9.3", "0.9.3",
+];
 
 /// Validates a nominal kV value for required network voltage fields.
 pub fn validate_nominal_kv(value: f64, context: &str) -> Result<(), String> {
@@ -100,7 +108,9 @@ pub const METADATA_KEY_CASE_MODE: &str = "rpf.case_mode";
 /// Values: `planning_full` \| `real_time_hot_start` \| `real_time_frozen`. Added in v0.9.5.
 pub const METADATA_KEY_DEFAULT_SHUNT_CONTROL_MODE: &str = "rpf.default_shunt_control_mode";
 /// Required metadata key indicating presence/provenance of solved-state fields.
-/// Values: actual_solved | not_available | not_computed. Added in v0.8.4.
+/// Values: actual_solved | not_available | not_computed | seed_only. Added in v0.8.4;
+/// `seed_only` added in v0.9.6 to mark warm-start initial-condition seeding via a
+/// populated `buses_solved` table without solver provenance.
 pub const METADATA_KEY_SOLVED_STATE_PRESENCE: &str = "rpf.solved_state_presence";
 /// Optional metadata key for solver software version string (written when solved_state_presence=actual_solved).
 pub const METADATA_KEY_SOLVER_VERSION: &str = "rpf.solver.version";
@@ -206,8 +216,14 @@ pub const TABLE_DIAGRAM_OBJECTS: &str = "diagram_objects";
 pub const TABLE_DIAGRAM_POINTS: &str = "diagram_points";
 /// Backward-compatible alias for older callers.
 pub const TABLE_DYNAMICS: &str = "dynamics";
-/// Optional solved-state table emitted only when case_mode=solved_snapshot.
-/// Contains per-bus post-solve voltage magnitude, angle, and injections.
+/// Optional solved-state table.
+///
+/// Emitted when:
+/// - `case_mode = solved_snapshot` (post-solve operating point), or
+/// - `case_mode = warm_start_planning` with `solved_state_presence = seed_only`
+///   (v0.9.6+) — warm-start initial conditions copied from the source case.
+///
+/// Contains per-bus post-solve / seed voltage magnitude, angle, and injections.
 pub const TABLE_BUSES_SOLVED: &str = "buses_solved";
 /// Optional solved-state table emitted only when case_mode=solved_snapshot.
 /// Contains per-generator post-solve real/reactive output and PV→PQ switch flag.
@@ -339,10 +355,12 @@ pub fn schema_metadata() -> HashMap<String, String> {
 /// `metadata` table schema.
 ///
 /// v0.8.4 adds planning-vs-solved semantics fields:
-/// - `case_mode`: flat_start_planning | warm_start_planning | solved_snapshot
-/// - `solved_state_presence`: actual_solved | not_available | not_computed
+/// - `case_mode`: flat_start_planning | warm_start_planning | solved_snapshot | hour_ahead_advisory
+/// - `solved_state_presence`: actual_solved | not_available | not_computed | seed_only (v0.9.6+)
 /// - Solver provenance fields (all nullable): solver_version, solver_iterations,
 ///   solver_accuracy, solver_mode. Populated only when solved_state_presence=actual_solved.
+///   `seed_only` does NOT require solver provenance — it indicates `buses_solved` carries
+///   warm-start initial conditions copied from the source case (no solve was executed).
 ///
 /// v0.9.5 adds nullable `default_shunt_control_mode` (planning_full | real_time_hot_start |
 /// real_time_frozen) for declarative shunt-mode handoff; uncoupled from `case_mode` semantics.
@@ -955,10 +973,12 @@ pub fn diagram_layout_table_schemas() -> Vec<(&'static str, Schema)> {
 
 /// Optional `buses_solved` table schema (v0.8.4+).
 ///
-/// Emitted only when `case_mode = solved_snapshot`.  All value columns are
-/// nullable so a partial solve or a bus with no result can be represented
-/// honestly.  `provenance` encodes per-row data origin:
-/// `actual_solved` | `not_available` | `not_computed`.
+/// Emitted when `case_mode = solved_snapshot`, or when
+/// `case_mode = warm_start_planning` with `solved_state_presence = seed_only`
+/// (v0.9.6+).  All value columns are nullable so a partial solve or a bus with
+/// no result can be represented honestly.  `provenance` encodes per-row data
+/// origin: `actual_solved` | `not_available` | `not_computed` | `seed_only`
+/// (v0.9.6+ — warm-start initial conditions, no solve executed).
 pub fn buses_solved_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
@@ -1196,13 +1216,15 @@ mod tests {
         );
 
         // version gate
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.9.6"));
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.9.6"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.9.5"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.9.5"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.9.4"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.9.4"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.9.3"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.9.3"));
-        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 6);
+        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 8);
     }
 
     #[test]

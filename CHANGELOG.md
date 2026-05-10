@@ -9,6 +9,24 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
 
 Copyright (c) 2026 Raptrix PowerFlow
 
+## v0.9.6 (2026-05-08)
+
+### Converter release: Crate version 0.3.5 (raptrix-cim-arrow) / 0.3.5 (raptrix-cim-rs) | Arrow schema v0.9.6
+
+### Added
+
+- **`solved_state_presence = "seed_only"`** (v0.9.6+): new vocabulary value for the required `rpf.solved_state_presence` metadata key and `metadata.solved_state_presence` column. Marks warm-start initial conditions copied from the source case (e.g., PSS/E RAW VM/VA) into a populated `buses_solved` table without claiming a true post-solve snapshot. Solver provenance fields (`solver_version`, `solver_iterations`, `solver_accuracy`, `solver_mode`) MUST remain null in this mode. Enables warm-start parity between RAW and RPF ingestion paths for solver consumers.
+- **`SolvedStatePresence::SeedOnly`** Rust API: corresponding writer-side enum variant in `raptrix-cim-rs`. `validate_case_mode_consistency` permits the combination `case_mode = warm_start_planning` + `solved_state_presence = seed_only` and rejects `seed_only` with `flat_start_planning` or `solved_snapshot`.
+
+### Changed
+
+- Branding and `RPF_VERSION` / `SCHEMA_VERSION` bumped to **v0.9.6**. `SUPPORTED_RPF_VERSIONS` now includes `v0.9.6` / `0.9.6` while retaining **v0.9.5**, **v0.9.4**, and **v0.9.3** aliases for read compatibility.
+- `buses_solved` table schema docstring updated: emission is now allowed under `case_mode = warm_start_planning` + `solved_state_presence = seed_only` in addition to `solved_snapshot`. No column-shape changes.
+
+### Compatibility
+
+- **Full backward compatibility with v0.9.5 files.** No table or column shape changes. Readers built against the v0.9.5 schema can ingest v0.9.6 files unchanged; the `seed_only` presence value passes through as a metadata string and the importer's existing `buses_solved` seeding path uses it directly.
+
 ## v0.9.5 (2026-05-04)
 
 ### Converter release: Crate version 0.3.4 (raptrix-cim-arrow) / 0.3.4 (raptrix-cim-rs) | Arrow schema v0.9.5

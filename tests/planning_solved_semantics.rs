@@ -312,6 +312,8 @@ fn solved_state_presence_as_str_values_are_canonical() {
     assert_eq!(SolvedStatePresence::ActualSolved.as_str(), "actual_solved");
     assert_eq!(SolvedStatePresence::NotAvailable.as_str(), "not_available");
     assert_eq!(SolvedStatePresence::NotComputed.as_str(), "not_computed");
+    // v0.9.6: warm-start initial-condition seed (no solver provenance).
+    assert_eq!(SolvedStatePresence::SeedOnly.as_str(), "seed_only");
 }
 
 #[test]
