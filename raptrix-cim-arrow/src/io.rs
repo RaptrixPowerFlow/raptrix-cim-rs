@@ -142,16 +142,16 @@ fn validate_supported_rpf_version(metadata: &HashMap<String, String>) -> Result<
         );
     }
 
-    if let Some(alias) = metadata.get(METADATA_KEY_VERSION) {
-        if alias != version {
-            bail!(
-                "invalid RPF file metadata: '{}'='{}' does not match '{}'='{}'",
-                METADATA_KEY_VERSION,
-                alias,
-                METADATA_KEY_RPF_VERSION,
-                version
-            );
-        }
+    if let Some(alias) = metadata.get(METADATA_KEY_VERSION)
+        && alias != version
+    {
+        bail!(
+            "invalid RPF file metadata: '{}'='{}' does not match '{}'='{}'",
+            METADATA_KEY_VERSION,
+            alias,
+            METADATA_KEY_RPF_VERSION,
+            version
+        );
     }
 
     Ok(())

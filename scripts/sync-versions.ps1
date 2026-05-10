@@ -42,11 +42,13 @@ function Convert-ContentForVersion {
         }
         "CHANGELOG.md" {
             # Update only the first converter-release line to keep historical sections intact.
+            # Use -split '\r?\n', 0 (max 0 = all segments). A second argument of -1 is wrong here in PowerShell.
             $lineEnding = if ($updated.Contains("`r`n")) { "`r`n" } else { "`n" }
-            $lines = $updated -split "`r?`n", -1
+            $lines = $updated -split '\r?\n', 0
             for ($i = 0; $i -lt $lines.Length; $i++) {
-                if ($lines[$i] -match '^### Converter release: Crate version [0-9]+\.[0-9]+\.[0-9]+ \(raptrix-cim-arrow\) / [0-9]+\.[0-9]+\.[0-9]+ \(raptrix-cim-rs\) \| Arrow schema v[0-9]+\.[0-9]+\.[0-9]+$') {
-                    $lines[$i] = "### Converter release: Crate version $TargetVersion (raptrix-cim-arrow) / $TargetVersion (raptrix-cim-rs) | Arrow schema v0.9.5"
+                if ($lines[$i] -match '^### Converter release: Crate version [0-9]+\.[0-9]+\.[0-9]+ \(raptrix-cim-arrow\) / [0-9]+\.[0-9]+\.[0-9]+ \(raptrix-cim-rs\) \| Arrow schema (v[0-9]+\.[0-9]+\.[0-9]+)$') {
+                    $schemaTag = $Matches[1]
+                    $lines[$i] = "### Converter release: Crate version $TargetVersion (raptrix-cim-arrow) / $TargetVersion (raptrix-cim-rs) | Arrow schema $schemaTag"
                     break
                 }
             }

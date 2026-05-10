@@ -137,8 +137,8 @@ pub const METADATA_KEY_FACTS_SOLVED_STATE_PRESENCE: &str = "rpf.facts_solved_sta
 /// - `"native_3w"` — physical 3W units appear only in `transformers_3w`; no synthetic star buses.
 /// - `"expanded"` — physical 3W units are star-expanded into three 2W legs in `transformers_2w`
 ///   via delta-to-wye impedance conversion; `transformers_3w` has zero active rows.
-/// Dual materialization (active rows in both tables for the same physical unit) is always a
-/// hard error regardless of the declared mode.
+///   Dual materialization (active rows in both tables for the same physical unit) is always a
+///   hard error regardless of the declared mode.
 pub const METADATA_KEY_TRANSFORMER_REPRESENTATION_MODE: &str =
     "rpf.transformer_representation_mode";
 /// Optional metadata key indicating total electrical island count.
