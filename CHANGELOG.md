@@ -9,6 +9,20 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
 
 Copyright (c) 2026 Raptrix PowerFlow
 
+## v0.10.0 (2026-05-10)
+
+### Converter release: Crate version 0.4.0 (raptrix-cim-arrow) / 0.4.0 (raptrix-cim-rs) | Arrow schema v0.10.0
+
+### Added
+
+- **`metadata.computational_load_mode`** (Boolean, nullable): signals computational-load interchange mode; downstream tools apply runtime validation when set.
+- **Optional root table `computational_load_profiles`**: per-row profiles with `seasonal_envelope` as `List<Struct{ season: Utf8, min_mw: Float32, max_mw: Float32, pf: Float32 }>`, `buildout_schedule` as `List<Struct{ year: Int32, mw: Float32 }>`, ramp and IT/UPS/PCC/onsite BESS fields, and `facility_use_case_percent` map. Emitted when `RootWriteOptions.include_computational_load_profiles` is enabled.
+- **`dynamics_models.perc1_params`**: nullable struct with named PERC1 baseline fields for typed Arrow/C++ consumers.
+
+### Changed
+
+- **`SUPPORTED_RPF_VERSIONS`** now accepts only **`v0.10.0`** / **`0.10.0`**. Older RPF files must be re-emitted through a v0.10.0-capable writer.
+
 ## v0.9.6 (2026-05-08)
 
 ### Converter release: Crate version 0.3.5 (raptrix-cim-arrow) / 0.3.5 (raptrix-cim-rs) | Arrow schema v0.9.6

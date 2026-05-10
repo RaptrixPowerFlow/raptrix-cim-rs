@@ -5,7 +5,7 @@ Copyright (c) 2026 Raptrix PowerFlow
 
 # RPF Field Guide — Plain-English Reference
 
-**Schema contract: v0.9.5 | Format: Apache Arrow IPC**
+**Schema contract: v0.10.0 | Format: Apache Arrow IPC**
 
 This guide explains every table and field in an `.rpf` file in plain English. It is written for engineers who need to read, validate, or build tools against RPF files without digging into Arrow source code. For the normative type-level contract see [schema-contract.md](schema-contract.md).
 
@@ -47,7 +47,7 @@ These are key-value strings in the Arrow file header. Every RPF reader should ch
 
 | Key | Example value | What it means |
 |---|---|---|
-| `raptrix.version` | `0.9.5` | The schema contract version this file was written to. Readers should reject files with an unsupported version. |
+| `raptrix.version` | `v0.10.0` | The schema contract version this file was written to. Readers reject unsupported versions (v0.10.0 only). |
 | `raptrix.branding` | *(long string)* | Human-readable provenance string identifying the writing tool and copyright. |
 | `rpf.case_fingerprint` | `abc123...` | A deterministic hash of the case identity. Useful for de-duplication and reproducibility checks. |
 | `rpf.validation_mode` | `topology_only` or `solved_ready` | `topology_only` means the file has enough topology to run but may be missing some steady-state parameters. `solved_ready` means all parameters needed for full Newton-Raphson are present. |
@@ -131,6 +131,7 @@ This table always has exactly one row and summarizes the case.
 | `angle_reference_deg` | number | The angle value in degrees assigned to the slack bus during the solve, almost always 0.0. Null for planning cases. (v0.8.5+) |
 | `solved_shunt_state_presence` | text | `actual_solved` when the `switched_shunts_solved` table is present and authoritative; `not_available` when the solver did not track discrete shunt steps. Null for planning cases. (v0.8.5+) |
 | `default_shunt_control_mode` | text | **(v0.9.5+)** Optional. When present, Raptrix-Sentinel and downstream solvers will default to this shunt mode (`planning_full` \| `real_time_hot_start` \| `real_time_frozen`). Enables fully declarative planning ↔ real-time handoff. Null when unspecified. |
+| `computational_load_mode` | boolean | **(v0.10.0+)** Optional. When `true`, consumers enforce the computational-load validation contract (for example non-empty `computational_load_profiles`). Null or absent means standard interchange without that contract. |
 
 ---
 

@@ -107,7 +107,7 @@ fn discover_fixture_cases() -> Result<Vec<FixtureCase>> {
 }
 
 #[test]
-fn all_workspace_fixture_cim_cases_emit_v093_compliant_rpf() -> Result<()> {
+fn all_workspace_fixture_cim_cases_emit_contract_compliant_rpf() -> Result<()> {
     let cases = discover_fixture_cases()?;
     if cases.is_empty() {
         return Ok(());

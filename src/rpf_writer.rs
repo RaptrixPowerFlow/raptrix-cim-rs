@@ -51,17 +51,19 @@ use crate::arrow_schema::{
     METADATA_KEY_TOPOLOGY_DETACHED_ISLANDS_PRESENT, METADATA_KEY_TOPOLOGY_ISLAND_COUNT,
     METADATA_KEY_TOPOLOGY_MAIN_ISLAND_BUS_COUNT, METADATA_KEY_TRANSFORMER_REPRESENTATION_MODE,
     METADATA_KEY_VALIDATION_MODE, SCHEMA_VERSION, TABLE_AREAS, TABLE_BRANCHES, TABLE_BUSES,
-    TABLE_CONNECTIVITY_NODES, TABLE_CONTINGENCIES, TABLE_DC_LINES_2W, TABLE_DIAGRAM_OBJECTS,
-    TABLE_DIAGRAM_POINTS, TABLE_DYNAMICS_MODELS, TABLE_FIXED_SHUNTS, TABLE_GENERATORS,
-    TABLE_INTERFACES, TABLE_LOADS, TABLE_METADATA, TABLE_MULTI_SECTION_LINES,
-    TABLE_NODE_BREAKER_DETAIL, TABLE_OWNERS, TABLE_SWITCH_DETAIL, TABLE_SWITCHED_SHUNT_BANKS,
-    TABLE_SWITCHED_SHUNTS, TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, TABLE_ZONES, areas_schema,
-    branches_schema, buses_schema, connectivity_groups_schema, connectivity_nodes_schema,
+    TABLE_COMPUTATIONAL_LOAD_PROFILES, TABLE_CONNECTIVITY_NODES, TABLE_CONTINGENCIES,
+    TABLE_DC_LINES_2W, TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_DYNAMICS_MODELS,
+    TABLE_FIXED_SHUNTS, TABLE_GENERATORS, TABLE_INTERFACES, TABLE_LOADS, TABLE_METADATA,
+    TABLE_MULTI_SECTION_LINES, TABLE_NODE_BREAKER_DETAIL, TABLE_OWNERS, TABLE_SWITCH_DETAIL,
+    TABLE_SWITCHED_SHUNT_BANKS, TABLE_SWITCHED_SHUNTS, TABLE_TRANSFORMERS_2W,
+    TABLE_TRANSFORMERS_3W, TABLE_ZONES, areas_schema, branches_schema, buses_schema,
+    computational_load_profiles_schema, connectivity_groups_schema, connectivity_nodes_schema,
     contingencies_schema, dc_lines_2w_schema, diagram_objects_schema, diagram_points_schema,
     dynamics_models_schema, fixed_shunts_schema, generators_schema, interfaces_schema,
     loads_schema, metadata_schema, multi_section_lines_schema, node_breaker_detail_schema,
-    owners_schema, switch_detail_schema, switched_shunt_banks_schema, switched_shunts_schema,
-    transformers_2w_schema, transformers_3w_schema, validate_nominal_kv, zones_schema,
+    owners_schema, perc1_params_struct_type, switch_detail_schema, switched_shunt_banks_schema,
+    switched_shunts_schema, transformers_2w_schema, transformers_3w_schema, validate_nominal_kv,
+    zones_schema,
 };
 use crate::parser;
 
@@ -187,6 +189,10 @@ pub struct WriteOptions {
     /// `rpf.default_shunt_control_mode` (v0.9.5+). When `None`, planning exports use
     /// `planning_full`; solved snapshots omit the field.
     pub default_shunt_control_mode: Option<String>,
+    /// v0.10.0: optional `metadata.computational_load_mode` (Arrow Boolean column; null when unset).
+    pub computational_load_mode: Option<bool>,
+    /// v0.10.0: append optional root `computational_load_profiles` column (may be zero-row).
+    pub emit_computational_load_profiles: bool,
 }
 
 /// Policy for handling detached electrical islands at export time.
@@ -357,6 +363,8 @@ impl Default for WriteOptions {
             solver_provenance: None,
             transformer_representation_mode: TransformerRepresentationMode::Native3W,
             default_shunt_control_mode: None,
+            computational_load_mode: None,
+            emit_computational_load_profiles: false,
         }
     }
 }
@@ -412,6 +420,8 @@ struct MetadataRow<'a> {
     scenario_tags: Vec<Cow<'a, str>>,
     /// v0.9.5 optional nullable `metadata.default_shunt_control_mode` dictionary value.
     default_shunt_control_mode: Option<Cow<'a, str>>,
+    /// v0.10.0 optional nullable `metadata.computational_load_mode`.
+    computational_load_mode: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -698,12 +708,26 @@ struct ContingencyElement<'a> {
     equipment_id: Option<Cow<'a, str>>,
 }
 
+/// Optional PERC1 parameter block for one `dynamics_models` row (v0.10.0+ `perc1_params` struct).
+#[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
+struct Perc1ParamsSnapshot {
+    perc1_voltage_ride_through_pu: Option<f64>,
+    perc1_frequency_ride_through_hz: Option<f64>,
+    perc1_reactive_power_ceiling_pu: Option<f64>,
+    perc1_active_power_recovery_rate_pu_per_s: Option<f64>,
+    perc1_voltage_support_time_sec: Option<f64>,
+    perc1_frequency_support_time_sec: Option<f64>,
+}
+
 #[derive(Debug, Clone)]
 struct DynamicsModelRow<'a> {
     bus_id: i32,
     gen_id: Cow<'a, str>,
     model_type: Cow<'a, str>,
     params: Vec<(Cow<'a, str>, f64)>,
+    #[allow(dead_code)]
+    perc1_params: Option<Perc1ParamsSnapshot>,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -1751,6 +1775,7 @@ pub fn write_complete_rpf_with_options(
             .map(|tag| Cow::Borrowed(tag.as_str()))
             .collect(),
         default_shunt_control_mode: resolved_default_shunt_control_mode(options).map(Cow::Owned),
+        computational_load_mode: options.computational_load_mode,
     };
 
     let metadata_batch = build_metadata_batch(&metadata_row)?;
@@ -1815,6 +1840,13 @@ pub fn write_complete_rpf_with_options(
         RecordBatch::new_empty(Arc::new(interfaces_schema())),
     );
     table_batches.insert(TABLE_DYNAMICS_MODELS, dynamics_models_batch.clone());
+
+    if options.emit_computational_load_profiles {
+        table_batches.insert(
+            TABLE_COMPUTATIONAL_LOAD_PROFILES,
+            RecordBatch::new_empty(Arc::new(computational_load_profiles_schema())),
+        );
+    }
 
     if options.emit_node_breaker_detail {
         table_batches.insert(TABLE_NODE_BREAKER_DETAIL, node_breaker_detail_batch.clone());
@@ -1956,6 +1988,7 @@ pub fn write_complete_rpf_with_options(
             include_solved_state: false,
             include_facts_devices: false,
             include_facts_solved: false,
+            include_computational_load_profiles: options.emit_computational_load_profiles,
         },
         &additional_root_metadata,
     )?;
@@ -2074,6 +2107,7 @@ fn stub_dynamics_model_rows() -> Vec<DynamicsModelRow<'static>> {
             (Cow::Borrowed("xd_prime"), 0.3),
             (Cow::Borrowed("source_stub"), 1.0),
         ],
+        perc1_params: None,
     }]
 }
 
@@ -2117,6 +2151,7 @@ fn dynamics_rows_from_generators_and_dy(
                     with_source.push((Cow::Borrowed("source_dy"), 1.0));
                     with_source
                 },
+                perc1_params: None,
             });
             dy_linked_rows += 1;
         }
@@ -2138,6 +2173,7 @@ fn dynamics_rows_from_generators_and_dy(
                     (Cow::Borrowed("mbase_mva"), generator.mbase_mva),
                     (Cow::Borrowed("source_eq_fallback"), 1.0),
                 ],
+                perc1_params: None,
             });
             eq_fallback_rows += 1;
         }
@@ -2171,6 +2207,7 @@ fn dynamics_rows_from_generators_and_dy(
                 (Cow::Borrowed("mbase_mva"), generator.mbase_mva),
                 (Cow::Borrowed("source_eq_fallback"), 1.0),
             ],
+            perc1_params: None,
         })
         .collect();
 
@@ -3938,6 +3975,7 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
     let mut pv_to_pq_switch_count_b = Int32Builder::new();
     let mut real_time_discovery_b = BooleanBuilder::new();
     let mut default_shunt_control_mode_b = StringDictionaryBuilder::<Int32Type>::new();
+    let mut computational_load_mode_b = BooleanBuilder::new();
 
     base_mva_b.append_value(row.base_mva);
     frequency_b.append_value(row.frequency_hz);
@@ -4019,6 +4057,10 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
         }
         None => default_shunt_control_mode_b.append_null(),
     }
+    match row.computational_load_mode {
+        Some(v) => computational_load_mode_b.append_value(v),
+        None => computational_load_mode_b.append_null(),
+    }
 
     let custom_metadata_type = schema.field(11).data_type().clone();
     let custom_metadata_array = new_null_array(&custom_metadata_type, 1);
@@ -4061,6 +4103,7 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
         Arc::new(pv_to_pq_switch_count_b.finish()) as ArrayRef,
         Arc::new(real_time_discovery_b.finish()) as ArrayRef,
         Arc::new(default_shunt_control_mode_b.finish()) as ArrayRef,
+        Arc::new(computational_load_mode_b.finish()) as ArrayRef,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build metadata record batch")
@@ -5249,11 +5292,14 @@ fn build_dynamics_models_batch(rows: &[DynamicsModelRow<'_>]) -> Result<RecordBa
             .context("failed to append params map row")?;
     }
 
+    let perc1_col = new_null_array(&perc1_params_struct_type(), rows.len());
+
     let arrays: Vec<ArrayRef> = vec![
         Arc::new(bus_id_b.finish()) as ArrayRef,
         Arc::new(gen_id_b.finish()) as ArrayRef,
         Arc::new(model_type_b.finish()) as ArrayRef,
         Arc::new(params_b.finish()) as ArrayRef,
+        perc1_col,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build dynamics_models record batch")
@@ -5547,7 +5593,7 @@ mod tests {
         assert!((r.value(0) - 0.01).abs() < 1e-12);
         assert!((x.value(0) - 0.05).abs() < 1e-12);
 
-        let contingencies_batch = &tables[12].1;
+        let contingencies_batch = &tables[15].1;
         assert!(
             contingencies_batch.num_rows() >= 1,
             "expected at least one contingency row"
@@ -5562,7 +5608,7 @@ mod tests {
             "expected first contingency to contain at least one element"
         );
 
-        let dynamics_models_batch = &tables[14].1;
+        let dynamics_models_batch = &tables[17].1;
         assert_schema_shape_matches(
             dynamics_models_batch.schema().as_ref(),
             &dynamics_models_schema(),

@@ -102,7 +102,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 | Connectivity detail | `--connectivity-detail` | Granular ConnectivityNode bus mapping; emits optional `connectivity_groups` table |
 | Node-breaker | `--connectivity-detail --node-breaker` | Adds switch-topology detail tables for operational and viewer workflows |
 
-### Output tables (schema contract v0.9.5)
+### Output tables (schema contract v0.10.0)
 
 **18 canonical tables (always emitted):** `metadata`, `buses`, `branches`, `multi_section_lines`, `dc_lines_2w`, `generators`, `loads`, `fixed_shunts`, `switched_shunts`, `switched_shunt_banks`, `transformers_2w`, `transformers_3w`, `areas`, `zones`, `owners`, `contingencies`, `interfaces`, `dynamics_models`
 
@@ -113,6 +113,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 - `diagram_objects`, `diagram_points` — when DL profile is present (suppress with `--no-diagram`)
 - `buses_solved`, `generators_solved`, `switched_shunts_solved` — when `case_mode = solved_snapshot` (v0.8.5+)
 - `facts_devices`, `facts_solved` — optional FACTS extension tables (v0.8.6+)
+- `computational_load_profiles` — optional computational-load extension table (v0.10.0+; API `WriteOptions.emit_computational_load_profiles`)
 
 ### Detached island policy
 
@@ -138,7 +139,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 
 ## Data Contract (Locked)
 
-- Current schema contract: v0.9.5 (CGMES 3.0+ only). v0.9.5 adds `generators.controlled_bus_id` (IREG / RegulatingControl handoff) and optional `default_shunt_control_mode` metadata for declarative planning ↔ real-time shunt modes.
+- Current schema contract: **v0.10.0** (CGMES 3.0+ only). v0.10.0 adds computational-load interchange fields (`metadata.computational_load_mode`, optional `computational_load_profiles`, `dynamics_models.perc1_params`) and narrows the RPF version gate to v0.10.0 only.
 - Canonical source: raptrix-cim-arrow/src/schema.rs
 - Contract policy and semantics: docs/schema-contract.md
 - Plain-English field guide: [docs/rpf-field-guide.md](docs/rpf-field-guide.md)
@@ -151,16 +152,16 @@ RPF standardization here is intentional: it enables direct CIM-to-powerflow inte
 
 ### Versioning Policy
 
-Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is now locked at schema `v0.9.6` for interoperability and deterministic CGMES 3.0+ ingest behavior, while the converter crate release tracks implementation maturity and is currently `0.3.5`.
+Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is locked at schema **`v0.10.0`** while the converter crate release is **`0.4.0`**.
 
-This split preserves compatibility guarantees for downstream tools at a given contract version. v0.9.1 is additive: readers in this repository accept v0.9.1 and v0.9.0 files for backward-compatible ingestion.
+Readers in this repository accept **only** `v0.10.0` / `0.10.0` RPF files; older files must be re-emitted.
 
 **v0.9.1**: Adds optional `loads` ZIP fidelity fields (`p_i_pu`, `q_i_pu`, `p_y_pu`, `q_y_pu`) while preserving existing `p_pu`/`q_pu` constant-power semantics and required table shape.
 **v0.9.0**: Removes `ibr_devices` table (IBRs unified into `generators` via `is_ibr`), adds operational-outcome columns to `contingencies`, adds analysis-readiness fields to `metadata`, and introduces the optional `scenario_context` table.
 
 To keep crate and documentation versions consistent, use the version sync helper:
 
-- `./scripts/sync-versions.ps1 -Version 0.3.5`
+- `./scripts/sync-versions.ps1 -Version 0.4.0`
 - `./scripts/pre-release-check.ps1` (runs version sync, fmt check, cargo check, and tests)
 - CI also enforces this via `.github/workflows/version-consistency.yml`.
 
@@ -549,4 +550,5 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
 
 Copyright (c) 2026 Raptrix PowerFlow
 `n`n
+
 

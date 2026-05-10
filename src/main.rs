@@ -334,6 +334,8 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
             transformer_representation_mode:
                 raptrix_cim_rs::rpf_writer::TransformerRepresentationMode::Native3W,
             default_shunt_control_mode: None,
+            computational_load_mode: None,
+            emit_computational_load_profiles: false,
         }
     } else {
         WriteOptions {
@@ -358,6 +360,8 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
             transformer_representation_mode:
                 raptrix_cim_rs::rpf_writer::TransformerRepresentationMode::Native3W,
             default_shunt_control_mode: None,
+            computational_load_mode: None,
+            emit_computational_load_profiles: false,
         }
     };
 

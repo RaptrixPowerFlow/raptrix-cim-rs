@@ -30,14 +30,16 @@ use memmap2::MmapOptions;
 
 use crate::schema::{
     BRANDING, METADATA_KEY_BRANDING, METADATA_KEY_FACTS_SOLVED_STATE_PRESENCE,
-    METADATA_KEY_FEATURE_CONTINGENCIES_STUB, METADATA_KEY_FEATURE_DIAGRAM_LAYOUT,
-    METADATA_KEY_FEATURE_DYNAMICS_STUB, METADATA_KEY_FEATURE_FACTS,
-    METADATA_KEY_FEATURE_FACTS_SOLVED, METADATA_KEY_FEATURE_NODE_BREAKER, METADATA_KEY_RPF_VERSION,
-    METADATA_KEY_VERSION, SCHEMA_VERSION, SUPPORTED_RPF_VERSIONS, TABLE_BRANCHES, TABLE_BUSES,
-    TABLE_BUSES_SOLVED, TABLE_DC_LINES_2W, TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS,
-    TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED, TABLE_GENERATORS, TABLE_GENERATORS_SOLVED,
-    TABLE_LOADS, TABLE_MULTI_SECTION_LINES, TABLE_SWITCHED_SHUNT_BANKS, TABLE_TRANSFORMERS_2W,
-    TABLE_TRANSFORMERS_3W, all_table_schemas, diagram_layout_table_schemas, facts_table_schemas,
+    METADATA_KEY_FEATURE_COMPUTATIONAL_LOAD_PROFILES, METADATA_KEY_FEATURE_CONTINGENCIES_STUB,
+    METADATA_KEY_FEATURE_DIAGRAM_LAYOUT, METADATA_KEY_FEATURE_DYNAMICS_STUB,
+    METADATA_KEY_FEATURE_FACTS, METADATA_KEY_FEATURE_FACTS_SOLVED,
+    METADATA_KEY_FEATURE_NODE_BREAKER, METADATA_KEY_RPF_VERSION, METADATA_KEY_VERSION,
+    SCHEMA_VERSION, SUPPORTED_RPF_VERSIONS, TABLE_BRANCHES, TABLE_BUSES, TABLE_BUSES_SOLVED,
+    TABLE_COMPUTATIONAL_LOAD_PROFILES, TABLE_DC_LINES_2W, TABLE_DIAGRAM_OBJECTS,
+    TABLE_DIAGRAM_POINTS, TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED, TABLE_GENERATORS,
+    TABLE_GENERATORS_SOLVED, TABLE_LOADS, TABLE_MULTI_SECTION_LINES, TABLE_SWITCHED_SHUNT_BANKS,
+    TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, all_table_schemas,
+    computational_load_table_schemas, diagram_layout_table_schemas, facts_table_schemas,
     node_breaker_table_schemas, schema_metadata, solved_state_table_schemas, table_schema,
 };
 
@@ -105,6 +107,8 @@ pub struct RootWriteOptions {
     /// When true, append optional solved FACTS replay table (`facts_solved`).
     /// Requires `include_facts_devices=true`.
     pub include_facts_solved: bool,
+    /// When true, append optional `computational_load_profiles` table (v0.10.0+).
+    pub include_computational_load_profiles: bool,
 }
 
 /// Returns the metadata key used to store the logical row count for a table.
@@ -125,6 +129,9 @@ fn enabled_optional_table_schemas(options: &RootWriteOptions) -> Vec<(&'static s
     }
     if options.include_facts_devices {
         optional.extend(facts_table_schemas(options.include_facts_solved));
+    }
+    if options.include_computational_load_profiles {
+        optional.extend(computational_load_table_schemas());
     }
     optional
 }
@@ -202,6 +209,9 @@ pub fn root_rpf_schema_with_options(options: &RootWriteOptions) -> Schema {
     }
     if options.include_facts_devices {
         table_schemas.extend(facts_table_schemas(options.include_facts_solved));
+    }
+    if options.include_computational_load_profiles {
+        table_schemas.extend(computational_load_table_schemas());
     }
 
     let fields = table_schemas
@@ -523,6 +533,12 @@ pub fn write_root_rpf_with_metadata(
             "true".to_string(),
         );
     }
+    if options.include_computational_load_profiles {
+        root_metadata.insert(
+            METADATA_KEY_FEATURE_COMPUTATIONAL_LOAD_PROFILES.to_string(),
+            "true".to_string(),
+        );
+    }
     for (key, value) in additional_root_metadata {
         root_metadata.insert(key.clone(), value.clone());
     }
@@ -799,6 +815,12 @@ pub fn validate_rpf_file(path: impl AsRef<Path>, options: &RootWriteOptions) -> 
         require_non_null_count_equals_len(TABLE_FACTS_SOLVED, facts_solved, "device_id")?;
     }
 
+    if options.include_computational_load_profiles {
+        by_name
+            .get(TABLE_COMPUTATIONAL_LOAD_PROFILES)
+            .context("post-write contract violation: missing computational_load_profiles table")?;
+    }
+
     Ok(())
 }
 
@@ -820,11 +842,13 @@ mod tests {
     use arrow::record_batch::RecordBatch;
 
     use crate::schema::{
-        METADATA_KEY_RPF_VERSION, METADATA_KEY_VERSION, SCHEMA_VERSION, TABLE_BRANCHES,
+        METADATA_KEY_FEATURE_COMPUTATIONAL_LOAD_PROFILES, METADATA_KEY_RPF_VERSION,
+        METADATA_KEY_VERSION, SCHEMA_VERSION, TABLE_BRANCHES, TABLE_COMPUTATIONAL_LOAD_PROFILES,
         TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED,
-        TABLE_GENERATORS, TABLE_LOADS, all_table_schemas, branches_schema, diagram_objects_schema,
-        diagram_points_schema, facts_devices_schema, facts_solved_schema, generators_schema,
-        loads_schema, schema_metadata,
+        TABLE_GENERATORS, TABLE_LOADS, all_table_schemas, branches_schema,
+        computational_load_profiles_schema, diagram_objects_schema, diagram_points_schema,
+        facts_devices_schema, facts_solved_schema, generators_schema, loads_schema,
+        schema_metadata,
     };
 
     use super::{
@@ -879,6 +903,7 @@ mod tests {
                 include_solved_state: false,
                 include_facts_devices: false,
                 include_facts_solved: false,
+                include_computational_load_profiles: false,
             },
         )?;
 
@@ -986,6 +1011,44 @@ mod tests {
     }
 
     #[test]
+    fn computational_load_profiles_optional_round_trip() -> Result<()> {
+        let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_clp_roundtrip");
+        std::fs::create_dir_all(&tmp_dir)?;
+        let output_path = tmp_dir.join("clp.rpf");
+
+        let mut table_batches: HashMap<&'static str, RecordBatch> = all_table_schemas()
+            .into_iter()
+            .map(|(name, schema)| (name, RecordBatch::new_empty(Arc::new(schema))))
+            .collect();
+        table_batches.insert(
+            TABLE_COMPUTATIONAL_LOAD_PROFILES,
+            RecordBatch::new_empty(Arc::new(computational_load_profiles_schema())),
+        );
+
+        write_root_rpf(
+            &output_path,
+            &table_batches,
+            &RootWriteOptions {
+                include_computational_load_profiles: true,
+                ..Default::default()
+            },
+        )?;
+
+        let tables = read_rpf_tables(&output_path)?;
+        assert!(
+            tables
+                .iter()
+                .any(|(name, _)| name == TABLE_COMPUTATIONAL_LOAD_PROFILES)
+        );
+        let metadata = rpf_file_metadata(&output_path)?;
+        assert_eq!(
+            metadata.get(METADATA_KEY_FEATURE_COMPUTATIONAL_LOAD_PROFILES),
+            Some(&"true".to_string())
+        );
+        Ok(())
+    }
+
+    #[test]
     fn read_rejects_branches_schema_missing_required_nominal_kv_columns() -> Result<()> {
         let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_backward_read");
         std::fs::create_dir_all(&tmp_dir)?;
@@ -1048,7 +1111,7 @@ mod tests {
             .expect_err("v0.9.3 reader should reject missing required nominal_kv fields");
         let message = format!("{err:#}");
         assert!(message.contains("missing non-nullable field 'to_nominal_kv'"));
-        assert_eq!(SCHEMA_VERSION, "v0.9.6");
+        assert_eq!(SCHEMA_VERSION, "v0.10.0");
         Ok(())
     }
 

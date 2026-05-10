@@ -7,7 +7,7 @@ Copyright (c) 2026 Raptrix PowerFlow
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.9.6 profile.
+//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.10.0 profile.
 //!
 //! **CGMES 3.0+ Only**: This module targets CGMES v3.0 and later (v17+ CIM) merged profiles.
 //! Support for legacy CGMES 2.4.x was dropped in this release for simplicity and performance.
@@ -15,6 +15,11 @@ Copyright (c) 2026 Raptrix PowerFlow
 //! This module exposes one exact Arrow schema per required table in the locked
 //! `.rpf` contract, plus deterministic schema registry helpers used by both
 //! writers and readers.
+//!
+//! ## v0.10.0 — 18 canonical tables (additive: computational-load interchange)
+//! Adds nullable `metadata.computational_load_mode`, optional root table `computational_load_profiles`,
+//! and nullable `dynamics_models.perc1_params` struct for PERC1 baseline parameters.
+//! `SUPPORTED_RPF_VERSIONS` accepts **only** v0.10.0 — prior contract files must be re-emitted.
 //!
 //! ## v0.9.6 — 18 canonical tables (additive: warm-start seed semantics)
 //! Adds `solved_state_presence = "seed_only"` to mark warm-start RPF files that emit a
@@ -50,17 +55,15 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, Schema};
 
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.9.6 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.10.0 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.";
 
 /// Canonical RPF format version tag embedded as file-level metadata.
-pub const RPF_VERSION: &str = "v0.9.6";
+pub const RPF_VERSION: &str = "v0.10.0";
 
 /// Supported RPF versions accepted by generic Arrow IPC readers.
 ///
-/// v0.9.6 is the current contract release. v0.9.5, v0.9.4, and v0.9.3 remain accepted for backward compatibility.
-pub const SUPPORTED_RPF_VERSIONS: &[&str] = &[
-    "v0.9.6", "0.9.6", "v0.9.5", "0.9.5", "v0.9.4", "0.9.4", "v0.9.3", "0.9.3",
-];
+/// v0.10.0 is the only accepted contract release (narrow gate for downstream upgrades).
+pub const SUPPORTED_RPF_VERSIONS: &[&str] = &["v0.10.0", "0.10.0"];
 
 /// Validates a nominal kV value for required network voltage fields.
 pub fn validate_nominal_kv(value: f64, context: &str) -> Result<(), String> {
@@ -161,6 +164,13 @@ pub const METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_GENERATION_ISLAND_COUNT: &str =
 /// Values: `not_available` | `partial` | `complete`.
 /// Added in v0.9.1.
 pub const METADATA_KEY_LOADS_ZIP_FIDELITY_PRESENCE: &str = "rpf.loads.zip_fidelity_presence";
+/// `metadata` table column name (Boolean, nullable): when true, consumers enforce the
+/// computational-load validation contract (non-empty `computational_load_profiles`, etc.).
+/// Added in v0.10.0. Same string is used as the Arrow field name for zero-copy C++ reads.
+pub const METADATA_KEY_COMPUTATIONAL_LOAD_MODE: &str = "computational_load_mode";
+/// File-level feature flag: optional `computational_load_profiles` root table is present.
+pub const METADATA_KEY_FEATURE_COMPUTATIONAL_LOAD_PROFILES: &str =
+    "raptrix.features.computational_load_profiles";
 
 /// Canonical metadata table name.
 pub const TABLE_METADATA: &str = "metadata";
@@ -198,6 +208,8 @@ pub const TABLE_CONTINGENCIES: &str = "contingencies";
 pub const TABLE_INTERFACES: &str = "interfaces";
 /// Canonical dynamics models table name.
 pub const TABLE_DYNAMICS_MODELS: &str = "dynamics_models";
+/// Optional computational-load profile rows (v0.10.0+), appended when enabled in `RootWriteOptions`.
+pub const TABLE_COMPUTATIONAL_LOAD_PROFILES: &str = "computational_load_profiles";
 /// Optional FACTS devices table name.
 pub const TABLE_FACTS_DEVICES: &str = "facts_devices";
 /// Optional Sentinel scenario context table name (v0.9.0+).
@@ -314,6 +326,65 @@ fn map_string_f64() -> DataType {
     )
 }
 
+/// Inner struct fields for each element of `computational_load_profiles.seasonal_envelope`:
+/// `season` (Utf8), `min_mw`, `max_mw`, `pf` (Float32).
+pub fn seasonal_envelope_element_fields() -> Vec<Field> {
+    vec![
+        Field::new("season", DataType::Utf8, false),
+        Field::new("min_mw", DataType::Float32, false),
+        Field::new("max_mw", DataType::Float32, false),
+        Field::new("pf", DataType::Float32, false),
+    ]
+}
+
+/// `List<Struct{ season, min_mw, max_mw, pf }>` for seasonal MW / power-factor envelopes.
+pub fn seasonal_envelope_list_type() -> DataType {
+    DataType::List(Arc::new(Field::new(
+        "item",
+        DataType::Struct(seasonal_envelope_element_fields().into()),
+        false,
+    )))
+}
+
+/// Inner struct fields for each element of `computational_load_profiles.buildout_schedule`:
+/// `year` (Int32), `mw` (Float32).
+pub fn buildout_schedule_element_fields() -> Vec<Field> {
+    vec![
+        Field::new("year", DataType::Int32, false),
+        Field::new("mw", DataType::Float32, false),
+    ]
+}
+
+/// `List<Struct{ year, mw }>` for forecasted build-out MW by year.
+pub fn buildout_schedule_list_type() -> DataType {
+    DataType::List(Arc::new(Field::new(
+        "item",
+        DataType::Struct(buildout_schedule_element_fields().into()),
+        false,
+    )))
+}
+
+/// Named fields for nullable `dynamics_models.perc1_params` (PERC1 baseline model).
+pub fn perc1_params_struct_fields() -> Vec<Field> {
+    vec![
+        Field::new("perc1_voltage_ride_through_pu", DataType::Float64, true),
+        Field::new("perc1_frequency_ride_through_hz", DataType::Float64, true),
+        Field::new("perc1_reactive_power_ceiling_pu", DataType::Float64, true),
+        Field::new(
+            "perc1_active_power_recovery_rate_pu_per_s",
+            DataType::Float64,
+            true,
+        ),
+        Field::new("perc1_voltage_support_time_sec", DataType::Float64, true),
+        Field::new("perc1_frequency_support_time_sec", DataType::Float64, true),
+    ]
+}
+
+/// Nullable struct type for `dynamics_models.perc1_params`.
+pub fn perc1_params_struct_type() -> DataType {
+    DataType::Struct(perc1_params_struct_fields().into())
+}
+
 fn contingencies_elements_type() -> DataType {
     DataType::List(Arc::new(Field::new(
         "element",
@@ -364,6 +435,8 @@ pub fn schema_metadata() -> HashMap<String, String> {
 ///
 /// v0.9.5 adds nullable `default_shunt_control_mode` (planning_full | real_time_hot_start |
 /// real_time_frozen) for declarative shunt-mode handoff; uncoupled from `case_mode` semantics.
+///
+/// v0.10.0 adds nullable `computational_load_mode` (Boolean) for computational-load interchange mode.
 pub fn metadata_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
@@ -415,6 +488,12 @@ pub fn metadata_schema() -> Schema {
             Field::new("real_time_discovery", DataType::Boolean, true), // true if from live SE analysis
             // v0.9.5: optional declarative shunt mode for planning ↔ real-time interchange
             Field::new("default_shunt_control_mode", dict_utf8(), true),
+            // v0.10.0: computational-load interchange (see `computational_load_profiles` optional table)
+            Field::new(
+                METADATA_KEY_COMPUTATIONAL_LOAD_MODE,
+                DataType::Boolean,
+                true,
+            ),
         ],
         schema_metadata(),
     )
@@ -826,6 +905,8 @@ pub fn interfaces_schema() -> Schema {
 }
 
 /// `dynamics_models` table schema.
+///
+/// v0.10.0 adds nullable `perc1_params` struct for PERC1 baseline model parameters.
 pub fn dynamics_models_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
@@ -833,6 +914,35 @@ pub fn dynamics_models_schema() -> Schema {
             Field::new("gen_id", dict_utf8(), false),
             Field::new("model_type", dict_utf8(), false),
             Field::new("params", map_string_f64(), false),
+            Field::new("perc1_params", perc1_params_struct_type(), true),
+        ],
+        schema_metadata(),
+    )
+}
+
+/// Optional `computational_load_profiles` table (v0.10.0+).
+///
+/// One row per computational-load bus or load. Exactly one of `bus_id` or `load_id` should be
+/// non-null for a valid interchange row; enforcement is a **runtime** contract when
+/// `metadata.computational_load_mode` is true.
+pub fn computational_load_profiles_schema() -> Schema {
+    Schema::new_with_metadata(
+        vec![
+            Field::new("bus_id", DataType::Int32, true),
+            Field::new("load_id", dict_utf8(), true),
+            Field::new("seasonal_envelope", seasonal_envelope_list_type(), true),
+            Field::new("buildout_schedule", buildout_schedule_list_type(), true),
+            Field::new("ramp_rate_up_mw_per_min", DataType::Float32, true),
+            Field::new("ramp_rate_down_mw_per_min", DataType::Float32, true),
+            Field::new("it_load_percent", DataType::Float32, true),
+            Field::new("non_it_load_percent", DataType::Float32, true),
+            Field::new("it_allocation_mode", dict_utf8(), true),
+            Field::new("ups_config", map_string_f64(), true),
+            Field::new("pcc_relay_settings", map_string_f64(), true),
+            Field::new("onsite_gen_bess_mw", DataType::Float32, true),
+            Field::new("onsite_gen_parallel", DataType::Boolean, true),
+            Field::new("bess_ramp_rate_mw_per_min", DataType::Float32, true),
+            Field::new("facility_use_case_percent", map_string_f64(), true),
         ],
         schema_metadata(),
     )
@@ -1089,6 +1199,14 @@ pub fn facts_table_schemas(include_facts_solved: bool) -> Vec<(&'static str, Sch
     tables
 }
 
+/// Returns optional `computational_load_profiles` table schema (v0.10.0+).
+pub fn computational_load_table_schemas() -> Vec<(&'static str, Schema)> {
+    vec![(
+        TABLE_COMPUTATIONAL_LOAD_PROFILES,
+        computational_load_profiles_schema(),
+    )]
+}
+
 /// Returns optional solved-state table schemas in deterministic order (v0.8.4+).
 ///
 /// These tables are appended after all other optional root columns when
@@ -1150,6 +1268,7 @@ pub fn table_schema(table_name: &str) -> Option<Schema> {
         TABLE_CONTINGENCIES => Some(contingencies_schema()),
         TABLE_INTERFACES => Some(interfaces_schema()),
         TABLE_DYNAMICS_MODELS => Some(dynamics_models_schema()),
+        TABLE_COMPUTATIONAL_LOAD_PROFILES => Some(computational_load_profiles_schema()),
         TABLE_FACTS_DEVICES => Some(facts_devices_schema()),
         TABLE_CONNECTIVITY_GROUPS => Some(connectivity_groups_schema()),
         TABLE_NODE_BREAKER_DETAIL => Some(node_breaker_detail_schema()),
@@ -1185,19 +1304,25 @@ pub fn branch_schema() -> Schema {
 mod tests {
     use super::{
         SUPPORTED_RPF_VERSIONS, all_table_schemas, branches_schema, contingencies_schema,
-        diagram_objects_schema, diagram_points_schema, facts_devices_schema, facts_solved_schema,
-        generators_schema, loads_schema, normalize_facts_device_type, table_schema,
+        diagram_objects_schema, diagram_points_schema, dynamics_models_schema,
+        facts_devices_schema, facts_solved_schema, generators_schema, loads_schema,
+        normalize_facts_device_type, perc1_params_struct_type, table_schema,
     };
     use arrow::datatypes::DataType;
 
     #[test]
-    fn v093_schema_contract_spot_check() {
+    fn v010_schema_contract_spot_check() {
         // contingencies must have exactly 8 fields (2 base + 6 Sentinel outcome cols)
         let c = contingencies_schema();
         assert_eq!(c.fields().len(), 8, "contingencies should have 8 fields");
         assert_eq!(c.field(0).name(), "contingency_id");
         assert_eq!(c.field(2).name(), "risk_score");
         assert_eq!(c.field(7).name(), "greedy_reserve_summary");
+
+        let dm = dynamics_models_schema();
+        assert_eq!(dm.fields().len(), 5);
+        assert_eq!(dm.field(4).name(), "perc1_params");
+        assert_eq!(dm.field(4).data_type(), &perc1_params_struct_type());
 
         // scenario_context resolvable via table_schema() but absent from all_table_schemas()
         assert!(
@@ -1215,16 +1340,15 @@ mod tests {
             "all_table_schemas() must return 18 canonical tables"
         );
 
-        // version gate
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.9.6"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.9.6"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.9.5"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.9.5"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.9.4"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.9.4"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.9.3"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.9.3"));
-        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 8);
+        assert!(
+            table_schema("computational_load_profiles").is_some(),
+            "computational_load_profiles must resolve via table_schema()"
+        );
+
+        // version gate (narrow)
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.10.0"));
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.10.0"));
+        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 2);
     }
 
     #[test]

@@ -3,11 +3,26 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
 Copyright (c) 2026 Raptrix PowerFlow
 -->
 
-# Schema Contract (Locked contract: v0.9.5 — CGMES 3.0+ Only)
+# Schema Contract (Locked contract: v0.10.0 — CGMES 3.0+ Only)
 
 This repository is the authoritative source of truth for the Raptrix PowerFlow Interchange (`.rpf`) wire contract used by CIM-first conversion pipelines.
 
-**v0.9.5** is the current additive contract release in this repository (readers still accept v0.9.4 and v0.9.3).
+**v0.10.0** is the current contract release. `SUPPORTED_RPF_VERSIONS` accepts only **`v0.10.0`** / **`0.10.0`**; re-emit older files through a v0.10.0 writer.
+
+## v0.10.0 Additive Changes
+
+- **`metadata.computational_load_mode`** (Boolean, nullable, Arrow field name `computational_load_mode`): when `true`, consumers apply the computational-load runtime validation contract (for example: non-empty `computational_load_profiles` where required by the interchange profile).
+- **Optional root table `computational_load_profiles`** (enabled via `RootWriteOptions.include_computational_load_profiles`; file metadata `raptrix.features.computational_load_profiles=true` when present):
+  - **`seasonal_envelope`**: `List<Struct>` where each list element has exactly these child fields (order, names, types):
+    - `season`: **Utf8** (non-null within the struct row)
+    - `min_mw`: **Float32**
+    - `max_mw`: **Float32**
+    - `pf`: **Float32**
+  - **`buildout_schedule`**: `List<Struct>` where each list element has:
+    - `year`: **Int32**
+    - `mw`: **Float32**
+  - Additional nullable columns: `bus_id`, `load_id`, ramp rates, IT split, `it_allocation_mode`, `ups_config` / `pcc_relay_settings` / `facility_use_case_percent` as `Map<Utf8, Float64>`, and onsite BESS fields (see `computational_load_profiles_schema()` in `raptrix-cim-arrow/src/schema.rs`).
+- **`dynamics_models.perc1_params`**: nullable **Struct** with named Float64 child fields: `perc1_voltage_ride_through_pu`, `perc1_frequency_ride_through_hz`, `perc1_reactive_power_ceiling_pu`, `perc1_active_power_recovery_rate_pu_per_s`, `perc1_voltage_support_time_sec`, `perc1_frequency_support_time_sec` (each nullable within the struct).
 
 ## v0.9.5 Additive Changes
 
@@ -96,8 +111,8 @@ Every `.rpf` file must include:
 
 Current locked values:
 
-- `raptrix.version = 0.9.6` (also accepted as `v0.9.6`)
-- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.9.6 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.`
+- `raptrix.version = 0.10.0` (also accepted as `v0.10.0`)
+- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.10.0 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.`
 - `rpf.case_fingerprint = <required deterministic case identity fingerprint>`
 - `rpf.validation_mode = topology_only | solved_ready`
 - `rpf.case_mode = flat_start_planning | warm_start_planning | solved_snapshot | hour_ahead_advisory` (v0.8.4+, required; `hour_ahead_advisory` added in v0.9.0)
@@ -905,7 +920,7 @@ Locked contract: v0.7.0 adds optional node-breaker detail tables (`node_breaker_
 An independent parser is considered compliant if it:
 
 1. Opens `.rpf` as Arrow IPC File format.
-2. Verifies `raptrix.version` is in the set of supported contract versions (current: `0.9.3`).
+2. Verifies `raptrix.version` is in the set of supported contract versions (current: `0.10.0` / `v0.10.0`).
 3. Verifies required root columns appear in canonical order.
 4. Uses `rpf.rows.<table_name>` metadata to trim padded null tails.
 5. Treats the 15 required root columns as mandatory even when their logical row counts are zero.
