@@ -26,6 +26,7 @@ use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 use raptrix_cim_rs::arrow_schema::{
     BRANDING, METADATA_KEY_FEATURE_CONTINGENCIES_STUB, METADATA_KEY_FEATURE_DIAGRAM_LAYOUT,
     METADATA_KEY_FEATURE_DYNAMICS_STUB, METADATA_KEY_FEATURE_NODE_BREAKER,
+    format_health_report, inspect_rpf_file,
 };
 use raptrix_cim_rs::rpf_writer::{
     BusResolutionMode, DetachedIslandPolicy, WriteOptions, rpf_file_metadata, summarize_rpf,
@@ -167,6 +168,10 @@ struct ViewArgs {
     /// Print file-level RPF metadata entries.
     #[arg(long)]
     verbose: bool,
+
+    /// Print deterministic case-health grade and reasons.
+    #[arg(long)]
+    health: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -212,6 +217,18 @@ fn run_view(args: ViewArgs) -> Result<()> {
 
     println!("{BRANDING}");
     println!("Input: {}", input_path.display());
+
+    if args.health {
+        let health = inspect_rpf_file(&input_path).with_context(|| {
+            format!(
+                "failed to inspect case health for {}",
+                input_path.display()
+            )
+        })?;
+        println!("{}", format_health_report(&health));
+        return Ok(());
+    }
+
     println!("Tables: {}", summary.tables.len());
     println!("Total record batches: {}", summary.total_batches);
     println!("Total rows: {}", summary.total_rows);

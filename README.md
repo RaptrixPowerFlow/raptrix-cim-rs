@@ -143,6 +143,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 - Canonical source: raptrix-cim-arrow/src/schema.rs
 - Contract policy and semantics: docs/schema-contract.md
 - Plain-English field guide: [docs/rpf-field-guide.md](docs/rpf-field-guide.md)
+- Case health inspection model: [docs/rpf-case-health.md](docs/rpf-case-health.md)
 - Cross-repo propagation workflow: docs/release-sync-workflow.md
 - **CGMES Ingest Target**: v3.0+ and later only (complete merged profiles; auto-detect and explicit mode supported)
 

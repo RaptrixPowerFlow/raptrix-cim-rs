@@ -27,9 +27,15 @@
 //! 3. Use [`read_rpf_tables`], [`summarize_rpf`], or [`rpf_file_metadata`] for
 //!    validation, inspection, and regression tests.
 
+mod health;
 mod io;
 mod schema;
 
+pub use health::{
+    RpfCaseAggregates, RpfCaseCounts, RpfCaseHealth, RpfConvergenceHints, RpfHealthGrade,
+    RpfTables, RpfTopologySignals, TopologySource, format_health_report, inspect_rpf_case,
+    inspect_rpf_file,
+};
 pub use io::{
     RootWriteOptions, RpfSummary, TableSummary, read_rpf_tables, root_rpf_schema,
     row_count_metadata_key, rpf_file_metadata, summarize_rpf, validate_rpf_file, write_root_rpf,

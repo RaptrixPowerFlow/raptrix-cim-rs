@@ -22,7 +22,8 @@ pub mod test_utils;
 
 pub use raptrix_cim_arrow as arrow_schema;
 pub use raptrix_cim_arrow::{
-    RpfSummary, TableSummary, read_rpf_tables, rpf_file_metadata, summarize_rpf,
+    RpfCaseHealth, RpfHealthGrade, RpfSummary, RpfTables, TableSummary, format_health_report,
+    inspect_rpf_case, inspect_rpf_file, read_rpf_tables, rpf_file_metadata, summarize_rpf,
 };
 
 pub use rpf_writer::{
