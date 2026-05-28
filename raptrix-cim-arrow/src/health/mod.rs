@@ -18,17 +18,16 @@ use arrow::record_batch::RecordBatch;
 use crate::io::{read_rpf_tables, rpf_file_metadata};
 use crate::schema::{
     METADATA_KEY_CASE_MODE, METADATA_KEY_LOADS_ZIP_FIDELITY_PRESENCE,
-    METADATA_KEY_SOLVED_STATE_PRESENCE, METADATA_KEY_SOLVER_ACCURACY, METADATA_KEY_SOLVER_ITERATIONS,
-    METADATA_KEY_SOLVER_MODE,
+    METADATA_KEY_SOLVED_STATE_PRESENCE, METADATA_KEY_SOLVER_ACCURACY,
+    METADATA_KEY_SOLVER_ITERATIONS, METADATA_KEY_SOLVER_MODE,
     METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_GENERATION_ISLAND_COUNT,
     METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_LOAD_ISLAND_COUNT,
     METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_NETWORK_ISLAND_COUNT,
     METADATA_KEY_TOPOLOGY_DETACHED_ISLANDS_PRESENT, METADATA_KEY_TOPOLOGY_ISLAND_COUNT,
-    METADATA_KEY_TOPOLOGY_MAIN_ISLAND_BUS_COUNT, METADATA_KEY_VALIDATION_MODE,
-    TABLE_BRANCHES, TABLE_BUSES, TABLE_BUSES_SOLVED,
-    TABLE_FIXED_SHUNTS, TABLE_GENERATORS, TABLE_GENERATORS_SOLVED, TABLE_LOADS, TABLE_METADATA,
-    TABLE_SWITCHED_SHUNT_BANKS, TABLE_SWITCHED_SHUNTS, TABLE_TRANSFORMERS_2W,
-    TABLE_TRANSFORMERS_3W,
+    METADATA_KEY_TOPOLOGY_MAIN_ISLAND_BUS_COUNT, METADATA_KEY_VALIDATION_MODE, TABLE_BRANCHES,
+    TABLE_BUSES, TABLE_BUSES_SOLVED, TABLE_FIXED_SHUNTS, TABLE_GENERATORS, TABLE_GENERATORS_SOLVED,
+    TABLE_LOADS, TABLE_METADATA, TABLE_SWITCHED_SHUNT_BANKS, TABLE_SWITCHED_SHUNTS,
+    TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W,
 };
 
 /// In-memory RPF interchange used by [`inspect_rpf_case`].
@@ -318,7 +317,12 @@ fn collect_aggregates(input: &RpfTables) -> Result<RpfCaseAggregates> {
         switched_shunts_in_service: batch_metrics::count_in_service(sw)?,
         switched_shunt_banks_total: batch_metrics::row_count(banks),
         tap_settings_non_unity: batch_metrics::count_non_unity_tap(branches, "tap", None, 1e-6)?
-            + batch_metrics::count_non_unity_tap(xf2, "tap_ratio", Some("nominal_tap_ratio"), 1e-6)?,
+            + batch_metrics::count_non_unity_tap(
+                xf2,
+                "tap_ratio",
+                Some("nominal_tap_ratio"),
+                1e-6,
+            )?,
     })
 }
 
@@ -354,13 +358,19 @@ fn collect_topology(input: &RpfTables) -> Result<RpfTopologySignals> {
     let (island_count, main_island, detached, det_net, det_load, det_gen, source) =
         if let (Some(ic), Some(main)) = (
             metadata_usize(&input.file_metadata, METADATA_KEY_TOPOLOGY_ISLAND_COUNT),
-            metadata_usize(&input.file_metadata, METADATA_KEY_TOPOLOGY_MAIN_ISLAND_BUS_COUNT),
+            metadata_usize(
+                &input.file_metadata,
+                METADATA_KEY_TOPOLOGY_MAIN_ISLAND_BUS_COUNT,
+            ),
         ) {
             (
                 ic,
                 main,
-                metadata_bool(&input.file_metadata, METADATA_KEY_TOPOLOGY_DETACHED_ISLANDS_PRESENT)
-                    .unwrap_or(ic > 1),
+                metadata_bool(
+                    &input.file_metadata,
+                    METADATA_KEY_TOPOLOGY_DETACHED_ISLANDS_PRESENT,
+                )
+                .unwrap_or(ic > 1),
                 metadata_usize(
                     &input.file_metadata,
                     METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_NETWORK_ISLAND_COUNT,
@@ -400,7 +410,10 @@ fn collect_topology(input: &RpfTables) -> Result<RpfTopologySignals> {
         (None, None, None)
     };
 
-    let out_of_band = buses.map(batch_metrics::count_voltage_out_of_band).transpose()?.unwrap_or(0);
+    let out_of_band = buses
+        .map(batch_metrics::count_voltage_out_of_band)
+        .transpose()?
+        .unwrap_or(0);
     let bad_kv = buses
         .map(batch_metrics::count_nominal_kv_nonpositive)
         .transpose()?
@@ -449,13 +462,13 @@ fn file_or_table_meta(
     file_key: &str,
     table_col: &str,
 ) -> Option<String> {
-    input
-        .file_metadata
-        .get(file_key)
-        .cloned()
-        .or_else(|| {
-            meta_batch.and_then(|b| batch_metrics::metadata_utf8_at(b, table_col, 0).ok().flatten())
+    input.file_metadata.get(file_key).cloned().or_else(|| {
+        meta_batch.and_then(|b| {
+            batch_metrics::metadata_utf8_at(b, table_col, 0)
+                .ok()
+                .flatten()
         })
+    })
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -701,17 +714,32 @@ fn collect_convergence(input: &RpfTables) -> Result<RpfConvergenceHints> {
         Some("actual_solved") | Some("seed_only")
     ) || buses_solved.is_some_and(|b| b.num_rows() > 0);
 
-    let solver_iterations = optional_meta_i32(input, meta_batch, METADATA_KEY_SOLVER_ITERATIONS, "solver_iterations");
-    let solver_accuracy = optional_meta_f64(input, meta_batch, METADATA_KEY_SOLVER_ACCURACY, "solver_accuracy");
-    let solver_mode = file_or_table_meta(input, meta_batch, METADATA_KEY_SOLVER_MODE, "solver_mode");
+    let solver_iterations = optional_meta_i32(
+        input,
+        meta_batch,
+        METADATA_KEY_SOLVER_ITERATIONS,
+        "solver_iterations",
+    );
+    let solver_accuracy = optional_meta_f64(
+        input,
+        meta_batch,
+        METADATA_KEY_SOLVER_ACCURACY,
+        "solver_accuracy",
+    );
+    let solver_mode =
+        file_or_table_meta(input, meta_batch, METADATA_KEY_SOLVER_MODE, "solver_mode");
     let solver_q_limit_infeasible_count = optional_meta_i32(
         input,
         meta_batch,
         "rpf.solver.q_limit_infeasible_count",
         "solver_q_limit_infeasible_count",
     );
-    let pv_to_pq_switch_count =
-        optional_meta_i32(input, meta_batch, "rpf.pv_to_pq_switch_count", "pv_to_pq_switch_count");
+    let pv_to_pq_switch_count = optional_meta_i32(
+        input,
+        meta_batch,
+        "rpf.pv_to_pq_switch_count",
+        "pv_to_pq_switch_count",
+    );
 
     let pv_to_pq_from_generators_solved = gens_solved
         .filter(|b| b.num_rows() > 0)
@@ -719,7 +747,9 @@ fn collect_convergence(input: &RpfTables) -> Result<RpfConvergenceHints> {
         .transpose()?;
 
     let initial_mismatch_rms = match (buses, buses_solved) {
-        (Some(b), Some(s)) if s.num_rows() > 0 => batch_metrics::initial_voltage_mismatch_rms(b, s)?,
+        (Some(b), Some(s)) if s.num_rows() > 0 => {
+            batch_metrics::initial_voltage_mismatch_rms(b, s)?
+        }
         _ => None,
     };
 
@@ -776,9 +806,7 @@ fn optional_meta_f64(
         })
 }
 
-fn optional_solve_trace_params(
-    _meta_batch: Option<&RecordBatch>,
-) -> (Option<f64>, Option<bool>) {
+fn optional_solve_trace_params(_meta_batch: Option<&RecordBatch>) -> (Option<f64>, Option<bool>) {
     // Only populated when a writer stored solve-trace keys in custom_metadata or
     // scenario_context.params (`contraction_ratio_first_step`, `stall_or_oscillation`);
     // never inferred from planning tables alone.
@@ -812,7 +840,8 @@ fn grade_case(
 ) -> (RpfHealthGrade, Vec<String>) {
     let mut rules: Vec<(RpfHealthGrade, String)> = Vec::new();
 
-    if topology.detached_active_load_island_count > 0 || topology.detached_active_generation_island_count > 0
+    if topology.detached_active_load_island_count > 0
+        || topology.detached_active_generation_island_count > 0
     {
         rules.push((
             RpfHealthGrade::Pathological,
@@ -836,7 +865,10 @@ fn grade_case(
     if topology.island_count > 4 {
         rules.push((
             RpfHealthGrade::Pathological,
-            format!("fragmented topology: {} electrical islands", topology.island_count),
+            format!(
+                "fragmented topology: {} electrical islands",
+                topology.island_count
+            ),
         ));
     }
 

@@ -27,6 +27,7 @@
 //! 3. Use [`read_rpf_tables`], [`summarize_rpf`], or [`rpf_file_metadata`] for
 //!    validation, inspection, and regression tests.
 
+pub mod ffi;
 mod health;
 mod io;
 mod schema;

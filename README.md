@@ -153,7 +153,7 @@ RPF standardization here is intentional: it enables direct CIM-to-powerflow inte
 
 ### Versioning Policy
 
-Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is locked at schema **`v0.10.0`** while the converter crate release is **`0.4.0`**.
+Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is locked at schema **`v0.10.0`** while the converter crate release is **`0.4.1`**.
 
 Readers in this repository accept **only** `v0.10.0` / `0.10.0` RPF files; older files must be re-emitted.
 
@@ -162,7 +162,7 @@ Readers in this repository accept **only** `v0.10.0` / `0.10.0` RPF files; older
 
 To keep crate and documentation versions consistent, use the version sync helper:
 
-- `./scripts/sync-versions.ps1 -Version 0.4.0`
+- `./scripts/sync-versions.ps1 -Version 0.4.1`
 - `./scripts/pre-release-check.ps1` (runs version sync, fmt check, cargo check, and tests)
 - CI also enforces this via `.github/workflows/version-consistency.yml`.
 

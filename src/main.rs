@@ -25,8 +25,8 @@ use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 
 use raptrix_cim_rs::arrow_schema::{
     BRANDING, METADATA_KEY_FEATURE_CONTINGENCIES_STUB, METADATA_KEY_FEATURE_DIAGRAM_LAYOUT,
-    METADATA_KEY_FEATURE_DYNAMICS_STUB, METADATA_KEY_FEATURE_NODE_BREAKER,
-    format_health_report, inspect_rpf_file,
+    METADATA_KEY_FEATURE_DYNAMICS_STUB, METADATA_KEY_FEATURE_NODE_BREAKER, format_health_report,
+    inspect_rpf_file,
 };
 use raptrix_cim_rs::rpf_writer::{
     BusResolutionMode, DetachedIslandPolicy, WriteOptions, rpf_file_metadata, summarize_rpf,
@@ -220,10 +220,7 @@ fn run_view(args: ViewArgs) -> Result<()> {
 
     if args.health {
         let health = inspect_rpf_file(&input_path).with_context(|| {
-            format!(
-                "failed to inspect case health for {}",
-                input_path.display()
-            )
+            format!("failed to inspect case health for {}", input_path.display())
         })?;
         println!("{}", format_health_report(&health));
         return Ok(());

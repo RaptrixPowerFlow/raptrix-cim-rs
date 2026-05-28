@@ -9,6 +9,19 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
 
 Copyright (c) 2026 Raptrix PowerFlow
 
+## v0.10.0 — converter 0.4.1 (2026-05-27)
+
+### Converter release: Crate version 0.4.1 (raptrix-cim-arrow) / 0.4.1 (raptrix-cim-rs) | Arrow schema v0.10.0 (unchanged)
+
+### Added
+
+- **RPF case health inspector** (`inspect_rpf_case`, `inspect_rpf_file`, `format_health_report`): read-only, deterministic grading from canonical tables and existing `rpf.*` metadata. CLI: `raptrix-cim-rs view --input case.rpf --health`.
+- **C ABI for case health** (`raptrix_cim_arrow` cdylib): `inspect_rpf_file_c`, `inspect_rpf_file_c_json`, `free_rpf_case_health_ffi`, `free_rpf_case_health_json`, `rpf_case_health_last_error`. Stable header at `raptrix-cim-arrow/include/raptrix_cim_arrow_health.h`.
+
+### Compatibility
+
+- No schema, table, or metadata-key changes. Existing `.rpf` files remain valid under contract **v0.10.0**.
+
 ## v0.10.0 (2026-05-10)
 
 ### Converter release: Crate version 0.4.0 (raptrix-cim-arrow) / 0.4.0 (raptrix-cim-rs) | Arrow schema v0.10.0
@@ -533,4 +546,5 @@ Copyright (c) 2026 Raptrix PowerFlow
 - Backwards compatibility is preserved: existing `v0.5.2` Parquet files remain valid for the core ingest path.
 - This is a MINOR bump because the new node-breaker functionality is additive and optional, aligned with Semantic Versioning and interoperability goals.
 - PATCH releases remain reserved for fixes only; this release unlocks full operational CGMES fidelity while leaving the lean planning-model core untouched for speed.
+
 

@@ -6,9 +6,7 @@
 
 use anyhow::{Context, Result, bail};
 use arrow::array::Array;
-use arrow::array::{
-    BooleanArray, DictionaryArray, Float64Array, Int32Array, StringArray,
-};
+use arrow::array::{BooleanArray, DictionaryArray, Float64Array, Int32Array, StringArray};
 use arrow::datatypes::{DataType, Int32Type};
 use arrow::record_batch::RecordBatch;
 
@@ -37,10 +35,7 @@ pub(crate) fn column_f64<'a>(
         Ok(i) => i,
         Err(_) => return Ok(None),
     };
-    Ok(batch
-        .column(idx)
-        .as_any()
-        .downcast_ref::<Float64Array>())
+    Ok(batch.column(idx).as_any().downcast_ref::<Float64Array>())
 }
 
 pub(crate) fn column_bool<'a>(
@@ -51,24 +46,15 @@ pub(crate) fn column_bool<'a>(
         Ok(i) => i,
         Err(_) => return Ok(None),
     };
-    Ok(batch
-        .column(idx)
-        .as_any()
-        .downcast_ref::<BooleanArray>())
+    Ok(batch.column(idx).as_any().downcast_ref::<BooleanArray>())
 }
 
-pub(crate) fn column_i32<'a>(
-    batch: &'a RecordBatch,
-    name: &str,
-) -> Result<Option<&'a Int32Array>> {
+pub(crate) fn column_i32<'a>(batch: &'a RecordBatch, name: &str) -> Result<Option<&'a Int32Array>> {
     let idx = match batch.schema().index_of(name) {
         Ok(i) => i,
         Err(_) => return Ok(None),
     };
-    Ok(batch
-        .column(idx)
-        .as_any()
-        .downcast_ref::<Int32Array>())
+    Ok(batch.column(idx).as_any().downcast_ref::<Int32Array>())
 }
 
 pub(crate) fn count_in_service(batch: Option<&RecordBatch>) -> Result<usize> {
@@ -116,12 +102,12 @@ pub(crate) fn sum_gen_reserve(
     let Some(batch) = batch else {
         return Ok(0.0);
     };
-    let sched = column_f64(batch, sched_col)?
-        .with_context(|| format!("column '{sched_col}' missing"))?;
-    let min_v = column_f64(batch, min_col)?
-        .with_context(|| format!("column '{min_col}' missing"))?;
-    let max_v = column_f64(batch, max_col)?
-        .with_context(|| format!("column '{max_col}' missing"))?;
+    let sched =
+        column_f64(batch, sched_col)?.with_context(|| format!("column '{sched_col}' missing"))?;
+    let min_v =
+        column_f64(batch, min_col)?.with_context(|| format!("column '{min_col}' missing"))?;
+    let max_v =
+        column_f64(batch, max_col)?.with_context(|| format!("column '{max_col}' missing"))?;
     let status = column_bool(batch, "status")?;
     let mut sum = 0.0;
     for row in 0..batch.num_rows() {
@@ -149,12 +135,10 @@ pub(crate) fn sum_reactive_headroom(batch: Option<&RecordBatch>) -> Result<f64> 
     let Some(batch) = batch else {
         return Ok(0.0);
     };
-    let q_sched = column_f64(batch, "q_sched_mvar")?
-        .with_context(|| "column 'q_sched_mvar' missing")?;
-    let q_min = column_f64(batch, "q_min_mvar")?
-        .with_context(|| "column 'q_min_mvar' missing")?;
-    let q_max = column_f64(batch, "q_max_mvar")?
-        .with_context(|| "column 'q_max_mvar' missing")?;
+    let q_sched =
+        column_f64(batch, "q_sched_mvar")?.with_context(|| "column 'q_sched_mvar' missing")?;
+    let q_min = column_f64(batch, "q_min_mvar")?.with_context(|| "column 'q_min_mvar' missing")?;
+    let q_max = column_f64(batch, "q_max_mvar")?.with_context(|| "column 'q_max_mvar' missing")?;
     let status = column_bool(batch, "status")?;
     let mut sum = 0.0;
     for row in 0..batch.num_rows() {
@@ -188,11 +172,7 @@ pub(crate) fn metadata_f64(batch: &RecordBatch, column: &str) -> Result<Option<f
         return Ok(None);
     }
     let v = values.value(0);
-    if v.is_finite() {
-        Ok(Some(v))
-    } else {
-        Ok(None)
-    }
+    if v.is_finite() { Ok(Some(v)) } else { Ok(None) }
 }
 
 pub(crate) fn metadata_i32(batch: &RecordBatch, column: &str) -> Result<Option<i32>> {
@@ -209,7 +189,11 @@ pub(crate) fn metadata_i32(batch: &RecordBatch, column: &str) -> Result<Option<i
     Ok(Some(values.value(0)))
 }
 
-pub(crate) fn metadata_utf8_at(batch: &RecordBatch, column: &str, row: usize) -> Result<Option<String>> {
+pub(crate) fn metadata_utf8_at(
+    batch: &RecordBatch,
+    column: &str,
+    row: usize,
+) -> Result<Option<String>> {
     if batch.num_rows() <= row {
         return Ok(None);
     }
@@ -248,8 +232,8 @@ pub(crate) fn f64_stats_in_service(
     batch: &RecordBatch,
     column: &str,
 ) -> Result<Option<(f64, f64, f64, usize)>> {
-    let values = column_f64(batch, column)?
-        .with_context(|| format!("column '{column}' missing"))?;
+    let values =
+        column_f64(batch, column)?.with_context(|| format!("column '{column}' missing"))?;
     let status = column_bool(batch, "status")?;
     let mut min_v = f64::INFINITY;
     let mut max_v = f64::NEG_INFINITY;
@@ -276,16 +260,17 @@ pub(crate) fn f64_stats_in_service(
 }
 
 pub(crate) fn count_voltage_out_of_band(batch: &RecordBatch) -> Result<usize> {
-    let v_mag = column_f64(batch, "v_mag_set")?
-        .with_context(|| "column 'v_mag_set' missing")?;
-    let v_min = column_f64(batch, "v_min")?
-        .with_context(|| "column 'v_min' missing")?;
-    let v_max = column_f64(batch, "v_max")?
-        .with_context(|| "column 'v_max' missing")?;
+    let v_mag = column_f64(batch, "v_mag_set")?.with_context(|| "column 'v_mag_set' missing")?;
+    let v_min = column_f64(batch, "v_min")?.with_context(|| "column 'v_min' missing")?;
+    let v_max = column_f64(batch, "v_max")?.with_context(|| "column 'v_max' missing")?;
     let status = column_bool(batch, "status")?;
     let mut count = 0usize;
     for row in 0..batch.num_rows() {
-        if !row_in_service(status, row) || !v_mag.is_valid(row) || !v_min.is_valid(row) || !v_max.is_valid(row) {
+        if !row_in_service(status, row)
+            || !v_mag.is_valid(row)
+            || !v_min.is_valid(row)
+            || !v_max.is_valid(row)
+        {
             continue;
         }
         let vm = v_mag.value(row);
@@ -299,8 +284,7 @@ pub(crate) fn count_voltage_out_of_band(batch: &RecordBatch) -> Result<usize> {
 }
 
 pub(crate) fn count_nominal_kv_nonpositive(batch: &RecordBatch) -> Result<usize> {
-    let kv = column_f64(batch, "nominal_kv")?
-        .with_context(|| "column 'nominal_kv' missing")?;
+    let kv = column_f64(batch, "nominal_kv")?.with_context(|| "column 'nominal_kv' missing")?;
     let status = column_bool(batch, "status")?;
     let mut count = 0usize;
     for row in 0..batch.num_rows() {
@@ -323,8 +307,7 @@ pub(crate) fn count_non_unity_tap(
     let Some(batch) = batch else {
         return Ok(0);
     };
-    let tap = column_f64(batch, tap_col)?
-        .with_context(|| format!("column '{tap_col}' missing"))?;
+    let tap = column_f64(batch, tap_col)?.with_context(|| format!("column '{tap_col}' missing"))?;
     let nominal = nominal_col
         .map(|c| column_f64(batch, c))
         .transpose()?
@@ -369,12 +352,10 @@ pub(crate) fn count_zip_load_rows(batch: &RecordBatch) -> Result<(usize, usize)>
 }
 
 pub(crate) fn count_gens_at_q_limit(batch: &RecordBatch, epsilon: f64) -> Result<usize> {
-    let q_sched = column_f64(batch, "q_sched_mvar")?
-        .with_context(|| "column 'q_sched_mvar' missing")?;
-    let q_min = column_f64(batch, "q_min_mvar")?
-        .with_context(|| "column 'q_min_mvar' missing")?;
-    let q_max = column_f64(batch, "q_max_mvar")?
-        .with_context(|| "column 'q_max_mvar' missing")?;
+    let q_sched =
+        column_f64(batch, "q_sched_mvar")?.with_context(|| "column 'q_sched_mvar' missing")?;
+    let q_min = column_f64(batch, "q_min_mvar")?.with_context(|| "column 'q_min_mvar' missing")?;
+    let q_max = column_f64(batch, "q_max_mvar")?.with_context(|| "column 'q_max_mvar' missing")?;
     let status = column_bool(batch, "status")?;
     let mut count = 0usize;
     for row in 0..batch.num_rows() {
@@ -396,8 +377,7 @@ pub(crate) fn count_gens_at_q_limit(batch: &RecordBatch, epsilon: f64) -> Result
 }
 
 pub(crate) fn count_pv_to_pq_solved(batch: &RecordBatch) -> Result<usize> {
-    let pv = column_bool(batch, "pv_to_pq")?
-        .with_context(|| "column 'pv_to_pq' missing")?;
+    let pv = column_bool(batch, "pv_to_pq")?.with_context(|| "column 'pv_to_pq' missing")?;
     let mut count = 0usize;
     for row in 0..batch.num_rows() {
         if pv.is_valid(row) && pv.value(row) {
@@ -413,19 +393,16 @@ pub(crate) fn initial_voltage_mismatch_rms(
 ) -> Result<Option<f64>> {
     use std::collections::HashMap;
 
-    let bus_ids = column_i32(buses, "bus_id")?
-        .with_context(|| "buses.bus_id missing")?;
-    let v_set = column_f64(buses, "v_mag_set")?
-        .with_context(|| "buses.v_mag_set missing")?;
-    let ang_set = column_f64(buses, "v_ang_set")?
-        .with_context(|| "buses.v_ang_set missing")?;
+    let bus_ids = column_i32(buses, "bus_id")?.with_context(|| "buses.bus_id missing")?;
+    let v_set = column_f64(buses, "v_mag_set")?.with_context(|| "buses.v_mag_set missing")?;
+    let ang_set = column_f64(buses, "v_ang_set")?.with_context(|| "buses.v_ang_set missing")?;
 
-    let solved_ids = column_i32(buses_solved, "bus_id")?
-        .with_context(|| "buses_solved.bus_id missing")?;
-    let v_solved = column_f64(buses_solved, "v_mag_pu")?
-        .with_context(|| "buses_solved.v_mag_pu missing")?;
-    let ang_solved = column_f64(buses_solved, "v_ang_deg")?
-        .with_context(|| "buses_solved.v_ang_deg missing")?;
+    let solved_ids =
+        column_i32(buses_solved, "bus_id")?.with_context(|| "buses_solved.bus_id missing")?;
+    let v_solved =
+        column_f64(buses_solved, "v_mag_pu")?.with_context(|| "buses_solved.v_mag_pu missing")?;
+    let ang_solved =
+        column_f64(buses_solved, "v_ang_deg")?.with_context(|| "buses_solved.v_ang_deg missing")?;
 
     let mut solved_map: HashMap<i32, (f64, f64)> = HashMap::new();
     for row in 0..buses_solved.num_rows() {

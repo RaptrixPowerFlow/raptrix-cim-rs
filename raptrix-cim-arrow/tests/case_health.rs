@@ -30,7 +30,11 @@ fn assert_health_sane(path: &Path, expect_large: bool) {
     let health = inspect_rpf_file(path).unwrap_or_else(|e| {
         panic!("inspect_rpf_file({}) failed: {e:#}", path.display());
     });
-    assert!(health.counts.buses > 0, "expected buses in {}", path.display());
+    assert!(
+        health.counts.buses > 0,
+        "expected buses in {}",
+        path.display()
+    );
     assert!(
         health.aggregates.base_mva > 0.0,
         "expected positive base_mva in {}",
