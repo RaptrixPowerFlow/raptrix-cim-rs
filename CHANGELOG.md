@@ -11,7 +11,7 @@ Copyright (c) 2026 Raptrix PowerFlow
 
 ## v0.10.0 — converter 0.4.1 (2026-05-27)
 
-### Converter release: Crate version 0.4.1 (raptrix-cim-arrow) / 0.4.1 (raptrix-cim-rs) | Arrow schema v0.10.0 (unchanged)
+### Converter release: Crate version 0.4.1 (raptrix-cim-arrow) / 0.4.1 (raptrix-cim-rs) | Arrow schema v0.10.0
 
 ### Added
 
@@ -20,7 +20,7 @@ Copyright (c) 2026 Raptrix PowerFlow
 
 ### Compatibility
 
-- No schema, table, or metadata-key changes. Existing `.rpf` files remain valid under contract **v0.10.0**.
+- Arrow schema **v0.10.0** unchanged — no table or metadata-key changes. Existing `.rpf` files remain valid.
 
 ## v0.10.0 (2026-05-10)
 
