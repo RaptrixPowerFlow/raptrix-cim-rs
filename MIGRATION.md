@@ -1,8 +1,28 @@
 # Workspace Migration
 
-Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
+Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 
-Copyright (c) 2026 Raptrix PowerFlow
+Copyright (c) 2026 Raptrix Power
+
+## v0.11.0 (additive — no migration required)
+
+### What changed
+
+- Two new **optional** root tables: `protection_contingencies` (protection-driven outage sets; layered logical-group baseline + optional breaker-level `breaker_ids`) and `topology_changes` (declared post-event topology deltas; `provenance = declared` in this release).
+- New optional file metadata: `raptrix.features.protection_contingencies`, `raptrix.features.topology_changes`, `rpf.protection.fidelity`.
+- New doc-level `contingencies.elements.element_type` token `protection_event` (no wire-shape change).
+
+### Compatibility
+
+- **No re-export required.** v0.10.0 files remain valid and readable. The new tables are absent unless a writer opts in via `RootWriteOptions.include_protection_contingencies` / `include_topology_changes`. `SUPPORTED_RPF_VERSIONS` accepts v0.11.0 and retains v0.10.0 for reads.
+
+### Reader upgrade (raptrix-core C++)
+
+- Accept **`v0.11.0`** / **`0.11.0`** in the RPF version gate alongside v0.10.0.
+- Detect the optional tables via `raptrix.features.protection_contingencies` / `raptrix.features.topology_changes`; both are absent in standard planning files.
+- Phase 1 logical path (per `docs/adr/0001-protection-informed-contingencies.md`): read `protection_contingencies.tripped_elements` and apply it as a compound outage; respect `data_confidence` for logging; use `topology_change_id` to locate the matching `topology_changes` row. `breaker_ids` and `sequence` are optional refinements consumed in Phase 2.
+
+---
 
 ## v0.9.5 (additive — no migration required)
 

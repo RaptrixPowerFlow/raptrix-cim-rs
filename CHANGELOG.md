@@ -5,9 +5,30 @@ All notable changes to this project are documented in this file.
 The format is based on Keep a Changelog,
 and this project follows Semantic Versioning for schema and converter release communication.
 
-Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
+Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 
-Copyright (c) 2026 Raptrix PowerFlow
+Copyright (c) 2026 Raptrix Power
+
+## v0.11.0 — converter 0.5.0 (2026-05-28)
+
+### Converter release: Crate version 0.5.0 (raptrix-cim-arrow) / 0.5.0 (raptrix-cim-rs) | Arrow schema v0.11.0
+
+### Added
+
+- **Optional root table `protection_contingencies`**: protection-driven contingencies using a layered model — a logical protection-group baseline (`tripped_elements` reusing the `contingencies.elements` struct shape, `scheme_type`, `data_confidence`) plus optional breaker-level refinement (`breaker_ids`). Keyed to `contingencies.contingency_id`. Emitted when `RootWriteOptions.include_protection_contingencies` is enabled.
+- **Optional root table `topology_changes`**: declared (and, in future, solved) post-event topology deltas (`change_type`, `affected_bus_ids`, `resulting_islands`, `provenance`). Emitted when `RootWriteOptions.include_topology_changes` is enabled (requires `include_protection_contingencies`).
+- **File metadata keys**: `raptrix.features.protection_contingencies`, `raptrix.features.topology_changes`, and `rpf.protection.fidelity` (`logical` | `breaker_level` | `mixed`, defaulting to `logical`).
+- **`contingencies.elements.element_type` token `protection_event`** (doc-level; wire type unchanged) to mark contingencies whose protection detail lives in `protection_contingencies`.
+- **Referential-integrity check** in `validate_rpf_file()`: every non-null `protection_contingencies.topology_change_id` must resolve to a `topology_changes.topology_change_id`.
+- Design and cross-repo consumption contract: `docs/adr/0001-protection-informed-contingencies.md`.
+
+### Changed
+
+- **`SUPPORTED_RPF_VERSIONS`** now accepts **`v0.11.0`** / **`0.11.0`** and retains **`v0.10.0`** / **`0.10.0`** for backward-compatible reads. `RPF_VERSION` / `SCHEMA_VERSION` / `BRANDING` bumped to v0.11.0.
+
+### Compatibility
+
+- **Fully backward compatible with v0.10.0 files.** All changes are additive optional tables and optional metadata keys; no required table or column shape changes. Files with neither optional table are byte-compatible with v0.10.0, and v0.10.0 readers ignore the new trailing root columns.
 
 ## v0.10.0 — converter 0.4.1 (2026-05-27)
 

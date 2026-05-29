@@ -1,6 +1,6 @@
 /*
-Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
-Copyright (c) 2026 Raptrix PowerFlow
+Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
+Copyright (c) 2026 Raptrix Power
 */
 
 // This Source Code Form is subject to the terms of the Mozilla Public
@@ -50,7 +50,7 @@ impl From<DetachedIslandPolicyArg> for DetachedIslandPolicy {
     }
 }
 
-const COPYRIGHT: &str = "Copyright (c) 2026 Raptrix PowerFlow";
+const COPYRIGHT: &str = "Copyright (c) 2026 Raptrix Power";
 const CANONICAL_TABLE_COUNT: usize = 15;
 
 /// Command-line interface for Raptrix CIM-Arrow conversion.

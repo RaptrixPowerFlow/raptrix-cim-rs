@@ -1,13 +1,23 @@
 <!--
-Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
-Copyright (c) 2026 Raptrix PowerFlow
+Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
+Copyright (c) 2026 Raptrix Power
 -->
 
-# Schema Contract (Locked contract: v0.10.0 — CGMES 3.0+ Only)
+# Schema Contract (Locked contract: v0.11.0 — CGMES 3.0+ Only)
 
-This repository is the authoritative source of truth for the Raptrix PowerFlow Interchange (`.rpf`) wire contract used by CIM-first conversion pipelines.
+This repository is the authoritative source of truth for the Raptrix Power Interchange (`.rpf`) wire contract used by CIM-first conversion pipelines.
 
-**v0.10.0** is the current contract release. `SUPPORTED_RPF_VERSIONS` accepts only **`v0.10.0`** / **`0.10.0`**; re-emit older files through a v0.10.0 writer.
+**v0.11.0** is the current contract release. `SUPPORTED_RPF_VERSIONS` accepts **`v0.11.0`** / **`0.11.0`** and retains **`v0.10.0`** / **`0.10.0`** for backward-compatible reads (the v0.11.0 changes are purely additive optional tables and metadata keys, so v0.10.0 files are valid v0.11.0 inputs).
+
+## v0.11.0 Additive Changes
+
+Design rationale and the cross-repo consumption contract live in [adr/0001-protection-informed-contingencies.md](adr/0001-protection-informed-contingencies.md).
+
+- **Optional root table `protection_contingencies`** (enabled via `RootWriteOptions.include_protection_contingencies`; file metadata `raptrix.features.protection_contingencies=true` when present): captures protection-driven contingencies using a layered model — a logical protection-group baseline (`tripped_elements`, `scheme_type`, `data_confidence`) that works on bus-branch data, plus optional breaker-level refinement (`breaker_ids`). Keyed to `contingencies.contingency_id`. `tripped_elements` reuses the exact element struct shape of `contingencies.elements`.
+- **Optional root table `topology_changes`** (enabled via `RootWriteOptions.include_topology_changes`, which requires `include_protection_contingencies=true`; file metadata `raptrix.features.topology_changes=true` when present): captures the resulting topology delta (bus split, island formation, substation/partial isolation). The `provenance` column discriminates planning intent (`declared`, emitted by Phase 0 producers) from a future solver-derived delta (`solved`).
+- **New optional file metadata key `rpf.protection.fidelity`** (`logical` | `breaker_level` | `mixed`): declares how protection rows are resolved. Defaults to `logical` when `protection_contingencies` is emitted without an explicit override.
+- **`contingencies.elements.element_type`** gains a doc-level token **`protection_event`**: marks a `contingencies` row whose protection detail lives in the matching `protection_contingencies` row (joined on `contingency_id`). The wire type is unchanged (`Dictionary<Int32,Utf8>`).
+- **Backward compatibility:** no required table/column/metadata changes. Files with neither optional table are byte-for-byte v0.10.0-compatible; v0.10.0 readers ignore the new trailing root columns.
 
 ## v0.10.0 Additive Changes
 
@@ -111,8 +121,8 @@ Every `.rpf` file must include:
 
 Current locked values:
 
-- `raptrix.version = 0.10.0` (also accepted as `v0.10.0`)
-- `raptrix.branding = Raptrix CIM-Arrow / PowerFlow Interchange v0.10.0 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.`
+- `raptrix.version = 0.11.0` (also accepted as `v0.11.0`; `0.10.0` / `v0.10.0` still accepted for reads)
+- `raptrix.branding = Raptrix CIM-Arrow / Raptrix Power Interchange v0.11.0 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.`
 - `rpf.case_fingerprint = <required deterministic case identity fingerprint>`
 - `rpf.validation_mode = topology_only | solved_ready`
 - `rpf.case_mode = flat_start_planning | warm_start_planning | solved_snapshot | hour_ahead_advisory` (v0.8.4+, required; `hour_ahead_advisory` added in v0.9.0)
@@ -127,6 +137,9 @@ Optional file-level metadata keys:
 - `raptrix.features.facts = true` when optional FACTS metadata table(s) are emitted (v0.8.6+)
 - `rpf.default_shunt_control_mode = planning_full | real_time_hot_start | real_time_frozen` (v0.9.5+, optional) — mirrors nullable `metadata.default_shunt_control_mode` when writers stamp file-level keys for tooling that inspects IPC metadata only
 - `raptrix.features.facts_solved = true` when optional `facts_solved` table is emitted (v0.8.6+)
+- `raptrix.features.protection_contingencies = true` when optional `protection_contingencies` table is emitted (v0.11.0+)
+- `raptrix.features.topology_changes = true` when optional `topology_changes` table is emitted (v0.11.0+)
+- `rpf.protection.fidelity = logical | breaker_level | mixed` (v0.11.0+, optional; defaults to `logical` when `protection_contingencies` is present without an explicit value)
 - `rpf.rows.<table_name> = <row_count>` for each emitted table
 - `rpf.solver.version = <string>` solver software version (only when `solved_state_presence = actual_solved`)
 - `rpf.solver.iterations = <int>` Newton-Raphson iteration count (only when solved)
@@ -186,6 +199,8 @@ Optional root columns, when present, are appended after the required columns in 
 27. `facts_devices`
 28. `facts_solved`
 29. `scenario_context` (v0.9.0+, optional analysis context)
+30. `protection_contingencies` (v0.11.0+, optional protection-informed contingencies)
+31. `topology_changes` (v0.11.0+, optional post-event topology metadata)
 
 `connectivity_groups` is an optional detail table emitted only in connectivity-detail mode and is appended after the required root columns when that mode is active.
 
@@ -260,6 +275,11 @@ Optional FACTS tables (v0.8.6+, emitted only when FACTS metadata is present):
 
 - `facts_devices`
 - `facts_solved` (optional solved snapshot replay companion)
+
+Optional protection-informed tables (v0.11.0+, emitted only when explicitly enabled):
+
+- `protection_contingencies`
+- `topology_changes` (requires `protection_contingencies`)
 
 ## Column Reference
 
@@ -680,6 +700,45 @@ Schema-level example: parallel PST + SmartValve on one corridor
 - `facts_solved` (when present) carries solved replay outputs (`effective_x_pu`, injected voltage, effective P/Q impact).
 - Loaders should treat PST and SmartValve effects as composable controls on the same path, not mutually exclusive equipment classes.
 
+### protection_contingencies (optional, v0.11.0+)
+
+Captures protection-driven contingencies (breaker failure, bus-differential lockout, transfer
+trip, automatic sequences, etc.) using a layered model: a logical protection-group baseline
+that works on bus-branch data, plus optional breaker-level refinement. One row per protection
+event, keyed to a `contingencies.contingency_id`. Present in EMS / operations exports; absent
+in standard planning files. See [adr/0001-protection-informed-contingencies.md](adr/0001-protection-informed-contingencies.md).
+
+- `contingency_id`: Dictionary<Int32,Utf8>, required — FK to `contingencies.contingency_id`
+- `protection_group_id`: Dictionary<Int32,Utf8>, required — stable identity of the protection scheme/group
+- `name`: Utf8, nullable — human-readable label
+- `scheme_type`: Dictionary<Int32,Utf8>, required — open vocabulary; recommended tokens: `breaker_failure`, `stuck_breaker`, `relay_misoperation`, `bus_differential`, `zone_protection`, `line_protection`, `transfer_trip`, `sympathetic_trip`, `auto_reclose`. Consumers must tolerate unknown tokens.
+- `initiating_equipment_kind`: Dictionary<Int32,Utf8>, nullable — kind of the fault/trigger element
+- `initiating_equipment_id`: Dictionary<Int32,Utf8>, nullable — id of the fault/trigger element
+- `tripped_elements`: List<Struct>, required — the resulting outage set; **identical struct shape** to `contingencies.elements` (see that section)
+- `sequence`: List<Struct>, nullable — automatic sequence ordering/timing; fields: `step` (Int32, required), `delay_ms` (Float64, nullable), `equipment_kind` (Dictionary<Int32,Utf8>, nullable), `equipment_id` (Dictionary<Int32,Utf8>, nullable)
+- `topology_change_id`: Int32, nullable — FK to `topology_changes.topology_change_id`
+- `data_confidence`: Dictionary<Int32,Utf8>, required — `modeled` | `inferred` | `assumed`; producer honesty about the outage set
+- `breaker_ids`: List<Utf8>, nullable — optional breaker-level refinement; references `switch_detail.switch_id` / `node_breaker_detail.switch_id`
+- `params`: Map<String,Float64>, nullable — extensible scalar parameters
+
+### topology_changes (optional, v0.11.0+)
+
+One row per resulting topology delta produced by a contingency (typically a protection event).
+
+- `topology_change_id`: Int32, required — primary key
+- `contingency_id`: Dictionary<Int32,Utf8>, nullable — contingency that produced the change
+- `change_type`: Dictionary<Int32,Utf8>, required — open vocabulary; recommended tokens: `bus_split`, `island_formation`, `substation_isolation`, `partial_isolation`, `element_isolation`
+- `affected_bus_ids`: List<Int32>, required — buses involved in the change
+- `resulting_islands`: List<Struct>, nullable — islands formed; fields: `island_index` (Int32, required), `bus_ids` (List<Int32>, required), `energized` (Boolean, nullable)
+- `isolated_element_count`: Int32, nullable — count of de-energized elements
+- `summary`: Utf8, nullable — operator-readable narrative
+- `provenance`: Dictionary<Int32,Utf8>, nullable — `declared` (planning intent; Phase 0) | `solved` (solver-derived; future)
+- `params`: Map<String,Float64>, nullable — extensible scalar parameters
+
+Referential integrity: every non-null `protection_contingencies.topology_change_id` must resolve
+to a `topology_changes.topology_change_id` (enforced by `validate_rpf_file()` when both tables
+are emitted).
+
 ### connectivity_groups
 
 - `topological_bus_id`: Int32, required
@@ -843,6 +902,7 @@ Allowed `element_type` values are locked to:
 - `gen_trip`
 - `load_shed`
 - `shunt_switch`
+- `protection_event` (v0.11.0+) — marks a contingency whose protection detail lives in the matching `protection_contingencies` row (joined on `contingency_id`)
 
 ### 4) Solved-result contingency scoping
 
@@ -920,7 +980,7 @@ Locked contract: v0.7.0 adds optional node-breaker detail tables (`node_breaker_
 An independent parser is considered compliant if it:
 
 1. Opens `.rpf` as Arrow IPC File format.
-2. Verifies `raptrix.version` is in the set of supported contract versions (current: `0.10.0` / `v0.10.0`).
+2. Verifies `raptrix.version` is in the set of supported contract versions (current: `0.11.0` / `v0.11.0`; `0.10.0` / `v0.10.0` retained for backward-compatible reads).
 3. Verifies required root columns appear in canonical order.
 4. Uses `rpf.rows.<table_name>` metadata to trim padded null tails.
 5. Treats the 15 required root columns as mandatory even when their logical row counts are zero.
@@ -934,6 +994,7 @@ An independent parser is considered compliant if it:
 12. When `rpf.solver.solved_shunt_state_presence = not_available`: warns that switched-shunt solved state is absent; does not fail (v0.8.5+).
 13. When `facts_devices.device_type` or `branches.device_type` contains `SV` (case-insensitive), canonicalizes to `smartvalve`.
 14. Treats `facts_devices` and `facts_solved` as optional additive tables; if `rpf.facts_solved_state_presence = actual_solved`, expects `facts_solved` to be present.
+15. Treats `protection_contingencies` and `topology_changes` as optional additive tables (v0.11.0+) detected by `raptrix.features.protection_contingencies` / `raptrix.features.topology_changes`; when both are present, expects every non-null `protection_contingencies.topology_change_id` to resolve to a `topology_changes.topology_change_id`. Tolerates unknown `scheme_type` / `change_type` tokens.
 
 For a plain-English explanation of all fields see [rpf-field-guide.md](rpf-field-guide.md).
 
@@ -951,6 +1012,6 @@ For a plain-English explanation of all fields see [rpf-field-guide.md](rpf-field
 3. Add or update test coverage for schema construction and writer outputs.
 4. Update README capability and known-limits sections.
 
-Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
-Copyright (c) 2026 Raptrix PowerFlow
+Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
+Copyright (c) 2026 Raptrix Power
 

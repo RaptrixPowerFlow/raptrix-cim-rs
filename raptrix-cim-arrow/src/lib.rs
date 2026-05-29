@@ -4,11 +4,11 @@
 
 //! # raptrix-cim-arrow
 //!
-//! Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
+//! Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 //!
-//! Copyright (c) 2026 Raptrix PowerFlow
+//! Copyright (c) 2026 Raptrix Power
 //!
-//! This crate is the shared home for the locked Raptrix PowerFlow Interchange
+//! This crate is the shared home for the locked Raptrix Power Interchange
 //! schema contract and generic Arrow IPC infrastructure.
 //!
 //! Ownership boundaries:

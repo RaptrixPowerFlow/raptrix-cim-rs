@@ -14,7 +14,7 @@
 
 ## 0.5 Schema Lock (Delivered)
 
-- Lock canonical Arrow contract for Raptrix PowerFlow Interchange.
+- Lock canonical Arrow contract for Raptrix Power Interchange.
 - Define all required tables and deterministic table ordering.
 - Add expanded transformer detail in `transformers_2w` and `transformers_3w`.
 - Add `dynamics_models` table.
@@ -52,6 +52,19 @@ Public positioning (sanitized):
 - RPF schema v0.9.1 introduces additive, backward-compatible fidelity extensions for richer source-model preservation while keeping existing workflows stable.
 - These enhancements improve interchange completeness for advanced planning/operations datasets without changing required table structure or breaking current readers.
 - The mapping is rooted in standard per-unit normalization and physical decomposition of ZIP load terms (constant-power, constant-current, constant-admittance), preserving source signs and avoiding fabricated values.
+
+## 0.11 Protection-Informed Contingencies (Delivered, Additive)
+
+- Added two optional, backward-compatible root tables: `protection_contingencies` (protection-driven outage sets using a layered logical-group + optional breaker-level model) and `topology_changes` (declared post-event topology deltas such as bus splits and island formation).
+- Added optional file metadata `raptrix.features.protection_contingencies`, `raptrix.features.topology_changes`, and `rpf.protection.fidelity` (`logical` | `breaker_level` | `mixed`).
+- Extended the `contingencies.elements.element_type` vocabulary with the doc-level `protection_event` token (no wire-shape change).
+- Kept the required table set/order unchanged; `SUPPORTED_RPF_VERSIONS` accepts v0.11.0 and retains v0.10.0 for backward-compatible reads.
+- Documented the design and cross-repo consumption contract in `docs/adr/0001-protection-informed-contingencies.md`.
+
+Public positioning (sanitized):
+
+- RPF schema v0.11.0 adds additive, optional interchange support for protection-realistic contingencies and post-event topology metadata, while preserving full backward compatibility with existing bus-branch files and readers.
+- The representation is layered so producers can contribute a logical protection-group view from existing data today, and enrich it with breaker-level detail when available, without breaking changes.
 
 ## Ongoing Focus Areas
 

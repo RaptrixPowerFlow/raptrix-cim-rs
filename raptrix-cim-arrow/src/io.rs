@@ -1,13 +1,13 @@
 /*
-Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
-Copyright (c) 2026 Raptrix PowerFlow
+Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
+Copyright (c) 2026 Raptrix Power
 */
 
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Generic Arrow IPC read/write helpers for Raptrix PowerFlow Interchange files.
+//! Generic Arrow IPC read/write helpers for Raptrix Power Interchange files.
 //!
 //! These APIs are intentionally source-format-agnostic. Callers are expected to
 //! prepare canonical table batches before invoking the writer.
@@ -33,14 +33,17 @@ use crate::schema::{
     METADATA_KEY_FEATURE_COMPUTATIONAL_LOAD_PROFILES, METADATA_KEY_FEATURE_CONTINGENCIES_STUB,
     METADATA_KEY_FEATURE_DIAGRAM_LAYOUT, METADATA_KEY_FEATURE_DYNAMICS_STUB,
     METADATA_KEY_FEATURE_FACTS, METADATA_KEY_FEATURE_FACTS_SOLVED,
-    METADATA_KEY_FEATURE_NODE_BREAKER, METADATA_KEY_RPF_VERSION, METADATA_KEY_VERSION,
-    SCHEMA_VERSION, SUPPORTED_RPF_VERSIONS, TABLE_BRANCHES, TABLE_BUSES, TABLE_BUSES_SOLVED,
-    TABLE_COMPUTATIONAL_LOAD_PROFILES, TABLE_DC_LINES_2W, TABLE_DIAGRAM_OBJECTS,
-    TABLE_DIAGRAM_POINTS, TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED, TABLE_GENERATORS,
-    TABLE_GENERATORS_SOLVED, TABLE_LOADS, TABLE_MULTI_SECTION_LINES, TABLE_SWITCHED_SHUNT_BANKS,
-    TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, all_table_schemas,
+    METADATA_KEY_FEATURE_NODE_BREAKER, METADATA_KEY_FEATURE_PROTECTION_CONTINGENCIES,
+    METADATA_KEY_FEATURE_TOPOLOGY_CHANGES, METADATA_KEY_PROTECTION_FIDELITY,
+    METADATA_KEY_RPF_VERSION, METADATA_KEY_VERSION, SCHEMA_VERSION, SUPPORTED_RPF_VERSIONS,
+    TABLE_BRANCHES, TABLE_BUSES, TABLE_BUSES_SOLVED, TABLE_COMPUTATIONAL_LOAD_PROFILES,
+    TABLE_DC_LINES_2W, TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_FACTS_DEVICES,
+    TABLE_FACTS_SOLVED, TABLE_GENERATORS, TABLE_GENERATORS_SOLVED, TABLE_LOADS,
+    TABLE_MULTI_SECTION_LINES, TABLE_PROTECTION_CONTINGENCIES, TABLE_SWITCHED_SHUNT_BANKS,
+    TABLE_TOPOLOGY_CHANGES, TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, all_table_schemas,
     computational_load_table_schemas, diagram_layout_table_schemas, facts_table_schemas,
-    node_breaker_table_schemas, schema_metadata, solved_state_table_schemas, table_schema,
+    node_breaker_table_schemas, protection_table_schemas, schema_metadata,
+    solved_state_table_schemas, table_schema,
 };
 
 /// Summary stats for a single logical table found in an `.rpf` file.
@@ -109,6 +112,11 @@ pub struct RootWriteOptions {
     pub include_facts_solved: bool,
     /// When true, append optional `computational_load_profiles` table (v0.10.0+).
     pub include_computational_load_profiles: bool,
+    /// When true, append optional `protection_contingencies` table (v0.11.0+).
+    pub include_protection_contingencies: bool,
+    /// When true, append optional `topology_changes` table (v0.11.0+).
+    /// Requires `include_protection_contingencies = true`.
+    pub include_topology_changes: bool,
 }
 
 /// Returns the metadata key used to store the logical row count for a table.
@@ -129,6 +137,9 @@ fn enabled_optional_table_schemas(options: &RootWriteOptions) -> Vec<(&'static s
     }
     if options.include_facts_devices {
         optional.extend(facts_table_schemas(options.include_facts_solved));
+    }
+    if options.include_protection_contingencies {
+        optional.extend(protection_table_schemas(options.include_topology_changes));
     }
     if options.include_computational_load_profiles {
         optional.extend(computational_load_table_schemas());
@@ -209,6 +220,9 @@ pub fn root_rpf_schema_with_options(options: &RootWriteOptions) -> Schema {
     }
     if options.include_facts_devices {
         table_schemas.extend(facts_table_schemas(options.include_facts_solved));
+    }
+    if options.include_protection_contingencies {
+        table_schemas.extend(protection_table_schemas(options.include_topology_changes));
     }
     if options.include_computational_load_profiles {
         table_schemas.extend(computational_load_table_schemas());
@@ -468,6 +482,12 @@ pub fn write_root_rpf_with_metadata(
         );
     }
 
+    if options.include_topology_changes && !options.include_protection_contingencies {
+        bail!(
+            "invalid RootWriteOptions: include_topology_changes=true requires include_protection_contingencies=true"
+        );
+    }
+
     let mut table_specs = all_table_schemas();
     table_specs.extend(enabled_optional_table_schemas(options));
 
@@ -536,6 +556,22 @@ pub fn write_root_rpf_with_metadata(
     if options.include_computational_load_profiles {
         root_metadata.insert(
             METADATA_KEY_FEATURE_COMPUTATIONAL_LOAD_PROFILES.to_string(),
+            "true".to_string(),
+        );
+    }
+    if options.include_protection_contingencies {
+        root_metadata.insert(
+            METADATA_KEY_FEATURE_PROTECTION_CONTINGENCIES.to_string(),
+            "true".to_string(),
+        );
+        // Default declared fidelity; callers may override via additional_root_metadata.
+        root_metadata
+            .entry(METADATA_KEY_PROTECTION_FIDELITY.to_string())
+            .or_insert_with(|| "logical".to_string());
+    }
+    if options.include_topology_changes {
+        root_metadata.insert(
+            METADATA_KEY_FEATURE_TOPOLOGY_CHANGES.to_string(),
             "true".to_string(),
         );
     }
@@ -676,9 +712,11 @@ pub fn validate_rpf_file(path: impl AsRef<Path>, options: &RootWriteOptions) -> 
     let branding = metadata
         .get("raptrix.branding")
         .context("post-write contract violation: missing metadata key 'raptrix.branding'")?;
-    if !branding.contains("Raptrix PowerFlow") {
+    if branding.contains("Raptrix PowerFlow")
+        || !branding.contains("Copyright (c) 2026 Raptrix Power")
+    {
         bail!(
-            "post-write contract violation: raptrix.branding does not contain 'Raptrix PowerFlow'"
+            "post-write contract violation: raptrix.branding must identify Raptrix Power (not legacy PowerFlow branding)"
         );
     }
 
@@ -821,6 +859,111 @@ pub fn validate_rpf_file(path: impl AsRef<Path>, options: &RootWriteOptions) -> 
             .context("post-write contract violation: missing computational_load_profiles table")?;
     }
 
+    if options.include_protection_contingencies {
+        let feature = metadata
+            .get(METADATA_KEY_FEATURE_PROTECTION_CONTINGENCIES)
+            .with_context(|| {
+                format!(
+                    "post-write contract violation: missing metadata key '{}'",
+                    METADATA_KEY_FEATURE_PROTECTION_CONTINGENCIES
+                )
+            })?;
+        if feature != "true" {
+            bail!(
+                "post-write contract violation: '{}' expected 'true', found '{}'",
+                METADATA_KEY_FEATURE_PROTECTION_CONTINGENCIES,
+                feature
+            );
+        }
+
+        let protection = by_name
+            .get(TABLE_PROTECTION_CONTINGENCIES)
+            .context("post-write contract violation: missing protection_contingencies table")?;
+        require_non_null_count_equals_len(
+            TABLE_PROTECTION_CONTINGENCIES,
+            protection,
+            "contingency_id",
+        )?;
+        require_non_null_count_equals_len(
+            TABLE_PROTECTION_CONTINGENCIES,
+            protection,
+            "protection_group_id",
+        )?;
+        require_non_null_count_equals_len(TABLE_PROTECTION_CONTINGENCIES, protection, "scheme_type")?;
+        require_non_null_count_equals_len(
+            TABLE_PROTECTION_CONTINGENCIES,
+            protection,
+            "tripped_elements",
+        )?;
+        require_non_null_count_equals_len(
+            TABLE_PROTECTION_CONTINGENCIES,
+            protection,
+            "data_confidence",
+        )?;
+
+        if options.include_topology_changes {
+            let topology = by_name
+                .get(TABLE_TOPOLOGY_CHANGES)
+                .context("post-write contract violation: missing topology_changes table")?;
+            require_non_null_count_equals_len(
+                TABLE_TOPOLOGY_CHANGES,
+                topology,
+                "topology_change_id",
+            )?;
+            require_non_null_count_equals_len(TABLE_TOPOLOGY_CHANGES, topology, "change_type")?;
+            require_non_null_count_equals_len(
+                TABLE_TOPOLOGY_CHANGES,
+                topology,
+                "affected_bus_ids",
+            )?;
+
+            validate_topology_change_fk(protection, topology)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Verifies every non-null `protection_contingencies.topology_change_id` resolves to a
+/// `topology_changes.topology_change_id` (referential integrity for the v0.11.0 join).
+fn validate_topology_change_fk(protection: &RecordBatch, topology: &RecordBatch) -> Result<()> {
+    use std::collections::HashSet;
+
+    let topo_ids = topology
+        .column(
+            topology
+                .schema()
+                .index_of("topology_change_id")
+                .context("topology_changes missing topology_change_id")?,
+        )
+        .as_any()
+        .downcast_ref::<Int32Array>()
+        .context("topology_changes.topology_change_id must be Int32")?;
+    let known: HashSet<i32> = (0..topo_ids.len()).map(|i| topo_ids.value(i)).collect();
+
+    let fk = protection
+        .column(
+            protection
+                .schema()
+                .index_of("topology_change_id")
+                .context("protection_contingencies missing topology_change_id")?,
+        )
+        .as_any()
+        .downcast_ref::<Int32Array>()
+        .context("protection_contingencies.topology_change_id must be Int32")?;
+
+    for row in 0..fk.len() {
+        if fk.is_null(row) {
+            continue;
+        }
+        let id = fk.value(row);
+        if !known.contains(&id) {
+            bail!(
+                "post-write contract violation: protection_contingencies.topology_change_id={id} \
+                 has no matching topology_changes.topology_change_id"
+            );
+        }
+    }
     Ok(())
 }
 
@@ -834,7 +977,7 @@ mod tests {
     use arrow::array::StringDictionaryBuilder;
     use arrow::array::{
         Array, ArrayRef, BooleanArray, Float32Array, Float64Array, Int32Array, StringArray,
-        StructArray,
+        StructArray, new_null_array,
     };
     use arrow::datatypes::{DataType, Field, Schema};
     use arrow::datatypes::{Int32Type, UInt32Type};
@@ -842,13 +985,15 @@ mod tests {
     use arrow::record_batch::RecordBatch;
 
     use crate::schema::{
-        METADATA_KEY_FEATURE_COMPUTATIONAL_LOAD_PROFILES, METADATA_KEY_RPF_VERSION,
-        METADATA_KEY_VERSION, SCHEMA_VERSION, TABLE_BRANCHES, TABLE_COMPUTATIONAL_LOAD_PROFILES,
-        TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED,
-        TABLE_GENERATORS, TABLE_LOADS, all_table_schemas, branches_schema,
-        computational_load_profiles_schema, diagram_objects_schema, diagram_points_schema,
-        facts_devices_schema, facts_solved_schema, generators_schema, loads_schema,
-        schema_metadata,
+        METADATA_KEY_FEATURE_COMPUTATIONAL_LOAD_PROFILES,
+        METADATA_KEY_FEATURE_PROTECTION_CONTINGENCIES, METADATA_KEY_FEATURE_TOPOLOGY_CHANGES,
+        METADATA_KEY_PROTECTION_FIDELITY, METADATA_KEY_RPF_VERSION, METADATA_KEY_VERSION,
+        SCHEMA_VERSION, TABLE_BRANCHES, TABLE_COMPUTATIONAL_LOAD_PROFILES, TABLE_DIAGRAM_OBJECTS,
+        TABLE_DIAGRAM_POINTS, TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED, TABLE_GENERATORS,
+        TABLE_LOADS, TABLE_PROTECTION_CONTINGENCIES, TABLE_TOPOLOGY_CHANGES, all_table_schemas,
+        branches_schema, computational_load_profiles_schema, diagram_objects_schema,
+        diagram_points_schema, facts_devices_schema, facts_solved_schema, generators_schema,
+        loads_schema, protection_contingencies_schema, schema_metadata, topology_changes_schema,
     };
 
     use super::{
@@ -904,6 +1049,8 @@ mod tests {
                 include_facts_devices: false,
                 include_facts_solved: false,
                 include_computational_load_profiles: false,
+                include_protection_contingencies: false,
+                include_topology_changes: false,
             },
         )?;
 
@@ -1111,7 +1258,7 @@ mod tests {
             .expect_err("v0.9.3 reader should reject missing required nominal_kv fields");
         let message = format!("{err:#}");
         assert!(message.contains("missing non-nullable field 'to_nominal_kv'"));
-        assert_eq!(SCHEMA_VERSION, "v0.10.0");
+        assert_eq!(SCHEMA_VERSION, "v0.11.0");
         Ok(())
     }
 
@@ -1332,6 +1479,177 @@ mod tests {
         assert_eq!(q_i.value(0), 0.1);
         assert_eq!(p_y.value(0), 0.03);
         assert_eq!(q_y.value(1), 0.04);
+        Ok(())
+    }
+
+    /// Builds a length-1 non-null array holding a single empty list, for a `List<...>` type.
+    fn one_empty_list(list_type: &DataType) -> ArrayRef {
+        use arrow::array::{ListArray, new_empty_array};
+        use arrow::buffer::OffsetBuffer;
+        let DataType::List(field) = list_type else {
+            panic!("expected a List data type");
+        };
+        let child = new_empty_array(field.data_type());
+        Arc::new(ListArray::new(
+            field.clone(),
+            OffsetBuffer::from_lengths([0usize]),
+            child,
+            None,
+        )) as ArrayRef
+    }
+
+    /// Builds a length-1 `Dictionary<Int32, Utf8>` array holding one value.
+    fn one_dict(value: &str) -> ArrayRef {
+        let mut b = StringDictionaryBuilder::<Int32Type>::new();
+        b.append(value).expect("append dict value");
+        Arc::new(b.finish()) as ArrayRef
+    }
+
+    #[test]
+    fn protection_tables_absent_when_not_enabled() -> Result<()> {
+        let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_protection_absent");
+        std::fs::create_dir_all(&tmp_dir)?;
+        let output_path = tmp_dir.join("protection_absent.rpf");
+
+        let table_batches: HashMap<&'static str, RecordBatch> = all_table_schemas()
+            .into_iter()
+            .map(|(name, schema)| (name, RecordBatch::new_empty(Arc::new(schema))))
+            .collect();
+
+        // Default options produce a v0.10.0-shaped file with neither optional table; it must
+        // still read cleanly under the v0.11.0 reader (backward-read of additive contract).
+        write_root_rpf(&output_path, &table_batches, &RootWriteOptions::default())?;
+        let tables = read_rpf_tables(&output_path)?;
+        assert!(
+            !tables
+                .iter()
+                .any(|(name, _)| name == TABLE_PROTECTION_CONTINGENCIES)
+        );
+        assert!(!tables.iter().any(|(name, _)| name == TABLE_TOPOLOGY_CHANGES));
+        Ok(())
+    }
+
+    #[test]
+    fn topology_changes_requires_protection_contingencies() -> Result<()> {
+        let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_topo_requires_protection");
+        std::fs::create_dir_all(&tmp_dir)?;
+        let output_path = tmp_dir.join("topo_requires_protection.rpf");
+
+        let table_batches: HashMap<&'static str, RecordBatch> = all_table_schemas()
+            .into_iter()
+            .map(|(name, schema)| (name, RecordBatch::new_empty(Arc::new(schema))))
+            .collect();
+
+        let err = write_root_rpf(
+            &output_path,
+            &table_batches,
+            &RootWriteOptions {
+                include_topology_changes: true,
+                ..Default::default()
+            },
+        )
+        .expect_err("topology_changes without protection_contingencies must error");
+        assert!(
+            format!("{err:#}").contains("requires include_protection_contingencies=true"),
+            "unexpected error: {err:#}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn protection_tables_round_trip_when_enabled() -> Result<()> {
+        let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_protection_present");
+        std::fs::create_dir_all(&tmp_dir)?;
+        let output_path = tmp_dir.join("protection_present.rpf");
+
+        let mut table_batches: HashMap<&'static str, RecordBatch> = all_table_schemas()
+            .into_iter()
+            .map(|(name, schema)| (name, RecordBatch::new_empty(Arc::new(schema))))
+            .collect();
+
+        // One protection row referencing topology_change_id = 7.
+        let pc_schema = protection_contingencies_schema();
+        let protection = RecordBatch::try_new(
+            Arc::new(pc_schema.clone()),
+            vec![
+                one_dict("BF_BUS47"),                                            // contingency_id
+                one_dict("BUS47_BF_ZONE"),                                       // protection_group_id
+                Arc::new(StringArray::from(vec![Some("Bus 47 BF backup")])) as _, // name
+                one_dict("breaker_failure"),                                     // scheme_type
+                one_dict("branch"),                                              // initiating_equipment_kind
+                one_dict("1023"),                                                // initiating_equipment_id
+                one_empty_list(pc_schema.field(6).data_type()),                  // tripped_elements
+                new_null_array(pc_schema.field(7).data_type(), 1),               // sequence
+                Arc::new(Int32Array::from(vec![Some(7)])) as _,                  // topology_change_id
+                one_dict("inferred"),                                            // data_confidence
+                new_null_array(pc_schema.field(10).data_type(), 1),              // breaker_ids
+                new_null_array(pc_schema.field(11).data_type(), 1),              // params
+            ],
+        )?;
+        table_batches.insert(TABLE_PROTECTION_CONTINGENCIES, protection);
+
+        // One matching topology_changes row, id = 7.
+        let tc_schema = topology_changes_schema();
+        let topology = RecordBatch::try_new(
+            Arc::new(tc_schema.clone()),
+            vec![
+                Arc::new(Int32Array::from(vec![7])) as _,            // topology_change_id
+                one_dict("BF_BUS47"),                                // contingency_id
+                one_dict("bus_split"),                               // change_type
+                one_empty_list(tc_schema.field(3).data_type()),      // affected_bus_ids
+                new_null_array(tc_schema.field(4).data_type(), 1),   // resulting_islands
+                Arc::new(Int32Array::from(vec![Some(1)])) as _,      // isolated_element_count
+                Arc::new(StringArray::from(vec![Some("section cleared")])) as _, // summary
+                one_dict("declared"),                                // provenance
+                new_null_array(tc_schema.field(8).data_type(), 1),   // params
+            ],
+        )?;
+        table_batches.insert(TABLE_TOPOLOGY_CHANGES, topology);
+
+        write_root_rpf(
+            &output_path,
+            &table_batches,
+            &RootWriteOptions {
+                include_protection_contingencies: true,
+                include_topology_changes: true,
+                ..Default::default()
+            },
+        )?;
+
+        let tables = read_rpf_tables(&output_path)?;
+        let protection = tables
+            .iter()
+            .find(|(name, _)| name == TABLE_PROTECTION_CONTINGENCIES)
+            .map(|(_, batch)| batch)
+            .context("expected protection_contingencies table")?;
+        let topology = tables
+            .iter()
+            .find(|(name, _)| name == TABLE_TOPOLOGY_CHANGES)
+            .map(|(_, batch)| batch)
+            .context("expected topology_changes table")?;
+        assert_eq!(protection.num_rows(), 1);
+        assert_eq!(topology.num_rows(), 1);
+
+        let fk = protection
+            .column(8)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .context("topology_change_id must be Int32")?;
+        assert_eq!(fk.value(0), 7);
+
+        let metadata = rpf_file_metadata(&output_path)?;
+        assert_eq!(
+            metadata.get(METADATA_KEY_FEATURE_PROTECTION_CONTINGENCIES),
+            Some(&"true".to_string())
+        );
+        assert_eq!(
+            metadata.get(METADATA_KEY_FEATURE_TOPOLOGY_CHANGES),
+            Some(&"true".to_string())
+        );
+        assert_eq!(
+            metadata.get(METADATA_KEY_PROTECTION_FIDELITY),
+            Some(&"logical".to_string())
+        );
         Ok(())
     }
 }

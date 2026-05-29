@@ -1,13 +1,13 @@
 /*
-Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
-Copyright (c) 2026 Raptrix PowerFlow
+Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
+Copyright (c) 2026 Raptrix Power
 */
 
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Arrow schema definitions for the Raptrix PowerFlow Interchange v0.10.0 profile.
+//! Arrow schema definitions for the Raptrix Power Interchange v0.11.0 profile.
 //!
 //! **CGMES 3.0+ Only**: This module targets CGMES v3.0 and later (v17+ CIM) merged profiles.
 //! Support for legacy CGMES 2.4.x was dropped in this release for simplicity and performance.
@@ -15,6 +15,17 @@ Copyright (c) 2026 Raptrix PowerFlow
 //! This module exposes one exact Arrow schema per required table in the locked
 //! `.rpf` contract, plus deterministic schema registry helpers used by both
 //! writers and readers.
+//!
+//! ## v0.11.0 — 18 canonical tables (additive: protection-informed contingencies)
+//! Adds two optional root tables — `protection_contingencies` (logical protection-group
+//! baseline plus optional breaker-level refinement) and `topology_changes` (declared, and
+//! later solved, post-event topology deltas) — plus optional file metadata keys
+//! `raptrix.features.protection_contingencies`, `raptrix.features.topology_changes`, and
+//! `rpf.protection.fidelity`. The `contingencies.elements.element_type` vocabulary gains a
+//! doc-level `protection_event` token. No required table or column shape changes.
+//! `SUPPORTED_RPF_VERSIONS` accepts v0.11.0 and retains v0.10.0 for backward-compatible reads
+//! (pure-additive optional tables — v0.10.0 files are valid v0.11.0 inputs). See
+//! `docs/adr/0001-protection-informed-contingencies.md`.
 //!
 //! ## v0.10.0 — 18 canonical tables (additive: computational-load interchange)
 //! Adds nullable `metadata.computational_load_mode`, optional root table `computational_load_profiles`,
@@ -55,15 +66,17 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, Schema};
 
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / PowerFlow Interchange v0.10.0 - High-performance open CIM profile (CGMES 3.0+) by Raptrix PowerFlow. Copyright (c) 2026 Raptrix PowerFlow.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow / Raptrix Power Interchange v0.11.0 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.";
 
 /// Canonical RPF format version tag embedded as file-level metadata.
-pub const RPF_VERSION: &str = "v0.10.0";
+pub const RPF_VERSION: &str = "v0.11.0";
 
 /// Supported RPF versions accepted by generic Arrow IPC readers.
 ///
-/// v0.10.0 is the only accepted contract release (narrow gate for downstream upgrades).
-pub const SUPPORTED_RPF_VERSIONS: &[&str] = &["v0.10.0", "0.10.0"];
+/// v0.11.0 is the current contract release. v0.10.0 is retained for backward-compatible reads
+/// because the v0.11.0 changes are purely additive optional tables and metadata keys, so
+/// v0.10.0 files are valid v0.11.0 inputs.
+pub const SUPPORTED_RPF_VERSIONS: &[&str] = &["v0.11.0", "0.11.0", "v0.10.0", "0.10.0"];
 
 /// Validates a nominal kV value for required network voltage fields.
 pub fn validate_nominal_kv(value: f64, context: &str) -> Result<(), String> {
@@ -171,6 +184,15 @@ pub const METADATA_KEY_COMPUTATIONAL_LOAD_MODE: &str = "computational_load_mode"
 /// File-level feature flag: optional `computational_load_profiles` root table is present.
 pub const METADATA_KEY_FEATURE_COMPUTATIONAL_LOAD_PROFILES: &str =
     "raptrix.features.computational_load_profiles";
+/// File-level feature flag: optional `protection_contingencies` root table is present (v0.11.0+).
+pub const METADATA_KEY_FEATURE_PROTECTION_CONTINGENCIES: &str =
+    "raptrix.features.protection_contingencies";
+/// File-level feature flag: optional `topology_changes` root table is present (v0.11.0+).
+pub const METADATA_KEY_FEATURE_TOPOLOGY_CHANGES: &str = "raptrix.features.topology_changes";
+/// Optional metadata key declaring protection-data fidelity (v0.11.0+).
+/// Values: `logical` (logical protection-group baseline only) | `breaker_level`
+/// (breaker/switch-resolved) | `mixed` (both present across rows).
+pub const METADATA_KEY_PROTECTION_FIDELITY: &str = "rpf.protection.fidelity";
 
 /// Canonical metadata table name.
 pub const TABLE_METADATA: &str = "metadata";
@@ -214,6 +236,10 @@ pub const TABLE_COMPUTATIONAL_LOAD_PROFILES: &str = "computational_load_profiles
 pub const TABLE_FACTS_DEVICES: &str = "facts_devices";
 /// Optional Sentinel scenario context table name (v0.9.0+).
 pub const TABLE_SCENARIO_CONTEXT: &str = "scenario_context";
+/// Optional protection-informed contingency table name (v0.11.0+).
+pub const TABLE_PROTECTION_CONTINGENCIES: &str = "protection_contingencies";
+/// Optional post-event topology-change table name (v0.11.0+).
+pub const TABLE_TOPOLOGY_CHANGES: &str = "topology_changes";
 /// Optional detail table emitted only when connectivity-detail mode is enabled.
 pub const TABLE_CONNECTIVITY_GROUPS: &str = "connectivity_groups";
 /// Optional detail table emitted only when node-breaker detail mode is enabled.
@@ -409,6 +435,52 @@ fn contingencies_elements_type() -> DataType {
 /// Standard nullable contingency id field for solved/export result tables.
 pub fn solved_results_contingency_id_field() -> Field {
     Field::new(COLUMN_CONTINGENCY_ID, dict_utf8(), true)
+}
+
+/// `List<Utf8>` of breaker / switch identifiers for optional breaker-level refinement
+/// (`protection_contingencies.breaker_ids`, v0.11.0+).
+fn utf8_list_type() -> DataType {
+    DataType::List(Arc::new(Field::new("item", DataType::Utf8, false)))
+}
+
+/// `List<Int32>` of bus identifiers (`topology_changes.affected_bus_ids`, v0.11.0+).
+fn int32_list_type() -> DataType {
+    DataType::List(Arc::new(Field::new("item", DataType::Int32, false)))
+}
+
+/// `List<Struct{ step, delay_ms, equipment_kind, equipment_id }>` describing an automatic
+/// protection sequence (`protection_contingencies.sequence`, v0.11.0+).
+fn protection_sequence_type() -> DataType {
+    DataType::List(Arc::new(Field::new(
+        "step_item",
+        DataType::Struct(
+            vec![
+                Field::new("step", DataType::Int32, false),
+                Field::new("delay_ms", DataType::Float64, true),
+                Field::new("equipment_kind", dict_utf8(), true),
+                Field::new("equipment_id", dict_utf8(), true),
+            ]
+            .into(),
+        ),
+        false,
+    )))
+}
+
+/// `List<Struct{ island_index, bus_ids, energized }>` describing islands produced by a
+/// topology change (`topology_changes.resulting_islands`, v0.11.0+).
+fn resulting_islands_type() -> DataType {
+    DataType::List(Arc::new(Field::new(
+        "island",
+        DataType::Struct(
+            vec![
+                Field::new("island_index", DataType::Int32, false),
+                Field::new("bus_ids", int32_list_type(), false),
+                Field::new("energized", DataType::Boolean, true),
+            ]
+            .into(),
+        ),
+        false,
+    )))
 }
 
 /// File-level metadata applied to each table schema.
@@ -766,6 +838,87 @@ pub fn scenario_context_schema() -> Schema {
         ],
         schema_metadata(),
     )
+}
+
+/// Optional `protection_contingencies` table schema (v0.11.0+).
+///
+/// One row per protection-driven contingency event, keyed to a `contingencies.contingency_id`.
+/// Implements the layered model from
+/// `docs/adr/0001-protection-informed-contingencies.md`: a logical protection-group baseline
+/// (`tripped_elements`, `scheme_type`, `data_confidence`) with optional breaker-level
+/// refinement (`breaker_ids`, joining `node_breaker_detail` / `switch_detail`).
+///
+/// `tripped_elements` reuses the exact element struct shape of `contingencies.elements`
+/// (see `contingencies_elements_type()`) so consumers can apply the resulting outage set with
+/// existing compound-contingency logic.
+pub fn protection_contingencies_schema() -> Schema {
+    Schema::new_with_metadata(
+        vec![
+            // FK to contingencies.contingency_id.
+            Field::new("contingency_id", dict_utf8(), false),
+            // Stable identity of the protection scheme / group.
+            Field::new("protection_group_id", dict_utf8(), false),
+            Field::new("name", DataType::Utf8, true),
+            // Open vocabulary: breaker_failure, stuck_breaker, relay_misoperation,
+            // bus_differential, zone_protection, line_protection, transfer_trip,
+            // sympathetic_trip, auto_reclose. Consumers must tolerate unknown tokens.
+            Field::new("scheme_type", dict_utf8(), false),
+            // The fault / triggering element.
+            Field::new("initiating_equipment_kind", dict_utf8(), true),
+            Field::new("initiating_equipment_id", dict_utf8(), true),
+            // Resulting outage set; identical struct shape to contingencies.elements.
+            Field::new("tripped_elements", contingencies_elements_type(), false),
+            // Optional automatic sequence ordering / timing.
+            Field::new("sequence", protection_sequence_type(), true),
+            // FK to topology_changes.topology_change_id when a topology change results.
+            Field::new("topology_change_id", DataType::Int32, true),
+            // Producer honesty about the outage set: modeled | inferred | assumed.
+            Field::new("data_confidence", dict_utf8(), false),
+            // Optional breaker-level refinement; references switch identifiers.
+            Field::new("breaker_ids", utf8_list_type(), true),
+            Field::new("params", map_string_f64(), true),
+        ],
+        schema_metadata(),
+    )
+}
+
+/// Optional `topology_changes` table schema (v0.11.0+).
+///
+/// One row per resulting topology delta. `provenance` discriminates planning intent
+/// (`declared`, emitted by Phase 0 producers) from a future solver-derived delta (`solved`).
+pub fn topology_changes_schema() -> Schema {
+    Schema::new_with_metadata(
+        vec![
+            Field::new("topology_change_id", DataType::Int32, false),
+            // Optional back-reference to the contingency that produced the change.
+            Field::new("contingency_id", dict_utf8(), true),
+            // bus_split | island_formation | substation_isolation | partial_isolation |
+            // element_isolation. Open vocabulary; consumers must tolerate unknown tokens.
+            Field::new("change_type", dict_utf8(), false),
+            Field::new("affected_bus_ids", int32_list_type(), false),
+            Field::new("resulting_islands", resulting_islands_type(), true),
+            Field::new("isolated_element_count", DataType::Int32, true),
+            Field::new("summary", DataType::Utf8, true),
+            // declared (planning intent, Phase 0) | solved (solver-derived, future).
+            Field::new("provenance", dict_utf8(), true),
+            Field::new("params", map_string_f64(), true),
+        ],
+        schema_metadata(),
+    )
+}
+
+/// Returns optional protection-informed table schemas in deterministic order (v0.11.0+).
+///
+/// Order matches root-column ordering: `protection_contingencies` before `topology_changes`.
+pub fn protection_table_schemas(include_topology_changes: bool) -> Vec<(&'static str, Schema)> {
+    let mut tables = vec![(
+        TABLE_PROTECTION_CONTINGENCIES,
+        protection_contingencies_schema(),
+    )];
+    if include_topology_changes {
+        tables.push((TABLE_TOPOLOGY_CHANGES, topology_changes_schema()));
+    }
+    tables
 }
 
 /// `transformers_2w` table schema.
@@ -1268,6 +1421,8 @@ pub fn table_schema(table_name: &str) -> Option<Schema> {
         TABLE_CONTINGENCIES => Some(contingencies_schema()),
         TABLE_INTERFACES => Some(interfaces_schema()),
         TABLE_DYNAMICS_MODELS => Some(dynamics_models_schema()),
+        TABLE_PROTECTION_CONTINGENCIES => Some(protection_contingencies_schema()),
+        TABLE_TOPOLOGY_CHANGES => Some(topology_changes_schema()),
         TABLE_COMPUTATIONAL_LOAD_PROFILES => Some(computational_load_profiles_schema()),
         TABLE_FACTS_DEVICES => Some(facts_devices_schema()),
         TABLE_CONNECTIVITY_GROUPS => Some(connectivity_groups_schema()),
@@ -1345,10 +1500,70 @@ mod tests {
             "computational_load_profiles must resolve via table_schema()"
         );
 
-        // version gate (narrow)
+        // v0.11.0 optional protection tables resolve via table_schema() but stay out of
+        // all_table_schemas() (optional, like scenario_context / facts_devices).
+        assert!(
+            table_schema("protection_contingencies").is_some(),
+            "protection_contingencies must resolve via table_schema()"
+        );
+        assert!(
+            table_schema("topology_changes").is_some(),
+            "topology_changes must resolve via table_schema()"
+        );
+        assert!(
+            !all.iter()
+                .any(|(n, _)| *n == "protection_contingencies" || *n == "topology_changes"),
+            "v0.11.0 protection tables must NOT appear in all_table_schemas()"
+        );
+
+        // version gate: v0.11.0 current, v0.10.0 retained for additive backward reads
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.11.0"));
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.11.0"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.10.0"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.10.0"));
-        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 2);
+        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 4);
+    }
+
+    #[test]
+    fn protection_tables_match_v011_contract() {
+        let pc = super::protection_contingencies_schema();
+        assert_eq!(pc.fields().len(), 12);
+        assert_eq!(pc.field(0).name(), "contingency_id");
+        assert!(!pc.field(0).is_nullable());
+        assert_eq!(pc.field(1).name(), "protection_group_id");
+        assert_eq!(pc.field(3).name(), "scheme_type");
+        assert!(!pc.field(3).is_nullable());
+        assert_eq!(pc.field(6).name(), "tripped_elements");
+        assert!(!pc.field(6).is_nullable());
+        // tripped_elements must reuse the exact contingencies.elements struct shape.
+        assert_eq!(
+            pc.field(6).data_type(),
+            super::contingencies_schema().field(1).data_type()
+        );
+        assert_eq!(pc.field(9).name(), "data_confidence");
+        assert!(!pc.field(9).is_nullable());
+        assert_eq!(pc.field(10).name(), "breaker_ids");
+        assert!(pc.field(10).is_nullable());
+
+        let tc = super::topology_changes_schema();
+        assert_eq!(tc.fields().len(), 9);
+        assert_eq!(tc.field(0).name(), "topology_change_id");
+        assert!(!tc.field(0).is_nullable());
+        assert_eq!(tc.field(2).name(), "change_type");
+        assert!(!tc.field(2).is_nullable());
+        assert_eq!(tc.field(3).name(), "affected_bus_ids");
+        assert!(!tc.field(3).is_nullable());
+        assert_eq!(tc.field(7).name(), "provenance");
+        assert!(tc.field(7).is_nullable());
+
+        // helper ordering: protection_contingencies before topology_changes
+        let with_topo = super::protection_table_schemas(true);
+        assert_eq!(with_topo.len(), 2);
+        assert_eq!(with_topo[0].0, "protection_contingencies");
+        assert_eq!(with_topo[1].0, "topology_changes");
+        let without_topo = super::protection_table_schemas(false);
+        assert_eq!(without_topo.len(), 1);
+        assert_eq!(without_topo[0].0, "protection_contingencies");
     }
 
     #[test]

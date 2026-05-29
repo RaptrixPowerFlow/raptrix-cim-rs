@@ -1,14 +1,14 @@
 # raptrix-cim-arrow
 
-Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
+Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 
 Part of the Raptrix Powerflow ecosystem.
 
 This crate supports the shared open converter suite published at [RaptrixPowerFlow](https://github.com/RaptrixPowerFlow/).
 
-Copyright (c) 2026 Raptrix PowerFlow
+Copyright (c) 2026 Raptrix Power
 
-`raptrix-cim-arrow` is the shared crate for the locked Raptrix PowerFlow Interchange (`.rpf`) contract.
+`raptrix-cim-arrow` is the shared crate for the locked Raptrix Power Interchange (`.rpf`) contract.
 
 It owns:
 

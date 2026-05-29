@@ -1,13 +1,13 @@
 /*
-Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
-Copyright (c) 2026 Raptrix PowerFlow
+Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
+Copyright (c) 2026 Raptrix Power
 */
 
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! End-to-end Raptrix PowerFlow Interchange (.rpf) writer.
+//! End-to-end Raptrix Power Interchange (.rpf) writer.
 //!
 //! Tenet references:
 //! - Tenet 1 (zero-copy first): parser helpers and dictionary/string builders
@@ -1989,6 +1989,10 @@ pub fn write_complete_rpf_with_options(
             include_facts_devices: false,
             include_facts_solved: false,
             include_computational_load_profiles: options.emit_computational_load_profiles,
+            // CIM exporter does not synthesize protection-informed contingencies; the closed
+            // core / EMS ingestion paths populate these v0.11.0 optional tables.
+            include_protection_contingencies: false,
+            include_topology_changes: false,
         },
         &additional_root_metadata,
     )?;

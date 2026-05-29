@@ -1,11 +1,11 @@
 <!--
-Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix PowerFlow
-Copyright (c) 2026 Raptrix PowerFlow
+Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
+Copyright (c) 2026 Raptrix Power
 -->
 
 # RPF Field Guide — Plain-English Reference
 
-**Schema contract: v0.10.0 | Format: Apache Arrow IPC**
+**Schema contract: v0.11.0 | Format: Apache Arrow IPC**
 
 This guide explains every table and field in an `.rpf` file in plain English. It is written for engineers who need to read, validate, or build tools against RPF files without digging into Arrow source code. For the normative type-level contract see [schema-contract.md](schema-contract.md).
 
@@ -47,7 +47,7 @@ These are key-value strings in the Arrow file header. Every RPF reader should ch
 
 | Key | Example value | What it means |
 |---|---|---|
-| `raptrix.version` | `v0.10.0` | The schema contract version this file was written to. Readers reject unsupported versions (v0.10.0 only). |
+| `raptrix.version` | `v0.11.0` | The schema contract version this file was written to. Readers accept v0.11.0 and still read v0.10.0 files (the v0.11.0 changes are additive optional tables). |
 | `raptrix.branding` | *(long string)* | Human-readable provenance string identifying the writing tool and copyright. |
 | `rpf.case_fingerprint` | `abc123...` | A deterministic hash of the case identity. Useful for de-duplication and reproducibility checks. |
 | `rpf.validation_mode` | `topology_only` or `solved_ready` | `topology_only` means the file has enough topology to run but may be missing some steady-state parameters. `solved_ready` means all parameters needed for full Newton-Raphson are present. |
@@ -90,6 +90,9 @@ These are key-value strings in the Arrow file header. Every RPF reader should ch
 | `raptrix.features.dynamics_stub` | `true` if the dynamics_models table contains placeholder rows rather than real model parameters. |
 | `raptrix.features.facts` | `true` if optional FACTS metadata tables are present. (v0.8.6+) |
 | `raptrix.features.facts_solved` | `true` if optional solved FACTS replay table is present. (v0.8.6+) |
+| `raptrix.features.protection_contingencies` | `true` if the optional `protection_contingencies` table is present. (v0.11.0+) |
+| `raptrix.features.topology_changes` | `true` if the optional `topology_changes` table is present. (v0.11.0+) |
+| `rpf.protection.fidelity` | `logical`, `breaker_level`, or `mixed`: how protection rows are resolved. Defaults to `logical`. (v0.11.0+) |
 
 Additional v0.8.6 solved FACTS metadata:
 
@@ -325,7 +328,7 @@ Each outage record inside `elements` has:
 
 | Field | What it means |
 |---|---|
-| `element_type` | What kind of outage: `branch_outage`, `gen_trip`, `load_shed`, `shunt_switch`, or `split_bus`. |
+| `element_type` | What kind of outage: `branch_outage`, `gen_trip`, `load_shed`, `shunt_switch`, `split_bus`, or `protection_event` (v0.11.0+, protection detail lives in the matching `protection_contingencies` row). |
 | `branch_id` | For branch outages: which branch. |
 | `bus_id` | For bus outages or generation trips: which bus. |
 | `gen_id` | For generation trips: the specific generator ID. |
@@ -359,6 +362,80 @@ One row per generator-linked dynamic model. Used by dynamic (time-domain) simula
 | `gen_id` | The generator identifier (links back to `generators.id`). |
 | `model_type` | String name of the dynamic model, e.g. `GENROU`, `GENCLS`, `SYNC_MACHINE_EQ`, or a custom namespaced type like `raptrix.smart_valve.v1`. |
 | `params` | A map of parameter name → numeric value. Normalized lowercase keys derived from CIM field names (e.g. `h`, `xd_prime`, `d`, `ra`, `xl`). Also includes provenance keys: `source_dy = 1.0` if parameters came from the CGMES DY profile, `source_eq_fallback = 1.0` if derived from EQ data only, `source_stub = 1.0` if this is a placeholder row. |
+
+---
+
+### Optional: `protection_contingencies` and `topology_changes` — protection-informed contingencies (v0.11.0+)
+
+Real contingencies are often driven by protection schemes that trip a group of equipment at
+once (breaker failure, bus-differential lockout, transfer trip) and can split a bus or isolate
+part of a substation. These two optional tables capture that, using a **layered model**: a
+logical protection-group baseline that works on ordinary bus-branch data, plus optional
+breaker-level detail when it is available. They are present in EMS / operations exports and
+absent in standard planning files. Full design rationale and the cross-repo consumption
+contract are in [adr/0001-protection-informed-contingencies.md](adr/0001-protection-informed-contingencies.md).
+
+**`protection_contingencies`** — one row per protection event, keyed to a `contingencies.contingency_id`:
+
+| Field | What it means |
+|---|---|
+| `contingency_id` | Links to the matching `contingencies` row. |
+| `protection_group_id` | Stable identifier of the protection scheme/group. |
+| `name` | Human-readable label. |
+| `scheme_type` | Kind of protection action: `breaker_failure`, `stuck_breaker`, `relay_misoperation`, `bus_differential`, `zone_protection`, `line_protection`, `transfer_trip`, `sympathetic_trip`, `auto_reclose`, or any other token. |
+| `initiating_equipment_kind` / `initiating_equipment_id` | The fault/trigger element. |
+| `tripped_elements` | The resulting outage set — same record shape as `contingencies.elements`, so the same multi-element logic applies. |
+| `sequence` | Optional ordered/timed steps (`step`, `delay_ms`, `equipment_kind`, `equipment_id`) for automatic sequences. |
+| `topology_change_id` | Links to the `topology_changes` row describing the resulting topology, if any. |
+| `data_confidence` | How trustworthy the outage set is: `modeled`, `inferred`, or `assumed`. |
+| `breaker_ids` | Optional breaker/switch IDs (joining `switch_detail` / `node_breaker_detail`) for breaker-level refinement. |
+| `params` | Extensible numeric parameters. |
+
+**`topology_changes`** — one row per resulting topology delta:
+
+| Field | What it means |
+|---|---|
+| `topology_change_id` | Primary key. |
+| `contingency_id` | The contingency that produced the change. |
+| `change_type` | `bus_split`, `island_formation`, `substation_isolation`, `partial_isolation`, or `element_isolation`. |
+| `affected_bus_ids` | Buses involved in the change. |
+| `resulting_islands` | Islands formed (`island_index`, `bus_ids`, `energized`). |
+| `isolated_element_count` | How many elements were de-energized. |
+| `summary` | Operator-readable narrative. |
+| `provenance` | `declared` (planning intent — what current writers emit) or `solved` (what the solver actually produced — a future capability). |
+| `params` | Extensible numeric parameters. |
+
+#### Worked example 1 — a plain single-branch outage (no protection context)
+
+A single line trip needs only the existing `contingencies` table; neither new table is emitted:
+
+```text
+contingencies: contingency_id="L_1023_OUT", elements=[ {element_type="branch_outage", branch_id=1023} ]
+```
+
+#### Worked example 2 — breaker failure that trips multiple elements and splits a bus
+
+A fault on line 1023 with breaker failure at bus 47 clears the whole bus section, dropping two
+more elements and splitting the bus:
+
+```text
+contingencies:
+  contingency_id="BF_BUS47", elements=[ {element_type="protection_event", bus_id=47} ]
+
+protection_contingencies:
+  contingency_id="BF_BUS47", protection_group_id="BUS47_BF_ZONE", scheme_type="breaker_failure",
+  tripped_elements=[ branch_outage 1023, branch_outage 1101, branch_outage 5004 ],
+  topology_change_id=7, data_confidence="inferred"   # breaker_ids null (logical-only)
+
+topology_changes:
+  topology_change_id=7, contingency_id="BF_BUS47", change_type="bus_split",
+  affected_bus_ids=[47], resulting_islands=[ {0,[47,48,49],energized=true}, {1,[201],energized=false} ],
+  provenance="declared"
+```
+
+When the same case is later exported with node-breaker detail, `breaker_ids` is populated and
+`rpf.protection.fidelity` becomes `mixed` or `breaker_level`, letting a topology processor
+recompute the split from switch states instead of trusting the declared islands.
 
 ---
 
@@ -491,8 +568,8 @@ with ipc.open_file("case.rpf") as reader:
 
 ---
 
-*Part of the Raptrix Powerflow ecosystem — [raptrix-studio](https://github.com/RaptrixPowerFlow/raptrix-studio) | [raptrix-psse-rs](https://github.com/RaptrixPowerFlow/raptrix-psse-rs) | [RaptrixPowerFlow](https://github.com/RaptrixPowerFlow/)*
+*Part of the Raptrix Power ecosystem — [raptrix-studio](https://github.com/RaptrixPowerFlow/raptrix-studio) | [raptrix-psse-rs](https://github.com/RaptrixPowerFlow/raptrix-psse-rs) | [RaptrixPowerFlow](https://github.com/RaptrixPowerFlow/)*
 
-*Copyright (c) 2026 Raptrix PowerFlow — MPL 2.0*
+*Copyright (c) 2026 Raptrix Power — MPL 2.0*
 
 
