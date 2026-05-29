@@ -889,7 +889,11 @@ pub fn validate_rpf_file(path: impl AsRef<Path>, options: &RootWriteOptions) -> 
             protection,
             "protection_group_id",
         )?;
-        require_non_null_count_equals_len(TABLE_PROTECTION_CONTINGENCIES, protection, "scheme_type")?;
+        require_non_null_count_equals_len(
+            TABLE_PROTECTION_CONTINGENCIES,
+            protection,
+            "scheme_type",
+        )?;
         require_non_null_count_equals_len(
             TABLE_PROTECTION_CONTINGENCIES,
             protection,
@@ -1525,7 +1529,11 @@ mod tests {
                 .iter()
                 .any(|(name, _)| name == TABLE_PROTECTION_CONTINGENCIES)
         );
-        assert!(!tables.iter().any(|(name, _)| name == TABLE_TOPOLOGY_CHANGES));
+        assert!(
+            !tables
+                .iter()
+                .any(|(name, _)| name == TABLE_TOPOLOGY_CHANGES)
+        );
         Ok(())
     }
 
@@ -1572,18 +1580,18 @@ mod tests {
         let protection = RecordBatch::try_new(
             Arc::new(pc_schema.clone()),
             vec![
-                one_dict("BF_BUS47"),                                            // contingency_id
-                one_dict("BUS47_BF_ZONE"),                                       // protection_group_id
+                one_dict("BF_BUS47"),      // contingency_id
+                one_dict("BUS47_BF_ZONE"), // protection_group_id
                 Arc::new(StringArray::from(vec![Some("Bus 47 BF backup")])) as _, // name
-                one_dict("breaker_failure"),                                     // scheme_type
-                one_dict("branch"),                                              // initiating_equipment_kind
-                one_dict("1023"),                                                // initiating_equipment_id
-                one_empty_list(pc_schema.field(6).data_type()),                  // tripped_elements
-                new_null_array(pc_schema.field(7).data_type(), 1),               // sequence
-                Arc::new(Int32Array::from(vec![Some(7)])) as _,                  // topology_change_id
-                one_dict("inferred"),                                            // data_confidence
-                new_null_array(pc_schema.field(10).data_type(), 1),              // breaker_ids
-                new_null_array(pc_schema.field(11).data_type(), 1),              // params
+                one_dict("breaker_failure"), // scheme_type
+                one_dict("branch"),        // initiating_equipment_kind
+                one_dict("1023"),          // initiating_equipment_id
+                one_empty_list(pc_schema.field(6).data_type()), // tripped_elements
+                new_null_array(pc_schema.field(7).data_type(), 1), // sequence
+                Arc::new(Int32Array::from(vec![Some(7)])) as _, // topology_change_id
+                one_dict("inferred"),      // data_confidence
+                new_null_array(pc_schema.field(10).data_type(), 1), // breaker_ids
+                new_null_array(pc_schema.field(11).data_type(), 1), // params
             ],
         )?;
         table_batches.insert(TABLE_PROTECTION_CONTINGENCIES, protection);
@@ -1593,15 +1601,15 @@ mod tests {
         let topology = RecordBatch::try_new(
             Arc::new(tc_schema.clone()),
             vec![
-                Arc::new(Int32Array::from(vec![7])) as _,            // topology_change_id
-                one_dict("BF_BUS47"),                                // contingency_id
-                one_dict("bus_split"),                               // change_type
-                one_empty_list(tc_schema.field(3).data_type()),      // affected_bus_ids
-                new_null_array(tc_schema.field(4).data_type(), 1),   // resulting_islands
-                Arc::new(Int32Array::from(vec![Some(1)])) as _,      // isolated_element_count
+                Arc::new(Int32Array::from(vec![7])) as _, // topology_change_id
+                one_dict("BF_BUS47"),                     // contingency_id
+                one_dict("bus_split"),                    // change_type
+                one_empty_list(tc_schema.field(3).data_type()), // affected_bus_ids
+                new_null_array(tc_schema.field(4).data_type(), 1), // resulting_islands
+                Arc::new(Int32Array::from(vec![Some(1)])) as _, // isolated_element_count
                 Arc::new(StringArray::from(vec![Some("section cleared")])) as _, // summary
-                one_dict("declared"),                                // provenance
-                new_null_array(tc_schema.field(8).data_type(), 1),   // params
+                one_dict("declared"),                     // provenance
+                new_null_array(tc_schema.field(8).data_type(), 1), // params
             ],
         )?;
         table_batches.insert(TABLE_TOPOLOGY_CHANGES, topology);
