@@ -1,7 +1,7 @@
 """Generate persistent RPF outputs for all discoverable CIM sources.
 
 Usage:
-  python tests/generate_rpf_matrix.py --profiles both
+    python tests/generate_rpf_matrix.py --profiles release
 
 Outputs:
   - RPF files under tests/data/external/results/{debug|release}/
@@ -245,7 +245,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--profiles",
         choices=["debug", "release", "both"],
-        default="both",
+        default="release",
         help="Build profile(s) to run",
     )
     parser.add_argument(
@@ -265,7 +265,16 @@ def main() -> int:
     args = parse_args()
 
     if args.clean and RESULTS_DIR.exists():
-        shutil.rmtree(RESULTS_DIR)
+        # On Windows/OneDrive, deleting the root directory itself can fail if the
+        # sync client still holds a handle. Clean child entries instead.
+        for child in RESULTS_DIR.iterdir():
+            if child.is_dir():
+                shutil.rmtree(child, ignore_errors=True)
+            else:
+                try:
+                    child.unlink()
+                except OSError:
+                    pass
 
     cases = discover_cases()
     if not cases:

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-raptrix-cim-rs turns CIM RDF/XML (including CGMES profile sets) into Arrow-native outputs for power-flow and related solver pipelines, with a locked v0.8.5 Raptrix PowerFlow Interchange schema contract.
+raptrix-cim-rs turns CIM RDF/XML (including CGMES profile sets) into Arrow-native outputs for power-flow and related solver pipelines, with a locked v0.12.0 Raptrix Power Interchange schema contract.
 
 The architecture is IEC 61970 CIM 17+ based, with ENTSO-E CGMES v3.0.3 used as the public regression corpus.
 
@@ -29,7 +29,7 @@ Current serialization status:
 
 ## Core Modules
 
-- raptrix-cim-arrow/src/schema.rs: locked v0.8.5 table schemas, metadata constants, and table registry helpers.
+- raptrix-cim-arrow/src/schema.rs: locked v0.12.0 table schemas, metadata constants, and table registry helpers.
 - raptrix-cim-arrow/src/io.rs: generic `.rpf` root-file assembly, validation, and readback helpers.
 - src/models: CIM types and trait hierarchy.
 - src/parser.rs: parse helpers and profile-specific row mapping.
@@ -43,7 +43,7 @@ Current serialization status:
 - Mapping boundary: typed model values to solver-oriented row structures.
 - Serialization boundary: row structures to Arrow RecordBatch and output container bytes.
 
-Locked schema boundaries in v0.8.5:
+Locked schema boundaries in v0.12.0:
 
 - all 15 required tables must materialize (empty allowed)
 - dictionary-encoded string identity fields
@@ -53,6 +53,14 @@ Locked schema boundaries in v0.8.5:
 - strict planning-vs-solved semantics via case-mode and solved-state metadata
 - solved shunt-state and angle-reference provenance for solved snapshots
 - nested Arrow types for contingencies and dynamics model params
+
+## Canonical RAS Model (v0.12.0)
+
+- `remedial_action_schemes` is the single canonical RAS/SPS schema for new writes.
+- v0.11.0 `protection_contingencies` and `topology_changes` remain supported for backward reads and deterministic migration, but are deprecated for new RAS writes.
+- Execution semantics are node/branch-first: trigger and action targeting can be represented without breaker-level topology.
+- Breaker-level refinement remains optional via existing node-breaker detail tables when available.
+- Public repository requirement: all RAS examples and fixtures are synthetic demonstration data only (no CEII).
 
 ## Error Handling
 

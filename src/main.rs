@@ -350,6 +350,7 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
             default_shunt_control_mode: None,
             computational_load_mode: None,
             emit_computational_load_profiles: false,
+            emit_remedial_action_schemes: false,
         }
     } else {
         WriteOptions {
@@ -376,6 +377,7 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
             default_shunt_control_mode: None,
             computational_load_mode: None,
             emit_computational_load_profiles: false,
+            emit_remedial_action_schemes: false,
         }
     };
 

@@ -292,7 +292,8 @@ pub fn base_voltage_specs_from_reader<R: Read>(mut reader: R) -> Result<Vec<Base
     Ok(rows)
 }
 
-/// Parses equipment to BaseVoltage references from common conducting equipment tags.
+/// Parses equipment-like object to BaseVoltage references from common tags,
+/// including TopologicalNode-level references in TP payloads.
 pub fn equipment_base_voltage_refs_from_reader<R: Read>(
     mut reader: R,
 ) -> Result<Vec<EquipmentBaseVoltageRef>> {
@@ -307,6 +308,7 @@ pub fn equipment_base_voltage_refs_from_reader<R: Read>(
         "cim:ConformLoad",
         "cim:NonConformLoad",
         "cim:PowerTransformer",
+        "cim:TopologicalNode",
     ] {
         if !contains_exact_element_tag(&xml, tag) {
             continue;
@@ -321,6 +323,7 @@ pub fn equipment_base_voltage_refs_from_reader<R: Read>(
             let Some(base_voltage) = raw
                 .conducting_equipment_base_voltage
                 .or(raw.equipment_base_voltage)
+                .or(raw.topological_node_base_voltage)
             else {
                 continue;
             };
@@ -1301,7 +1304,11 @@ struct RawBaseVoltage {
     m_rid: Option<String>,
     #[serde(rename = "@about", default)]
     about: Option<String>,
-    #[serde(rename = "BaseVoltage.nominalVoltage", default)]
+    #[serde(
+        rename = "BaseVoltage.nominalVoltage",
+        alias = "cim:BaseVoltage.nominalVoltage",
+        default
+    )]
     nominal_voltage: Option<f64>,
 }
 
@@ -1311,10 +1318,24 @@ struct RawEquipmentBaseVoltageRef {
     m_rid: Option<String>,
     #[serde(rename = "@about", default)]
     about: Option<String>,
-    #[serde(rename = "ConductingEquipment.BaseVoltage", default)]
+    #[serde(
+        rename = "ConductingEquipment.BaseVoltage",
+        alias = "cim:ConductingEquipment.BaseVoltage",
+        default
+    )]
     conducting_equipment_base_voltage: Option<RdfResourceRef>,
-    #[serde(rename = "Equipment.BaseVoltage", default)]
+    #[serde(
+        rename = "Equipment.BaseVoltage",
+        alias = "cim:Equipment.BaseVoltage",
+        default
+    )]
     equipment_base_voltage: Option<RdfResourceRef>,
+    #[serde(
+        rename = "TopologicalNode.BaseVoltage",
+        alias = "cim:TopologicalNode.BaseVoltage",
+        default
+    )]
+    topological_node_base_voltage: Option<RdfResourceRef>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1814,25 +1835,30 @@ mod tests {
     fn parse_equipment_base_voltage_refs() {
         let xml = r##"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#">
     <cim:ACLineSegment rdf:ID="Line1">
-        <ConductingEquipment.BaseVoltage rdf:resource="#BV_230"/>
+        <cim:ConductingEquipment.BaseVoltage rdf:resource="#BV_230"/>
     </cim:ACLineSegment>
     <cim:EnergyConsumer rdf:ID="Load1">
-        <ConductingEquipment.BaseVoltage rdf:resource="#BV_115"/>
+        <cim:ConductingEquipment.BaseVoltage rdf:resource="#BV_115"/>
     </cim:EnergyConsumer>
     <cim:PowerTransformer rdf:about="#Tx1">
-        <Equipment.BaseVoltage rdf:resource="#BV_345"/>
+        <cim:Equipment.BaseVoltage rdf:resource="#BV_345"/>
     </cim:PowerTransformer>
+    <cim:TopologicalNode rdf:ID="TopoA">
+        <cim:TopologicalNode.BaseVoltage rdf:resource="#BV_500"/>
+    </cim:TopologicalNode>
 </rdf:RDF>"##;
 
         let refs =
             equipment_base_voltage_refs_from_reader(xml.as_bytes()).expect("parse should succeed");
-        assert_eq!(refs.len(), 3);
+        assert_eq!(refs.len(), 4);
         assert_eq!(refs[0].equipment_mrid, "Line1");
         assert_eq!(refs[0].base_voltage_mrid, "BV_230");
         assert_eq!(refs[1].equipment_mrid, "Load1");
         assert_eq!(refs[1].base_voltage_mrid, "BV_115");
-        assert_eq!(refs[2].equipment_mrid, "Tx1");
-        assert_eq!(refs[2].base_voltage_mrid, "BV_345");
+        assert_eq!(refs[2].equipment_mrid, "TopoA");
+        assert_eq!(refs[2].base_voltage_mrid, "BV_500");
+        assert_eq!(refs[3].equipment_mrid, "Tx1");
+        assert_eq!(refs[3].base_voltage_mrid, "BV_345");
     }
 
     #[test]

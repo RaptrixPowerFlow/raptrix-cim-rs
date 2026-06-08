@@ -5,7 +5,7 @@ use std::process::{Command, ExitCode, Stdio};
 
 fn print_usage() {
     eprintln!(
-        "Usage:\n  cargo rpf-regression -- --data-root <CGMES_v3_root> [matrix args]\n\nExamples:\n  cargo rpf-regression -- --data-root C:\\raptrix-cim-tests\\...\\v3.0 --profiles both --clean\n  cargo rpf-regression -- --profiles both --clean"
+        "Usage:\n  cargo rpf-regression -- --data-root <CGMES_v3_root> [matrix args]\n\nExamples:\n  cargo rpf-regression -- --data-root C:\\raptrix-cim-tests\\...\\v3.0 --profiles release --clean\n  cargo rpf-regression -- --profiles release --clean"
     );
 }
 
@@ -33,7 +33,7 @@ fn parse_args(args: Vec<String>) -> (Option<String>, Vec<String>) {
     if forwarded.is_empty() {
         forwarded = vec![
             "--profiles".to_string(),
-            "both".to_string(),
+            "release".to_string(),
             "--clean".to_string(),
         ];
     }

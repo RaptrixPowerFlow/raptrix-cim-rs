@@ -9,6 +9,28 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 
 Copyright (c) 2026 Raptrix Power
 
+## v0.12.0 — converter 0.5.0 (2026-06-08)
+
+### Converter release: Crate version 0.5.0 (raptrix-cim-arrow) / 0.5.0 (raptrix-cim-rs) | Arrow schema v0.12.0
+
+### Added
+
+- **Optional canonical root table `remedial_action_schemes`** for executable RAS/SPS interchange with arming/trigger conditions, sequenced actions, and action-target sets in a single schema.
+- **File metadata keys**: `raptrix.features.remedial_action_schemes` and `rpf.ras.schema_mode` (`canonical_v12` when emitted).
+- **Validation checks** in `validate_rpf_file()` for non-null required columns in canonical RAS rows (`ras_id`, `enabled`, `trigger_conditions`, `sequence_steps`, `data_confidence`).
+
+### Changed
+
+- **Single-model write policy for RAS**: v0.12 designates `remedial_action_schemes` as the authoritative schema for new RAS writes.
+- **v0.11 legacy policy clarified**: `protection_contingencies` and `topology_changes` remain supported for backward reads/migration but are deprecated for new RAS writes.
+- **`SUPPORTED_RPF_VERSIONS`** now accepts **`v0.12.0`** / **`0.12.0`** and retains **`v0.11.0`** / **`0.11.0`** and **`v0.10.0`** / **`0.10.0`**.
+- `RPF_VERSION` / `SCHEMA_VERSION` / `BRANDING` bumped to v0.12.0.
+
+### Compatibility
+
+- **Backward-compatible with v0.11.0 and v0.10.0 files.** Required table set/order remains unchanged.
+- **Public safety**: all new RAS examples and tests in this repository must be synthetic demonstration data only (no CEII).
+
 ## v0.11.0 — converter 0.5.0 (2026-05-28)
 
 ### Converter release: Crate version 0.5.0 (raptrix-cim-arrow) / 0.5.0 (raptrix-cim-rs) | Arrow schema v0.11.0

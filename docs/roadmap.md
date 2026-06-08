@@ -66,6 +66,15 @@ Public positioning (sanitized):
 - RPF schema v0.11.0 adds additive, optional interchange support for protection-realistic contingencies and post-event topology metadata, while preserving full backward compatibility with existing bus-branch files and readers.
 - The representation is layered so producers can contribute a logical protection-group view from existing data today, and enrich it with breaker-level detail when available, without breaking changes.
 
+## 0.12 Canonical RAS/SPS Schema (In Progress, Additive Evolution)
+
+- Add optional canonical root table `remedial_action_schemes` for executable RAS/SPS sequencing (arming conditions, trigger conditions, delay/priority/merit-order, and remedial action sets).
+- Establish single-model policy for new writes: `remedial_action_schemes` is authoritative for RAS semantics.
+- Retain v0.11 `protection_contingencies` and `topology_changes` for backward-compatible reads and deterministic migration only (deprecated for new RAS writes).
+- Keep required table set/order unchanged and maintain additive backward compatibility for existing v0.11/v0.10 files.
+- Keep all public fixtures and examples synthetic/mock only; no CEII, utility IDs, or protected topology payloads.
+- Centralize validation artifacts on one golden regression path: `tests/data/external/results/release` from `cargo rpf-regression -- --profiles release --clean`.
+
 ## Ongoing Focus Areas
 
 - Broaden multi-file CGMES ingest coverage for assembled network cases.

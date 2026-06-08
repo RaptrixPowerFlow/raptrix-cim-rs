@@ -34,16 +34,18 @@ use crate::schema::{
     METADATA_KEY_FEATURE_DIAGRAM_LAYOUT, METADATA_KEY_FEATURE_DYNAMICS_STUB,
     METADATA_KEY_FEATURE_FACTS, METADATA_KEY_FEATURE_FACTS_SOLVED,
     METADATA_KEY_FEATURE_NODE_BREAKER, METADATA_KEY_FEATURE_PROTECTION_CONTINGENCIES,
-    METADATA_KEY_FEATURE_TOPOLOGY_CHANGES, METADATA_KEY_PROTECTION_FIDELITY,
+    METADATA_KEY_FEATURE_REMEDIAL_ACTION_SCHEMES, METADATA_KEY_FEATURE_TOPOLOGY_CHANGES,
+    METADATA_KEY_PROTECTION_FIDELITY, METADATA_KEY_RAS_SCHEMA_MODE,
     METADATA_KEY_RPF_VERSION, METADATA_KEY_VERSION, SCHEMA_VERSION, SUPPORTED_RPF_VERSIONS,
     TABLE_BRANCHES, TABLE_BUSES, TABLE_BUSES_SOLVED, TABLE_COMPUTATIONAL_LOAD_PROFILES,
     TABLE_DC_LINES_2W, TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_FACTS_DEVICES,
     TABLE_FACTS_SOLVED, TABLE_GENERATORS, TABLE_GENERATORS_SOLVED, TABLE_LOADS,
-    TABLE_MULTI_SECTION_LINES, TABLE_PROTECTION_CONTINGENCIES, TABLE_SWITCHED_SHUNT_BANKS,
-    TABLE_TOPOLOGY_CHANGES, TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, all_table_schemas,
+    TABLE_MULTI_SECTION_LINES, TABLE_PROTECTION_CONTINGENCIES,
+    TABLE_REMEDIAL_ACTION_SCHEMES, TABLE_SWITCHED_SHUNT_BANKS, TABLE_TOPOLOGY_CHANGES,
+    TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, all_table_schemas,
     computational_load_table_schemas, diagram_layout_table_schemas, facts_table_schemas,
-    node_breaker_table_schemas, protection_table_schemas, schema_metadata,
-    solved_state_table_schemas, table_schema,
+    node_breaker_table_schemas, protection_table_schemas, remedial_action_table_schemas,
+    schema_metadata, solved_state_table_schemas, table_schema,
 };
 
 /// Summary stats for a single logical table found in an `.rpf` file.
@@ -117,6 +119,8 @@ pub struct RootWriteOptions {
     /// When true, append optional `topology_changes` table (v0.11.0+).
     /// Requires `include_protection_contingencies = true`.
     pub include_topology_changes: bool,
+    /// When true, append optional `remedial_action_schemes` table (v0.12.0+).
+    pub include_remedial_action_schemes: bool,
 }
 
 /// Returns the metadata key used to store the logical row count for a table.
@@ -140,6 +144,9 @@ fn enabled_optional_table_schemas(options: &RootWriteOptions) -> Vec<(&'static s
     }
     if options.include_protection_contingencies {
         optional.extend(protection_table_schemas(options.include_topology_changes));
+    }
+    if options.include_remedial_action_schemes {
+        optional.extend(remedial_action_table_schemas());
     }
     if options.include_computational_load_profiles {
         optional.extend(computational_load_table_schemas());
@@ -223,6 +230,9 @@ pub fn root_rpf_schema_with_options(options: &RootWriteOptions) -> Schema {
     }
     if options.include_protection_contingencies {
         table_schemas.extend(protection_table_schemas(options.include_topology_changes));
+    }
+    if options.include_remedial_action_schemes {
+        table_schemas.extend(remedial_action_table_schemas());
     }
     if options.include_computational_load_profiles {
         table_schemas.extend(computational_load_table_schemas());
@@ -575,6 +585,15 @@ pub fn write_root_rpf_with_metadata(
             "true".to_string(),
         );
     }
+    if options.include_remedial_action_schemes {
+        root_metadata.insert(
+            METADATA_KEY_FEATURE_REMEDIAL_ACTION_SCHEMES.to_string(),
+            "true".to_string(),
+        );
+        root_metadata
+            .entry(METADATA_KEY_RAS_SCHEMA_MODE.to_string())
+            .or_insert_with(|| "canonical_v12".to_string());
+    }
     for (key, value) in additional_root_metadata {
         root_metadata.insert(key.clone(), value.clone());
     }
@@ -925,6 +944,37 @@ pub fn validate_rpf_file(path: impl AsRef<Path>, options: &RootWriteOptions) -> 
         }
     }
 
+    if options.include_remedial_action_schemes {
+        let feature = metadata
+            .get(METADATA_KEY_FEATURE_REMEDIAL_ACTION_SCHEMES)
+            .with_context(|| {
+                format!(
+                    "post-write contract violation: missing metadata key '{}'",
+                    METADATA_KEY_FEATURE_REMEDIAL_ACTION_SCHEMES
+                )
+            })?;
+        if feature != "true" {
+            bail!(
+                "post-write contract violation: '{}' expected 'true', found '{}'",
+                METADATA_KEY_FEATURE_REMEDIAL_ACTION_SCHEMES,
+                feature
+            );
+        }
+
+        let ras = by_name.get(TABLE_REMEDIAL_ACTION_SCHEMES).context(
+            "post-write contract violation: missing remedial_action_schemes table",
+        )?;
+        require_non_null_count_equals_len(TABLE_REMEDIAL_ACTION_SCHEMES, ras, "ras_id")?;
+        require_non_null_count_equals_len(TABLE_REMEDIAL_ACTION_SCHEMES, ras, "enabled")?;
+        require_non_null_count_equals_len(
+            TABLE_REMEDIAL_ACTION_SCHEMES,
+            ras,
+            "trigger_conditions",
+        )?;
+        require_non_null_count_equals_len(TABLE_REMEDIAL_ACTION_SCHEMES, ras, "sequence_steps")?;
+        require_non_null_count_equals_len(TABLE_REMEDIAL_ACTION_SCHEMES, ras, "data_confidence")?;
+    }
+
     Ok(())
 }
 
@@ -990,14 +1040,18 @@ mod tests {
 
     use crate::schema::{
         METADATA_KEY_FEATURE_COMPUTATIONAL_LOAD_PROFILES,
+        METADATA_KEY_FEATURE_REMEDIAL_ACTION_SCHEMES,
         METADATA_KEY_FEATURE_PROTECTION_CONTINGENCIES, METADATA_KEY_FEATURE_TOPOLOGY_CHANGES,
-        METADATA_KEY_PROTECTION_FIDELITY, METADATA_KEY_RPF_VERSION, METADATA_KEY_VERSION,
+        METADATA_KEY_PROTECTION_FIDELITY, METADATA_KEY_RAS_SCHEMA_MODE,
+        METADATA_KEY_RPF_VERSION, METADATA_KEY_VERSION,
         SCHEMA_VERSION, TABLE_BRANCHES, TABLE_COMPUTATIONAL_LOAD_PROFILES, TABLE_DIAGRAM_OBJECTS,
         TABLE_DIAGRAM_POINTS, TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED, TABLE_GENERATORS,
-        TABLE_LOADS, TABLE_PROTECTION_CONTINGENCIES, TABLE_TOPOLOGY_CHANGES, all_table_schemas,
-        branches_schema, computational_load_profiles_schema, diagram_objects_schema,
-        diagram_points_schema, facts_devices_schema, facts_solved_schema, generators_schema,
-        loads_schema, protection_contingencies_schema, schema_metadata, topology_changes_schema,
+        TABLE_LOADS, TABLE_PROTECTION_CONTINGENCIES, TABLE_REMEDIAL_ACTION_SCHEMES,
+        TABLE_TOPOLOGY_CHANGES, all_table_schemas, branches_schema,
+        computational_load_profiles_schema, diagram_objects_schema, diagram_points_schema,
+        facts_devices_schema, facts_solved_schema, generators_schema, loads_schema,
+        protection_contingencies_schema, remedial_action_schemes_schema, schema_metadata,
+        topology_changes_schema,
     };
 
     use super::{
@@ -1055,6 +1109,7 @@ mod tests {
                 include_computational_load_profiles: false,
                 include_protection_contingencies: false,
                 include_topology_changes: false,
+                include_remedial_action_schemes: false,
             },
         )?;
 
@@ -1262,7 +1317,7 @@ mod tests {
             .expect_err("v0.9.3 reader should reject missing required nominal_kv fields");
         let message = format!("{err:#}");
         assert!(message.contains("missing non-nullable field 'to_nominal_kv'"));
-        assert_eq!(SCHEMA_VERSION, "v0.11.0");
+        assert_eq!(SCHEMA_VERSION, "v0.12.0");
         Ok(())
     }
 
@@ -1657,6 +1712,75 @@ mod tests {
         assert_eq!(
             metadata.get(METADATA_KEY_PROTECTION_FIDELITY),
             Some(&"logical".to_string())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn remedial_action_schemes_round_trip_when_enabled() -> Result<()> {
+        let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_ras_present");
+        std::fs::create_dir_all(&tmp_dir)?;
+        let output_path = tmp_dir.join("ras_present.rpf");
+
+        let mut table_batches: HashMap<&'static str, RecordBatch> = all_table_schemas()
+            .into_iter()
+            .map(|(name, schema)| (name, RecordBatch::new_empty(Arc::new(schema))))
+            .collect();
+
+        let ras_schema = remedial_action_schemes_schema();
+        let ras = RecordBatch::try_new(
+            Arc::new(ras_schema.clone()),
+            vec![
+                one_dict("RAS_SYNTHETIC_001"), // ras_id
+                Arc::new(StringArray::from(vec![Some("Synthetic two-line overload response")]))
+                    as _, // name
+                Arc::new(StringArray::from(vec![Some("public_demo")])) as _, // authority
+                Arc::new(StringArray::from(vec![Some("v1")])) as _, // model_version
+                Arc::new(BooleanArray::from(vec![true])) as _,       // enabled
+                new_null_array(ras_schema.field(5).data_type(), 1),  // arming_window
+                one_empty_list(ras_schema.field(6).data_type()),     // arming_filters
+                one_empty_list(ras_schema.field(7).data_type()),     // arming_conditions
+                one_empty_list(ras_schema.field(8).data_type()),     // trigger_filters
+                one_empty_list(ras_schema.field(9).data_type()),     // trigger_conditions
+                one_empty_list(ras_schema.field(10).data_type()),    // sequence_steps
+                one_dict("RA_SYNTHETIC_001"),                        // remedial_action
+                one_dict("special_protection"),                      // scheme_kind
+                one_empty_list(ras_schema.field(13).data_type()),    // remedial_action_elements
+                one_empty_list(ras_schema.field(14).data_type()),    // applicable_contingency_ids
+                Arc::new(StringArray::from(vec![Some(
+                    "synthetic demonstration only; no CEII or utility topology",
+                )])) as _, // notes
+                one_dict("modeled"),                                // data_confidence
+                new_null_array(ras_schema.field(17).data_type(), 1), // params
+            ],
+        )?;
+        table_batches.insert(TABLE_REMEDIAL_ACTION_SCHEMES, ras);
+
+        write_root_rpf(
+            &output_path,
+            &table_batches,
+            &RootWriteOptions {
+                include_remedial_action_schemes: true,
+                ..Default::default()
+            },
+        )?;
+
+        let tables = read_rpf_tables(&output_path)?;
+        let ras = tables
+            .iter()
+            .find(|(name, _)| name == TABLE_REMEDIAL_ACTION_SCHEMES)
+            .map(|(_, batch)| batch)
+            .context("expected remedial_action_schemes table")?;
+        assert_eq!(ras.num_rows(), 1);
+
+        let metadata = rpf_file_metadata(&output_path)?;
+        assert_eq!(
+            metadata.get(METADATA_KEY_FEATURE_REMEDIAL_ACTION_SCHEMES),
+            Some(&"true".to_string())
+        );
+        assert_eq!(
+            metadata.get(METADATA_KEY_RAS_SCHEMA_MODE),
+            Some(&"canonical_v12".to_string())
         );
         Ok(())
     }

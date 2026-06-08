@@ -23,7 +23,7 @@ else
     echo "Data root: ${DATA_ROOT}"
     # Avoid --clean here because OneDrive/Windows file locks can intermittently
     # block directory removal; generation still updates outputs and report.
-    cargo run --bin regression_matrix -- --profiles both --include-ssh-dy
+    cargo run --bin regression_matrix -- --profiles release --include-ssh-dy
   else
     echo "No CGMES data root configured (RAPTRIX_TEST_DATA_ROOT or .raptrix-test-data-root)."
     echo "Blocking push to avoid unverified regressions."

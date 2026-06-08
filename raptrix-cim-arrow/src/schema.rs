@@ -7,7 +7,7 @@ Copyright (c) 2026 Raptrix Power
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Arrow schema definitions for the Raptrix Power Interchange v0.11.0 profile.
+//! Arrow schema definitions for the Raptrix Power Interchange v0.12.0 profile.
 //!
 //! **CGMES 3.0+ Only**: This module targets CGMES v3.0 and later (v17+ CIM) merged profiles.
 //! Support for legacy CGMES 2.4.x was dropped in this release for simplicity and performance.
@@ -15,6 +15,13 @@ Copyright (c) 2026 Raptrix Power
 //! This module exposes one exact Arrow schema per required table in the locked
 //! `.rpf` contract, plus deterministic schema registry helpers used by both
 //! writers and readers.
+//!
+//! ## v0.12.0 — 18 canonical tables (additive: canonical RAS schema)
+//! Adds one optional root table — `remedial_action_schemes` — as the canonical RAS/SPS
+//! representation for new writes. v0.11.0 `protection_contingencies` and
+//! `topology_changes` remain supported for backward reads and migration only. Optional
+//! file metadata keys: `raptrix.features.remedial_action_schemes` and
+//! `rpf.ras.schema_mode` (default `canonical_v12` when emitted).
 //!
 //! ## v0.11.0 — 18 canonical tables (additive: protection-informed contingencies)
 //! Adds two optional root tables — `protection_contingencies` (logical protection-group
@@ -66,17 +73,23 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, Schema};
 
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / Raptrix Power Interchange v0.11.0 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow / Raptrix Power Interchange v0.12.0 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.";
 
 /// Canonical RPF format version tag embedded as file-level metadata.
-pub const RPF_VERSION: &str = "v0.11.0";
+pub const RPF_VERSION: &str = "v0.12.0";
 
 /// Supported RPF versions accepted by generic Arrow IPC readers.
 ///
-/// v0.11.0 is the current contract release. v0.10.0 is retained for backward-compatible reads
-/// because the v0.11.0 changes are purely additive optional tables and metadata keys, so
-/// v0.10.0 files are valid v0.11.0 inputs.
-pub const SUPPORTED_RPF_VERSIONS: &[&str] = &["v0.11.0", "0.11.0", "v0.10.0", "0.10.0"];
+/// v0.12.0 is the current contract release. v0.11.0 and v0.10.0 are retained for
+/// backward-compatible reads.
+pub const SUPPORTED_RPF_VERSIONS: &[&str] = &[
+    "v0.12.0",
+    "0.12.0",
+    "v0.11.0",
+    "0.11.0",
+    "v0.10.0",
+    "0.10.0",
+];
 
 /// Validates a nominal kV value for required network voltage fields.
 pub fn validate_nominal_kv(value: f64, context: &str) -> Result<(), String> {
@@ -193,6 +206,12 @@ pub const METADATA_KEY_FEATURE_TOPOLOGY_CHANGES: &str = "raptrix.features.topolo
 /// Values: `logical` (logical protection-group baseline only) | `breaker_level`
 /// (breaker/switch-resolved) | `mixed` (both present across rows).
 pub const METADATA_KEY_PROTECTION_FIDELITY: &str = "rpf.protection.fidelity";
+/// File-level feature flag: optional `remedial_action_schemes` root table is present (v0.12.0+).
+pub const METADATA_KEY_FEATURE_REMEDIAL_ACTION_SCHEMES: &str =
+    "raptrix.features.remedial_action_schemes";
+/// Optional metadata key declaring canonical RAS schema mode (v0.12.0+).
+/// Current value: `canonical_v12`.
+pub const METADATA_KEY_RAS_SCHEMA_MODE: &str = "rpf.ras.schema_mode";
 
 /// Canonical metadata table name.
 pub const TABLE_METADATA: &str = "metadata";
@@ -240,6 +259,8 @@ pub const TABLE_SCENARIO_CONTEXT: &str = "scenario_context";
 pub const TABLE_PROTECTION_CONTINGENCIES: &str = "protection_contingencies";
 /// Optional post-event topology-change table name (v0.11.0+).
 pub const TABLE_TOPOLOGY_CHANGES: &str = "topology_changes";
+/// Optional canonical RAS/SPS table name (v0.12.0+).
+pub const TABLE_REMEDIAL_ACTION_SCHEMES: &str = "remedial_action_schemes";
 /// Optional detail table emitted only when connectivity-detail mode is enabled.
 pub const TABLE_CONNECTIVITY_GROUPS: &str = "connectivity_groups";
 /// Optional detail table emitted only when node-breaker detail mode is enabled.
@@ -481,6 +502,105 @@ fn resulting_islands_type() -> DataType {
         ),
         false,
     )))
+}
+
+/// `List<Struct{ target_type, target_id, operator, threshold, unit, source_table,
+/// source_column }>` for reusable model filters in canonical RAS rows (v0.12.0+).
+fn ras_model_filter_type() -> DataType {
+    DataType::List(Arc::new(Field::new(
+        "filter",
+        DataType::Struct(
+            vec![
+                Field::new("target_type", dict_utf8(), false),
+                Field::new("target_id", dict_utf8(), false),
+                Field::new("operator", dict_utf8(), true),
+                Field::new("threshold", DataType::Float64, true),
+                Field::new("unit", dict_utf8(), true),
+                Field::new("source_table", dict_utf8(), true),
+                Field::new("source_column", dict_utf8(), true),
+            ]
+            .into(),
+        ),
+        false,
+    )))
+}
+
+/// `List<Struct{ condition_id, lhs_ref, comparator, rhs_kind, rhs_value, rhs_ref,
+/// duration_ms }>` for trigger and arming conditions (v0.12.0+).
+fn ras_model_condition_type() -> DataType {
+    DataType::List(Arc::new(Field::new(
+        "condition",
+        DataType::Struct(
+            vec![
+                Field::new("condition_id", dict_utf8(), false),
+                Field::new("lhs_ref", DataType::Utf8, false),
+                Field::new("comparator", dict_utf8(), false),
+                Field::new("rhs_kind", dict_utf8(), false),
+                Field::new("rhs_value", DataType::Float64, true),
+                Field::new("rhs_ref", DataType::Utf8, true),
+                Field::new("duration_ms", DataType::Float64, true),
+            ]
+            .into(),
+        ),
+        false,
+    )))
+}
+
+/// `List<Struct{ element_id, action_type, target_type, target_id, amount_mw,
+/// amount_pct, status_change, params }>` for RAS action targets (v0.12.0+).
+fn ras_action_element_type() -> DataType {
+    DataType::List(Arc::new(Field::new(
+        "action",
+        DataType::Struct(
+            vec![
+                Field::new("element_id", dict_utf8(), false),
+                Field::new("action_type", dict_utf8(), false),
+                Field::new("target_type", dict_utf8(), false),
+                Field::new("target_id", dict_utf8(), false),
+                Field::new("amount_mw", DataType::Float64, true),
+                Field::new("amount_pct", DataType::Float64, true),
+                Field::new("status_change", DataType::Boolean, true),
+                Field::new("params", map_string_f64(), true),
+            ]
+            .into(),
+        ),
+        false,
+    )))
+}
+
+/// `List<Struct{ step_index, delay_ms, priority, merit_order, action_set,
+/// rollback_on_fail }>` for executable RAS sequence ordering (v0.12.0+).
+fn ras_sequence_step_type() -> DataType {
+    DataType::List(Arc::new(Field::new(
+        "step",
+        DataType::Struct(
+            vec![
+                Field::new("step_index", DataType::Int32, false),
+                Field::new("delay_ms", DataType::Float64, true),
+                Field::new("priority", DataType::Int32, true),
+                Field::new("merit_order", DataType::Int32, true),
+                Field::new("action_set", ras_action_element_type(), false),
+                Field::new("rollback_on_fail", DataType::Boolean, true),
+            ]
+            .into(),
+        ),
+        false,
+    )))
+}
+
+/// `Struct{ armed, arm_delay_ms, disarm_delay_ms, rearm_delay_ms, max_operations }`
+/// for RAS arming window policy (v0.12.0+).
+fn ras_arming_window_type() -> DataType {
+    DataType::Struct(
+        vec![
+            Field::new("armed", DataType::Boolean, true),
+            Field::new("arm_delay_ms", DataType::Float64, true),
+            Field::new("disarm_delay_ms", DataType::Float64, true),
+            Field::new("rearm_delay_ms", DataType::Float64, true),
+            Field::new("max_operations", DataType::Int32, true),
+        ]
+        .into(),
+    )
 }
 
 /// File-level metadata applied to each table schema.
@@ -842,6 +962,9 @@ pub fn scenario_context_schema() -> Schema {
 
 /// Optional `protection_contingencies` table schema (v0.11.0+).
 ///
+/// Deprecated for new RAS writes in v0.12.0+. Retained for backward-compatible reads
+/// and deterministic migration into `remedial_action_schemes`.
+///
 /// One row per protection-driven contingency event, keyed to a `contingencies.contingency_id`.
 /// Implements the layered model from
 /// `docs/adr/0001-protection-informed-contingencies.md`: a logical protection-group baseline
@@ -884,6 +1007,9 @@ pub fn protection_contingencies_schema() -> Schema {
 
 /// Optional `topology_changes` table schema (v0.11.0+).
 ///
+/// Deprecated for new RAS writes in v0.12.0+. Retained for backward-compatible reads
+/// and deterministic migration into `remedial_action_schemes` action sets.
+///
 /// One row per resulting topology delta. `provenance` discriminates planning intent
 /// (`declared`, emitted by Phase 0 producers) from a future solver-derived delta (`solved`).
 pub fn topology_changes_schema() -> Schema {
@@ -919,6 +1045,41 @@ pub fn protection_table_schemas(include_topology_changes: bool) -> Vec<(&'static
         tables.push((TABLE_TOPOLOGY_CHANGES, topology_changes_schema()));
     }
     tables
+}
+
+/// Optional canonical `remedial_action_schemes` table schema (v0.12.0+).
+///
+/// This section implements the publicly documented WECC Common RAS Model format.
+/// No proprietary data is included.
+pub fn remedial_action_schemes_schema() -> Schema {
+    Schema::new_with_metadata(
+        vec![
+            Field::new("ras_id", dict_utf8(), false),
+            Field::new("name", DataType::Utf8, true),
+            Field::new("authority", DataType::Utf8, true),
+            Field::new("model_version", DataType::Utf8, true),
+            Field::new("enabled", DataType::Boolean, false),
+            Field::new("arming_window", ras_arming_window_type(), true),
+            Field::new("arming_filters", ras_model_filter_type(), true),
+            Field::new("arming_conditions", ras_model_condition_type(), true),
+            Field::new("trigger_filters", ras_model_filter_type(), true),
+            Field::new("trigger_conditions", ras_model_condition_type(), false),
+            Field::new("sequence_steps", ras_sequence_step_type(), false),
+            Field::new("remedial_action", dict_utf8(), true),
+            Field::new("scheme_kind", dict_utf8(), true),
+            Field::new("remedial_action_elements", ras_action_element_type(), true),
+            Field::new("applicable_contingency_ids", utf8_list_type(), true),
+            Field::new("notes", DataType::Utf8, true),
+            Field::new("data_confidence", dict_utf8(), false),
+            Field::new("params", map_string_f64(), true),
+        ],
+        schema_metadata(),
+    )
+}
+
+/// Returns optional canonical RAS table schemas in deterministic order (v0.12.0+).
+pub fn remedial_action_table_schemas() -> Vec<(&'static str, Schema)> {
+    vec![(TABLE_REMEDIAL_ACTION_SCHEMES, remedial_action_schemes_schema())]
 }
 
 /// `transformers_2w` table schema.
@@ -1423,6 +1584,7 @@ pub fn table_schema(table_name: &str) -> Option<Schema> {
         TABLE_DYNAMICS_MODELS => Some(dynamics_models_schema()),
         TABLE_PROTECTION_CONTINGENCIES => Some(protection_contingencies_schema()),
         TABLE_TOPOLOGY_CHANGES => Some(topology_changes_schema()),
+        TABLE_REMEDIAL_ACTION_SCHEMES => Some(remedial_action_schemes_schema()),
         TABLE_COMPUTATIONAL_LOAD_PROFILES => Some(computational_load_profiles_schema()),
         TABLE_FACTS_DEVICES => Some(facts_devices_schema()),
         TABLE_CONNECTIVITY_GROUPS => Some(connectivity_groups_schema()),
@@ -1511,17 +1673,45 @@ mod tests {
             "topology_changes must resolve via table_schema()"
         );
         assert!(
+            table_schema("remedial_action_schemes").is_some(),
+            "remedial_action_schemes must resolve via table_schema()"
+        );
+        assert!(
             !all.iter()
-                .any(|(n, _)| *n == "protection_contingencies" || *n == "topology_changes"),
-            "v0.11.0 protection tables must NOT appear in all_table_schemas()"
+                .any(|(n, _)| *n == "protection_contingencies"
+                    || *n == "topology_changes"
+                    || *n == "remedial_action_schemes"),
+            "optional RAS/protection tables must NOT appear in all_table_schemas()"
         );
 
-        // version gate: v0.11.0 current, v0.10.0 retained for additive backward reads
+        // version gate: v0.12.0 current, v0.11.0 and v0.10.0 retained for backward reads
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.12.0"));
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.12.0"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.11.0"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.11.0"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.10.0"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.10.0"));
-        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 4);
+        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 6);
+    }
+
+    #[test]
+    fn remedial_action_schemes_match_v012_contract() {
+        let ras = super::remedial_action_schemes_schema();
+        assert_eq!(ras.fields().len(), 18);
+        assert_eq!(ras.field(0).name(), "ras_id");
+        assert!(!ras.field(0).is_nullable());
+        assert_eq!(ras.field(4).name(), "enabled");
+        assert!(!ras.field(4).is_nullable());
+        assert_eq!(ras.field(9).name(), "trigger_conditions");
+        assert!(!ras.field(9).is_nullable());
+        assert_eq!(ras.field(10).name(), "sequence_steps");
+        assert!(!ras.field(10).is_nullable());
+        assert_eq!(ras.field(16).name(), "data_confidence");
+        assert!(!ras.field(16).is_nullable());
+
+        let optional = super::remedial_action_table_schemas();
+        assert_eq!(optional.len(), 1);
+        assert_eq!(optional[0].0, "remedial_action_schemes");
     }
 
     #[test]

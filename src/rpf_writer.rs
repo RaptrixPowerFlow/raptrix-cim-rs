@@ -193,6 +193,8 @@ pub struct WriteOptions {
     pub computational_load_mode: Option<bool>,
     /// v0.10.0: append optional root `computational_load_profiles` column (may be zero-row).
     pub emit_computational_load_profiles: bool,
+    /// v0.12.0: append optional canonical `remedial_action_schemes` table.
+    pub emit_remedial_action_schemes: bool,
 }
 
 /// Policy for handling detached electrical islands at export time.
@@ -365,6 +367,7 @@ impl Default for WriteOptions {
             default_shunt_control_mode: None,
             computational_load_mode: None,
             emit_computational_load_profiles: false,
+            emit_remedial_action_schemes: false,
         }
     }
 }
@@ -1989,6 +1992,7 @@ pub fn write_complete_rpf_with_options(
             include_facts_devices: false,
             include_facts_solved: false,
             include_computational_load_profiles: options.emit_computational_load_profiles,
+            include_remedial_action_schemes: options.emit_remedial_action_schemes,
             // CIM exporter does not synthesize protection-informed contingencies; the closed
             // core / EMS ingestion paths populate these v0.11.0 optional tables.
             include_protection_contingencies: false,
@@ -2416,6 +2420,22 @@ fn parse_eq_components_for_path(
             diagram_points = parsed_diagram_points;
         }
         CgmesProfileKind::Tp => {
+            base_voltages = parser::base_voltage_specs_from_reader(Cursor::new(&bytes))
+                .with_context(|| {
+                    format!(
+                        "failed to extract BaseVoltage elements from CGMES input file at {path}"
+                    )
+                })?;
+
+            equipment_base_voltage_refs = parser::equipment_base_voltage_refs_from_reader(
+                Cursor::new(&bytes),
+            )
+            .with_context(|| {
+                format!(
+                    "failed to extract TopologicalNode/Equipment BaseVoltage links from CGMES input file at {path}"
+                )
+            })?;
+
             connectivity_groups =
                 parser::connectivity_node_groups_from_reader(Cursor::new(&bytes)).with_context(|| {
                     format!(
@@ -2774,6 +2794,29 @@ fn parse_eq_topology_rows(
         };
         bus_nominal_kv_by_key.insert(bus_key, best);
         bus_voltage_label_by_key.insert(bus_key, format_kv_label(best));
+    }
+
+    // Fallback for TP-driven cases where nominal kV is attached directly to the
+    // TopologicalNode rather than inferred from connected equipment terminals.
+    for bus_key in &sorted_bus_keys {
+        if bus_nominal_kv_by_key.contains_key(*bus_key) {
+            continue;
+        }
+        let base_voltage_mrid = equipment_base_voltage_by_mrid
+            .get(*bus_key)
+            .or_else(|| {
+                conn_to_topo
+                    .get(*bus_key)
+                    .and_then(|topo_key| equipment_base_voltage_by_mrid.get(*topo_key))
+            });
+        let Some(base_voltage_mrid) = base_voltage_mrid else {
+            continue;
+        };
+        let Some(nominal_kv) = base_voltage_by_mrid.get(base_voltage_mrid).copied() else {
+            continue;
+        };
+        bus_nominal_kv_by_key.insert(*bus_key, nominal_kv);
+        bus_voltage_label_by_key.insert(*bus_key, format_kv_label(nominal_kv));
     }
 
     let mut bus_key_to_bus_id: HashMap<&str, i32> = HashMap::with_capacity(sorted_bus_keys.len());

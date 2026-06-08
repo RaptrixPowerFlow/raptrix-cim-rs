@@ -102,7 +102,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 | Connectivity detail | `--connectivity-detail` | Granular ConnectivityNode bus mapping; emits optional `connectivity_groups` table |
 | Node-breaker | `--connectivity-detail --node-breaker` | Adds switch-topology detail tables for operational and viewer workflows |
 
-### Output tables (schema contract v0.11.0)
+### Output tables (schema contract v0.12.0)
 
 **18 canonical tables (always emitted):** `metadata`, `buses`, `branches`, `multi_section_lines`, `dc_lines_2w`, `generators`, `loads`, `fixed_shunts`, `switched_shunts`, `switched_shunt_banks`, `transformers_2w`, `transformers_3w`, `areas`, `zones`, `owners`, `contingencies`, `interfaces`, `dynamics_models`
 
@@ -114,7 +114,10 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 - `buses_solved`, `generators_solved`, `switched_shunts_solved` — when `case_mode = solved_snapshot` (v0.8.5+)
 - `facts_devices`, `facts_solved` — optional FACTS extension tables (v0.8.6+)
 - `computational_load_profiles` — optional computational-load extension table (v0.10.0+; API `WriteOptions.emit_computational_load_profiles`)
-- `protection_contingencies`, `topology_changes` — optional protection-informed contingency tables (v0.11.0+; API `RootWriteOptions.include_protection_contingencies` / `include_topology_changes`)
+- `remedial_action_schemes` — optional canonical RAS/SPS table (v0.12.0+; API `RootWriteOptions.include_remedial_action_schemes`)
+- `protection_contingencies`, `topology_changes` — legacy compatibility tables (v0.11.0); retained for backward reads and migration, deprecated for new RAS writes
+
+RAS safety note: all public examples in this repository use synthetic demonstration data only. No CEII, utility identifiers, or protected topology data are included.
 
 ### Detached island policy
 
@@ -140,7 +143,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 
 ## Data Contract (Locked)
 
-- Current schema contract: **v0.11.0** (CGMES 3.0+ only). v0.11.0 adds optional protection-informed contingency tables (`protection_contingencies`, `topology_changes`) and the `rpf.protection.fidelity` metadata key, additively over v0.10.0. The RPF version gate accepts v0.11.0 and retains v0.10.0 for backward-compatible reads.
+- Current schema contract: **v0.12.0** (CGMES 3.0+ only). v0.12.0 adds optional canonical `remedial_action_schemes` for executable RAS/SPS sequences and establishes a single-model path for new writes. Legacy v0.11.0 `protection_contingencies`/`topology_changes` remain supported for backward-compatible reads and deterministic migration. The RPF version gate accepts v0.12.0, v0.11.0, and v0.10.0.
 - Canonical source: raptrix-cim-arrow/src/schema.rs
 - Contract policy and semantics: docs/schema-contract.md
 - Plain-English field guide: [docs/rpf-field-guide.md](docs/rpf-field-guide.md)
@@ -154,9 +157,11 @@ RPF standardization here is intentional: it enables direct CIM-to-powerflow inte
 
 ### Versioning Policy
 
-Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is at schema **`v0.11.0`** while the converter crate release is **`0.5.0`**.
+Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is at schema **`v0.12.0`** while the converter crate release is **`0.5.0`**.
 
-Readers in this repository accept `v0.11.0` / `0.11.0` and retain `v0.10.0` / `0.10.0` for backward-compatible reads (the v0.11.0 changes are additive optional tables).
+Readers in this repository accept `v0.12.0` / `0.12.0` and retain `v0.11.0` / `0.11.0` and `v0.10.0` / `0.10.0` for backward-compatible reads.
+
+**v0.12.0**: Adds optional canonical `remedial_action_schemes` for executable RAS/SPS triggers and sequenced actions, plus metadata `raptrix.features.remedial_action_schemes` and `rpf.ras.schema_mode=canonical_v12`. New RAS writes use this single schema.
 
 **v0.11.0**: Adds optional protection-informed contingency tables (`protection_contingencies`, `topology_changes`), the `protection_event` element-type token, and the `rpf.protection.fidelity` metadata key — additive and backward-compatible with v0.10.0.
 **v0.9.1**: Adds optional `loads` ZIP fidelity fields (`p_i_pu`, `q_i_pu`, `p_y_pu`, `q_y_pu`) while preserving existing `p_pu`/`q_pu` constant-power semantics and required table shape.
@@ -449,20 +454,29 @@ One-line Cargo command:
 
 - `cargo rpf-regression -- --data-root C:\raptrix-cim-tests\CGMES_ConformityAssessmentScheme_TestConfigurations_v3-0-3\CGMES_ConformityAssessmentScheme_TestConfigurations_v3-0-3\v3.0 --profiles both --clean`
 
+Golden path (authoritative):
+
+- `cargo rpf-regression -- --data-root C:\raptrix-cim-tests\CGMES_ConformityAssessmentScheme_TestConfigurations_v3-0-3\CGMES_ConformityAssessmentScheme_TestConfigurations_v3-0-3\v3.0 --profiles release --clean`
+
 If `RAPTRIX_TEST_DATA_ROOT` is already set, `--data-root` can be omitted:
 
-- `cargo rpf-regression -- --profiles both --clean`
+- `cargo rpf-regression -- --profiles release --clean`
 
 Outputs are written to:
 
-- `tests/data/external/results/debug`
 - `tests/data/external/results/release`
 - `tests/data/external/results/report.md`
 - `tests/data/external/results/report.json`
 
+`tests/data/external/results/release` is the canonical golden validation path. Debug output is optional and non-authoritative.
+
 Strict multi-profile check (includes SSH and DY inputs):
 
 - `cargo rpf-regression -- --data-root C:\raptrix-cim-tests\CGMES_ConformityAssessmentScheme_TestConfigurations_v3-0-3\CGMES_ConformityAssessmentScheme_TestConfigurations_v3-0-3\v3.0 --profiles both --clean --include-ssh-dy`
+
+Cleanup helper (remove non-canonical debug artifacts):
+
+- `./scripts/clean-rpf-results.ps1`
 
 Interpretation of failures:
 
