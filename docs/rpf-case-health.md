@@ -30,8 +30,8 @@ Rules are evaluated in severity order; `grade` is the maximum severity among tri
 Constants in `raptrix-cim-arrow/src/health/mod.rs` are tuned against:
 
 - **IEEE 14** — small, should stay `Healthy` / low bus count
-- **Texas2k** (~2.7k buses) — `LARGE_CASE_BUS_THRESHOLD = 1500` triggers `Caution` for size
-- **NYISO** (~1.5k buses) — same size threshold; many taps/shunts may add further `Caution` reasons
+- **Large planning cases** (~1.5k–2.7k buses) — `LARGE_CASE_BUS_THRESHOLD = 1500` triggers `Caution` for size
+- **Cases with many taps/shunts** — non-unity transformer taps and switched shunts may add further `Caution` reasons
 
 Adjust thresholds only with corresponding updates to `raptrix-cim-arrow/tests/case_health.rs` and PSS/E golden RPFs under `raptrix-psse-rs/tests/golden`.
 

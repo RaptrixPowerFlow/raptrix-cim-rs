@@ -816,10 +816,10 @@ fn optional_solve_trace_params(_meta_batch: Option<&RecordBatch>) -> (Option<f64
 // --- Grading (deterministic scorecard) ---
 
 /// Bus count at or above which cases are treated as "large" for caution grading.
-/// Calibrated: Texas2k ~2.7k buses; NYISO ~1.5k; IEEE 14/118 well below.
+/// Calibrated on large public planning cases (~1.5k–2.7k buses); IEEE 14/118 well below.
 const LARGE_CASE_BUS_THRESHOLD: usize = 1_500;
 
-/// Many non-unity taps / switched shunts — typical on Texas2k and NYISO planning cases.
+/// Many non-unity taps / switched shunts — typical on large utility planning cases.
 const MANY_TAP_SETTINGS_THRESHOLD: usize = 50;
 const MANY_SWITCHED_SHUNTS_THRESHOLD: usize = 100;
 
@@ -947,7 +947,7 @@ fn grade_case(
         rules.push((
             RpfHealthGrade::Caution,
             format!(
-                "large case ({} buses; threshold {LARGE_CASE_BUS_THRESHOLD} tuned on NYISO/Texas2k)",
+                "large case ({} buses; threshold {LARGE_CASE_BUS_THRESHOLD} tuned on large planning cases)",
                 counts.buses
             ),
         ));

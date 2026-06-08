@@ -2802,13 +2802,11 @@ fn parse_eq_topology_rows(
         if bus_nominal_kv_by_key.contains_key(*bus_key) {
             continue;
         }
-        let base_voltage_mrid = equipment_base_voltage_by_mrid
-            .get(*bus_key)
-            .or_else(|| {
-                conn_to_topo
-                    .get(*bus_key)
-                    .and_then(|topo_key| equipment_base_voltage_by_mrid.get(*topo_key))
-            });
+        let base_voltage_mrid = equipment_base_voltage_by_mrid.get(*bus_key).or_else(|| {
+            conn_to_topo
+                .get(*bus_key)
+                .and_then(|topo_key| equipment_base_voltage_by_mrid.get(*topo_key))
+        });
         let Some(base_voltage_mrid) = base_voltage_mrid else {
             continue;
         };

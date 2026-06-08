@@ -28,8 +28,9 @@ and weakens differentiation versus EMS contingency processors and modern node-br
 
 ### Architectural tension we must resolve
 
-- Keep the **closed core solver fast and closed** (commercial moat; <1s on large systems,
-  hot-start cloning, zero-copy paths). The core Newton-Raphson engine must not change.
+- Keep the **commercial solver core separate** from the open interchange contract (hot-start
+  cloning and zero-copy paths stay in the closed product). The core Newton-Raphson engine
+  must not change in this repository.
 - Keep the **`.rpf` format rich and open** (adoption vehicle). The schema is the durable
   contract that external tools and the closed core target.
 - Support protection-informed and topology-changing contingencies **without forcing every

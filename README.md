@@ -5,11 +5,12 @@ Copyright (c) 2026 Raptrix Power
 
 # raptrix-cim-rs
 
-raptrix-cim-rs — the world’s first high-performance zero-copy Rust implementation of IEC 61970 CIM optimized for real-time power flow and SCED.
+raptrix-cim-rs — a high-performance zero-copy Rust implementation of IEC 61970 CIM (CGMES 3.0+)
+optimized for solver-ready RPF interchange.
 
 We close the physics gap — planning to real time.
 
-Part of the Raptrix Power ecosystem.
+Part of the Raptrix Suite ecosystem — Sentinel for real-time operations, Forge for short-term planning.
 
 Related repositories:
 
@@ -157,7 +158,7 @@ RPF standardization here is intentional: it enables direct CIM-to-powerflow inte
 
 ### Versioning Policy
 
-Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is at schema **`v0.12.0`** while the converter crate release is **`0.5.0`**.
+Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is at schema **`v0.12.0`** while the converter crate release is **`0.5.2`**.
 
 Readers in this repository accept `v0.12.0` / `0.12.0` and retain `v0.11.0` / `0.11.0` and `v0.10.0` / `0.10.0` for backward-compatible reads.
 

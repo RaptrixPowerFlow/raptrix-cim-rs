@@ -35,14 +35,13 @@ use crate::schema::{
     METADATA_KEY_FEATURE_FACTS, METADATA_KEY_FEATURE_FACTS_SOLVED,
     METADATA_KEY_FEATURE_NODE_BREAKER, METADATA_KEY_FEATURE_PROTECTION_CONTINGENCIES,
     METADATA_KEY_FEATURE_REMEDIAL_ACTION_SCHEMES, METADATA_KEY_FEATURE_TOPOLOGY_CHANGES,
-    METADATA_KEY_PROTECTION_FIDELITY, METADATA_KEY_RAS_SCHEMA_MODE,
-    METADATA_KEY_RPF_VERSION, METADATA_KEY_VERSION, SCHEMA_VERSION, SUPPORTED_RPF_VERSIONS,
-    TABLE_BRANCHES, TABLE_BUSES, TABLE_BUSES_SOLVED, TABLE_COMPUTATIONAL_LOAD_PROFILES,
-    TABLE_DC_LINES_2W, TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_FACTS_DEVICES,
-    TABLE_FACTS_SOLVED, TABLE_GENERATORS, TABLE_GENERATORS_SOLVED, TABLE_LOADS,
-    TABLE_MULTI_SECTION_LINES, TABLE_PROTECTION_CONTINGENCIES,
-    TABLE_REMEDIAL_ACTION_SCHEMES, TABLE_SWITCHED_SHUNT_BANKS, TABLE_TOPOLOGY_CHANGES,
-    TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, all_table_schemas,
+    METADATA_KEY_PROTECTION_FIDELITY, METADATA_KEY_RAS_SCHEMA_MODE, METADATA_KEY_RPF_VERSION,
+    METADATA_KEY_VERSION, SCHEMA_VERSION, SUPPORTED_RPF_VERSIONS, TABLE_BRANCHES, TABLE_BUSES,
+    TABLE_BUSES_SOLVED, TABLE_COMPUTATIONAL_LOAD_PROFILES, TABLE_DC_LINES_2W,
+    TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED,
+    TABLE_GENERATORS, TABLE_GENERATORS_SOLVED, TABLE_LOADS, TABLE_MULTI_SECTION_LINES,
+    TABLE_PROTECTION_CONTINGENCIES, TABLE_REMEDIAL_ACTION_SCHEMES, TABLE_SWITCHED_SHUNT_BANKS,
+    TABLE_TOPOLOGY_CHANGES, TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, all_table_schemas,
     computational_load_table_schemas, diagram_layout_table_schemas, facts_table_schemas,
     node_breaker_table_schemas, protection_table_schemas, remedial_action_table_schemas,
     schema_metadata, solved_state_table_schemas, table_schema,
@@ -961,9 +960,9 @@ pub fn validate_rpf_file(path: impl AsRef<Path>, options: &RootWriteOptions) -> 
             );
         }
 
-        let ras = by_name.get(TABLE_REMEDIAL_ACTION_SCHEMES).context(
-            "post-write contract violation: missing remedial_action_schemes table",
-        )?;
+        let ras = by_name
+            .get(TABLE_REMEDIAL_ACTION_SCHEMES)
+            .context("post-write contract violation: missing remedial_action_schemes table")?;
         require_non_null_count_equals_len(TABLE_REMEDIAL_ACTION_SCHEMES, ras, "ras_id")?;
         require_non_null_count_equals_len(TABLE_REMEDIAL_ACTION_SCHEMES, ras, "enabled")?;
         require_non_null_count_equals_len(
@@ -1040,14 +1039,13 @@ mod tests {
 
     use crate::schema::{
         METADATA_KEY_FEATURE_COMPUTATIONAL_LOAD_PROFILES,
-        METADATA_KEY_FEATURE_REMEDIAL_ACTION_SCHEMES,
-        METADATA_KEY_FEATURE_PROTECTION_CONTINGENCIES, METADATA_KEY_FEATURE_TOPOLOGY_CHANGES,
-        METADATA_KEY_PROTECTION_FIDELITY, METADATA_KEY_RAS_SCHEMA_MODE,
-        METADATA_KEY_RPF_VERSION, METADATA_KEY_VERSION,
-        SCHEMA_VERSION, TABLE_BRANCHES, TABLE_COMPUTATIONAL_LOAD_PROFILES, TABLE_DIAGRAM_OBJECTS,
-        TABLE_DIAGRAM_POINTS, TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED, TABLE_GENERATORS,
-        TABLE_LOADS, TABLE_PROTECTION_CONTINGENCIES, TABLE_REMEDIAL_ACTION_SCHEMES,
-        TABLE_TOPOLOGY_CHANGES, all_table_schemas, branches_schema,
+        METADATA_KEY_FEATURE_PROTECTION_CONTINGENCIES,
+        METADATA_KEY_FEATURE_REMEDIAL_ACTION_SCHEMES, METADATA_KEY_FEATURE_TOPOLOGY_CHANGES,
+        METADATA_KEY_PROTECTION_FIDELITY, METADATA_KEY_RAS_SCHEMA_MODE, METADATA_KEY_RPF_VERSION,
+        METADATA_KEY_VERSION, SCHEMA_VERSION, TABLE_BRANCHES, TABLE_COMPUTATIONAL_LOAD_PROFILES,
+        TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED,
+        TABLE_GENERATORS, TABLE_LOADS, TABLE_PROTECTION_CONTINGENCIES,
+        TABLE_REMEDIAL_ACTION_SCHEMES, TABLE_TOPOLOGY_CHANGES, all_table_schemas, branches_schema,
         computational_load_profiles_schema, diagram_objects_schema, diagram_points_schema,
         facts_devices_schema, facts_solved_schema, generators_schema, loads_schema,
         protection_contingencies_schema, remedial_action_schemes_schema, schema_metadata,
@@ -1732,25 +1730,26 @@ mod tests {
             Arc::new(ras_schema.clone()),
             vec![
                 one_dict("RAS_SYNTHETIC_001"), // ras_id
-                Arc::new(StringArray::from(vec![Some("Synthetic two-line overload response")]))
-                    as _, // name
+                Arc::new(StringArray::from(vec![Some(
+                    "Synthetic two-line overload response",
+                )])) as _, // name
                 Arc::new(StringArray::from(vec![Some("public_demo")])) as _, // authority
                 Arc::new(StringArray::from(vec![Some("v1")])) as _, // model_version
-                Arc::new(BooleanArray::from(vec![true])) as _,       // enabled
-                new_null_array(ras_schema.field(5).data_type(), 1),  // arming_window
-                one_empty_list(ras_schema.field(6).data_type()),     // arming_filters
-                one_empty_list(ras_schema.field(7).data_type()),     // arming_conditions
-                one_empty_list(ras_schema.field(8).data_type()),     // trigger_filters
-                one_empty_list(ras_schema.field(9).data_type()),     // trigger_conditions
-                one_empty_list(ras_schema.field(10).data_type()),    // sequence_steps
-                one_dict("RA_SYNTHETIC_001"),                        // remedial_action
-                one_dict("special_protection"),                      // scheme_kind
-                one_empty_list(ras_schema.field(13).data_type()),    // remedial_action_elements
-                one_empty_list(ras_schema.field(14).data_type()),    // applicable_contingency_ids
+                Arc::new(BooleanArray::from(vec![true])) as _, // enabled
+                new_null_array(ras_schema.field(5).data_type(), 1), // arming_window
+                one_empty_list(ras_schema.field(6).data_type()), // arming_filters
+                one_empty_list(ras_schema.field(7).data_type()), // arming_conditions
+                one_empty_list(ras_schema.field(8).data_type()), // trigger_filters
+                one_empty_list(ras_schema.field(9).data_type()), // trigger_conditions
+                one_empty_list(ras_schema.field(10).data_type()), // sequence_steps
+                one_dict("RA_SYNTHETIC_001"),  // remedial_action
+                one_dict("special_protection"), // scheme_kind
+                one_empty_list(ras_schema.field(13).data_type()), // remedial_action_elements
+                one_empty_list(ras_schema.field(14).data_type()), // applicable_contingency_ids
                 Arc::new(StringArray::from(vec![Some(
                     "synthetic demonstration only; no CEII or utility topology",
                 )])) as _, // notes
-                one_dict("modeled"),                                // data_confidence
+                one_dict("modeled"),           // data_confidence
                 new_null_array(ras_schema.field(17).data_type(), 1), // params
             ],
         )?;

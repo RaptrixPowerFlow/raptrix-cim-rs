@@ -9,6 +9,23 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 
 Copyright (c) 2026 Raptrix Power
 
+## Converter 0.5.2 — public safety and RealGrid kV fixes (2026-06-08)
+
+### Converter release: Crate version 0.5.2 (raptrix-cim-arrow) / 0.5.2 (raptrix-cim-rs) | Arrow schema v0.12.0
+
+### Fixed
+
+- **RealGrid / TP BaseVoltage ingestion**: parse `TopologicalNode.BaseVoltage` and TP-profile `BaseVoltage` references so topological bus keys receive required `nominal_kv` on ENTSO-E RealGrid cases.
+- **Bus kV fallback**: connectivity-node and topological-node fallback paths now inherit mapped topological `BaseVoltage` when terminal equipment inference is unavailable.
+
+### Changed
+
+- **Public-facing docs sanitized** for open-repo safety: README marketing tone, ADR-0001 closed-product wording, RAS/SPS public summary (replacing internal placeholder), and generalized case-health calibration references (no utility-specific case names in public docs).
+
+### Compatibility
+
+- **No schema contract change.** Arrow schema remains **v0.12.0**; this is a converter patch release only.
+
 ## v0.12.0 — converter 0.5.0 (2026-06-08)
 
 ### Converter release: Crate version 0.5.0 (raptrix-cim-arrow) / 0.5.0 (raptrix-cim-rs) | Arrow schema v0.12.0
@@ -589,5 +606,6 @@ Copyright (c) 2026 Raptrix Power
 - Backwards compatibility is preserved: existing `v0.5.2` Parquet files remain valid for the core ingest path.
 - This is a MINOR bump because the new node-breaker functionality is additive and optional, aligned with Semantic Versioning and interoperability goals.
 - PATCH releases remain reserved for fixes only; this release unlocks full operational CGMES fidelity while leaving the lean planning-model core untouched for speed.
+
 
 

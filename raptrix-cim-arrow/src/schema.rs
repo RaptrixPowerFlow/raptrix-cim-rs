@@ -83,12 +83,7 @@ pub const RPF_VERSION: &str = "v0.12.0";
 /// v0.12.0 is the current contract release. v0.11.0 and v0.10.0 are retained for
 /// backward-compatible reads.
 pub const SUPPORTED_RPF_VERSIONS: &[&str] = &[
-    "v0.12.0",
-    "0.12.0",
-    "v0.11.0",
-    "0.11.0",
-    "v0.10.0",
-    "0.10.0",
+    "v0.12.0", "0.12.0", "v0.11.0", "0.11.0", "v0.10.0", "0.10.0",
 ];
 
 /// Validates a nominal kV value for required network voltage fields.
@@ -1079,7 +1074,10 @@ pub fn remedial_action_schemes_schema() -> Schema {
 
 /// Returns optional canonical RAS table schemas in deterministic order (v0.12.0+).
 pub fn remedial_action_table_schemas() -> Vec<(&'static str, Schema)> {
-    vec![(TABLE_REMEDIAL_ACTION_SCHEMES, remedial_action_schemes_schema())]
+    vec![(
+        TABLE_REMEDIAL_ACTION_SCHEMES,
+        remedial_action_schemes_schema(),
+    )]
 }
 
 /// `transformers_2w` table schema.
@@ -1677,10 +1675,9 @@ mod tests {
             "remedial_action_schemes must resolve via table_schema()"
         );
         assert!(
-            !all.iter()
-                .any(|(n, _)| *n == "protection_contingencies"
-                    || *n == "topology_changes"
-                    || *n == "remedial_action_schemes"),
+            !all.iter().any(|(n, _)| *n == "protection_contingencies"
+                || *n == "topology_changes"
+                || *n == "remedial_action_schemes"),
             "optional RAS/protection tables must NOT appear in all_table_schemas()"
         );
 
