@@ -9,6 +9,25 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 
 Copyright (c) 2026 Raptrix Power
 
+## Converter 0.5.3 — RPF v0.12.1 unified optional tables (2026-06-10)
+
+### Converter release: Crate version 0.5.3 (raptrix-cim-arrow) / 0.5.3 (raptrix-cim-rs) | Arrow schema v0.12.1
+
+### Added
+
+- **Optional root table `contingency_island_analysis`** for contingency topology filter audit rows (enabled via `RootWriteOptions.include_contingency_island_analysis`; file metadata `raptrix.features.contingency_island_analysis=true` when present).
+- **Unified v0.12.1 contract** merging public v0.12.0 `remedial_action_schemes` with the contingency island audit table.
+
+### Changed
+
+- **`SUPPORTED_RPF_VERSIONS`** now accepts only **`v0.12.1`** / **`0.12.1`**. Prior contract files must be re-emitted.
+- `RPF_VERSION` / `SCHEMA_VERSION` / `BRANDING` bumped to v0.12.1.
+- Public README and schema-contract docs updated for marketing-safe, schema-focused language.
+
+### Compatibility
+
+- **Re-export required.** v0.12.0 and earlier RPF files are rejected by the version gate.
+
 ## Converter 0.5.2 — public safety and RealGrid kV fixes (2026-06-08)
 
 ### Converter release: Crate version 0.5.2 (raptrix-cim-arrow) / 0.5.2 (raptrix-cim-rs) | Arrow schema v0.12.0

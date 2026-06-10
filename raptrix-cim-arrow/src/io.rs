@@ -31,20 +31,22 @@ use memmap2::MmapOptions;
 use crate::schema::{
     BRANDING, METADATA_KEY_BRANDING, METADATA_KEY_FACTS_SOLVED_STATE_PRESENCE,
     METADATA_KEY_FEATURE_COMPUTATIONAL_LOAD_PROFILES, METADATA_KEY_FEATURE_CONTINGENCIES_STUB,
-    METADATA_KEY_FEATURE_DIAGRAM_LAYOUT, METADATA_KEY_FEATURE_DYNAMICS_STUB,
-    METADATA_KEY_FEATURE_FACTS, METADATA_KEY_FEATURE_FACTS_SOLVED,
-    METADATA_KEY_FEATURE_NODE_BREAKER, METADATA_KEY_FEATURE_PROTECTION_CONTINGENCIES,
-    METADATA_KEY_FEATURE_REMEDIAL_ACTION_SCHEMES, METADATA_KEY_FEATURE_TOPOLOGY_CHANGES,
-    METADATA_KEY_PROTECTION_FIDELITY, METADATA_KEY_RAS_SCHEMA_MODE, METADATA_KEY_RPF_VERSION,
-    METADATA_KEY_VERSION, SCHEMA_VERSION, SUPPORTED_RPF_VERSIONS, TABLE_BRANCHES, TABLE_BUSES,
-    TABLE_BUSES_SOLVED, TABLE_COMPUTATIONAL_LOAD_PROFILES, TABLE_DC_LINES_2W,
+    METADATA_KEY_FEATURE_CONTINGENCY_ISLAND_ANALYSIS, METADATA_KEY_FEATURE_DIAGRAM_LAYOUT,
+    METADATA_KEY_FEATURE_DYNAMICS_STUB, METADATA_KEY_FEATURE_FACTS,
+    METADATA_KEY_FEATURE_FACTS_SOLVED, METADATA_KEY_FEATURE_NODE_BREAKER,
+    METADATA_KEY_FEATURE_PROTECTION_CONTINGENCIES, METADATA_KEY_FEATURE_REMEDIAL_ACTION_SCHEMES,
+    METADATA_KEY_FEATURE_TOPOLOGY_CHANGES, METADATA_KEY_PROTECTION_FIDELITY,
+    METADATA_KEY_RAS_SCHEMA_MODE, METADATA_KEY_RPF_VERSION, METADATA_KEY_VERSION, SCHEMA_VERSION,
+    SUPPORTED_RPF_VERSIONS, TABLE_BRANCHES, TABLE_BUSES, TABLE_BUSES_SOLVED,
+    TABLE_COMPUTATIONAL_LOAD_PROFILES, TABLE_CONTINGENCY_ISLAND_ANALYSIS, TABLE_DC_LINES_2W,
     TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED,
     TABLE_GENERATORS, TABLE_GENERATORS_SOLVED, TABLE_LOADS, TABLE_MULTI_SECTION_LINES,
     TABLE_PROTECTION_CONTINGENCIES, TABLE_REMEDIAL_ACTION_SCHEMES, TABLE_SWITCHED_SHUNT_BANKS,
     TABLE_TOPOLOGY_CHANGES, TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, all_table_schemas,
-    computational_load_table_schemas, diagram_layout_table_schemas, facts_table_schemas,
-    node_breaker_table_schemas, protection_table_schemas, remedial_action_table_schemas,
-    schema_metadata, solved_state_table_schemas, table_schema,
+    computational_load_table_schemas, contingency_island_table_schemas,
+    diagram_layout_table_schemas, facts_table_schemas, node_breaker_table_schemas,
+    protection_table_schemas, remedial_action_table_schemas, schema_metadata,
+    solved_state_table_schemas, table_schema,
 };
 
 /// Summary stats for a single logical table found in an `.rpf` file.
@@ -118,8 +120,10 @@ pub struct RootWriteOptions {
     /// When true, append optional `topology_changes` table (v0.11.0+).
     /// Requires `include_protection_contingencies = true`.
     pub include_topology_changes: bool,
-    /// When true, append optional `remedial_action_schemes` table (v0.12.0+).
+    /// When true, append optional `remedial_action_schemes` table (v0.12.1+).
     pub include_remedial_action_schemes: bool,
+    /// When true, append optional `contingency_island_analysis` table (v0.12.1+).
+    pub include_contingency_island_analysis: bool,
 }
 
 /// Returns the metadata key used to store the logical row count for a table.
@@ -146,6 +150,9 @@ fn enabled_optional_table_schemas(options: &RootWriteOptions) -> Vec<(&'static s
     }
     if options.include_remedial_action_schemes {
         optional.extend(remedial_action_table_schemas());
+    }
+    if options.include_contingency_island_analysis {
+        optional.extend(contingency_island_table_schemas());
     }
     if options.include_computational_load_profiles {
         optional.extend(computational_load_table_schemas());
@@ -232,6 +239,9 @@ pub fn root_rpf_schema_with_options(options: &RootWriteOptions) -> Schema {
     }
     if options.include_remedial_action_schemes {
         table_schemas.extend(remedial_action_table_schemas());
+    }
+    if options.include_contingency_island_analysis {
+        table_schemas.extend(contingency_island_table_schemas());
     }
     if options.include_computational_load_profiles {
         table_schemas.extend(computational_load_table_schemas());
@@ -592,6 +602,12 @@ pub fn write_root_rpf_with_metadata(
         root_metadata
             .entry(METADATA_KEY_RAS_SCHEMA_MODE.to_string())
             .or_insert_with(|| "canonical_v12".to_string());
+    }
+    if options.include_contingency_island_analysis {
+        root_metadata.insert(
+            METADATA_KEY_FEATURE_CONTINGENCY_ISLAND_ANALYSIS.to_string(),
+            "true".to_string(),
+        );
     }
     for (key, value) in additional_root_metadata {
         root_metadata.insert(key.clone(), value.clone());
@@ -974,6 +990,33 @@ pub fn validate_rpf_file(path: impl AsRef<Path>, options: &RootWriteOptions) -> 
         require_non_null_count_equals_len(TABLE_REMEDIAL_ACTION_SCHEMES, ras, "data_confidence")?;
     }
 
+    if options.include_contingency_island_analysis {
+        let feature = metadata
+            .get(METADATA_KEY_FEATURE_CONTINGENCY_ISLAND_ANALYSIS)
+            .with_context(|| {
+                format!(
+                    "post-write contract violation: missing metadata key '{}'",
+                    METADATA_KEY_FEATURE_CONTINGENCY_ISLAND_ANALYSIS
+                )
+            })?;
+        if feature != "true" {
+            bail!(
+                "post-write contract violation: '{}' expected 'true', found '{}'",
+                METADATA_KEY_FEATURE_CONTINGENCY_ISLAND_ANALYSIS,
+                feature
+            );
+        }
+
+        let cia = by_name
+            .get(TABLE_CONTINGENCY_ISLAND_ANALYSIS)
+            .context("post-write contract violation: missing contingency_island_analysis table")?;
+        require_non_null_count_equals_len(
+            TABLE_CONTINGENCY_ISLAND_ANALYSIS,
+            cia,
+            "contingency_id",
+        )?;
+    }
+
     Ok(())
 }
 
@@ -1039,14 +1082,16 @@ mod tests {
 
     use crate::schema::{
         METADATA_KEY_FEATURE_COMPUTATIONAL_LOAD_PROFILES,
+        METADATA_KEY_FEATURE_CONTINGENCY_ISLAND_ANALYSIS,
         METADATA_KEY_FEATURE_PROTECTION_CONTINGENCIES,
         METADATA_KEY_FEATURE_REMEDIAL_ACTION_SCHEMES, METADATA_KEY_FEATURE_TOPOLOGY_CHANGES,
         METADATA_KEY_PROTECTION_FIDELITY, METADATA_KEY_RAS_SCHEMA_MODE, METADATA_KEY_RPF_VERSION,
         METADATA_KEY_VERSION, SCHEMA_VERSION, TABLE_BRANCHES, TABLE_COMPUTATIONAL_LOAD_PROFILES,
-        TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED,
-        TABLE_GENERATORS, TABLE_LOADS, TABLE_PROTECTION_CONTINGENCIES,
-        TABLE_REMEDIAL_ACTION_SCHEMES, TABLE_TOPOLOGY_CHANGES, all_table_schemas, branches_schema,
-        computational_load_profiles_schema, diagram_objects_schema, diagram_points_schema,
+        TABLE_CONTINGENCY_ISLAND_ANALYSIS, TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS,
+        TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED, TABLE_GENERATORS, TABLE_LOADS,
+        TABLE_PROTECTION_CONTINGENCIES, TABLE_REMEDIAL_ACTION_SCHEMES, TABLE_TOPOLOGY_CHANGES,
+        all_table_schemas, branches_schema, computational_load_profiles_schema,
+        contingency_island_analysis_schema, diagram_objects_schema, diagram_points_schema,
         facts_devices_schema, facts_solved_schema, generators_schema, loads_schema,
         protection_contingencies_schema, remedial_action_schemes_schema, schema_metadata,
         topology_changes_schema,
@@ -1097,17 +1142,8 @@ mod tests {
             &output_path,
             &table_batches,
             &RootWriteOptions {
-                include_node_breaker_detail: false,
                 include_diagram_layout: true,
-                contingencies_are_stub: false,
-                dynamics_are_stub: false,
-                include_solved_state: false,
-                include_facts_devices: false,
-                include_facts_solved: false,
-                include_computational_load_profiles: false,
-                include_protection_contingencies: false,
-                include_topology_changes: false,
-                include_remedial_action_schemes: false,
+                ..Default::default()
             },
         )?;
 
@@ -1315,7 +1351,7 @@ mod tests {
             .expect_err("v0.9.3 reader should reject missing required nominal_kv fields");
         let message = format!("{err:#}");
         assert!(message.contains("missing non-nullable field 'to_nominal_kv'"));
-        assert_eq!(SCHEMA_VERSION, "v0.12.0");
+        assert_eq!(SCHEMA_VERSION, "v0.12.1");
         Ok(())
     }
 
@@ -1780,6 +1816,60 @@ mod tests {
         assert_eq!(
             metadata.get(METADATA_KEY_RAS_SCHEMA_MODE),
             Some(&"canonical_v12".to_string())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn contingency_island_analysis_round_trip_when_enabled() -> Result<()> {
+        let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_cia_present");
+        std::fs::create_dir_all(&tmp_dir)?;
+        let output_path = tmp_dir.join("cia_present.rpf");
+
+        let mut table_batches: HashMap<&'static str, RecordBatch> = all_table_schemas()
+            .into_iter()
+            .map(|(name, schema)| (name, RecordBatch::new_empty(Arc::new(schema))))
+            .collect();
+
+        let cia_schema = contingency_island_analysis_schema();
+        let cia = RecordBatch::try_new(
+            Arc::new(cia_schema.clone()),
+            vec![
+                one_dict("C_SYNTHETIC_001"),
+                one_dict("included"),
+                one_dict("main_island"),
+                Arc::new(Float64Array::from(vec![Some(120.0)])) as _,
+                Arc::new(Float64Array::from(vec![Some(150.0)])) as _,
+                Arc::new(Int32Array::from(vec![Some(42)])) as _,
+                Arc::new(Float64Array::from(vec![Some(345.0)])) as _,
+                Arc::new(BooleanArray::from(vec![Some(true)])) as _,
+                Arc::new(BooleanArray::from(vec![Some(false)])) as _,
+                Arc::new(StringArray::from(vec![Some(r#"{"demo":true}"#)])) as _,
+            ],
+        )?;
+        table_batches.insert(TABLE_CONTINGENCY_ISLAND_ANALYSIS, cia);
+
+        write_root_rpf(
+            &output_path,
+            &table_batches,
+            &RootWriteOptions {
+                include_contingency_island_analysis: true,
+                ..Default::default()
+            },
+        )?;
+
+        let tables = read_rpf_tables(&output_path)?;
+        let cia = tables
+            .iter()
+            .find(|(name, _)| name == TABLE_CONTINGENCY_ISLAND_ANALYSIS)
+            .map(|(_, batch)| batch)
+            .context("expected contingency_island_analysis table")?;
+        assert_eq!(cia.num_rows(), 1);
+
+        let metadata = rpf_file_metadata(&output_path)?;
+        assert_eq!(
+            metadata.get(METADATA_KEY_FEATURE_CONTINGENCY_ISLAND_ANALYSIS),
+            Some(&"true".to_string())
         );
         Ok(())
     }

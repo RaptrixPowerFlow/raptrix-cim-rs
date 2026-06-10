@@ -10,7 +10,7 @@ optimized for solver-ready RPF interchange.
 
 We close the physics gap — planning to real time.
 
-Part of the Raptrix Suite ecosystem — Sentinel for real-time operations, Forge for short-term planning.
+Part of the Raptrix Suite ecosystem. For production-scale grids, see [Raptrix commercial products](https://raptrixpower.com).
 
 Related repositories:
 
@@ -103,7 +103,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 | Connectivity detail | `--connectivity-detail` | Granular ConnectivityNode bus mapping; emits optional `connectivity_groups` table |
 | Node-breaker | `--connectivity-detail --node-breaker` | Adds switch-topology detail tables for operational and viewer workflows |
 
-### Output tables (schema contract v0.12.0)
+### Output tables (schema contract v0.12.1)
 
 **18 canonical tables (always emitted):** `metadata`, `buses`, `branches`, `multi_section_lines`, `dc_lines_2w`, `generators`, `loads`, `fixed_shunts`, `switched_shunts`, `switched_shunt_banks`, `transformers_2w`, `transformers_3w`, `areas`, `zones`, `owners`, `contingencies`, `interfaces`, `dynamics_models`
 
@@ -115,8 +115,9 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 - `buses_solved`, `generators_solved`, `switched_shunts_solved` — when `case_mode = solved_snapshot` (v0.8.5+)
 - `facts_devices`, `facts_solved` — optional FACTS extension tables (v0.8.6+)
 - `computational_load_profiles` — optional computational-load extension table (v0.10.0+; API `WriteOptions.emit_computational_load_profiles`)
-- `remedial_action_schemes` — optional canonical RAS/SPS table (v0.12.0+; API `RootWriteOptions.include_remedial_action_schemes`)
-- `protection_contingencies`, `topology_changes` — legacy compatibility tables (v0.11.0); retained for backward reads and migration, deprecated for new RAS writes
+- `remedial_action_schemes` — optional canonical RAS/SPS table (v0.12.1+; API `RootWriteOptions.include_remedial_action_schemes`)
+- `contingency_island_analysis` — optional contingency topology filter audit rows (v0.12.1+; API `RootWriteOptions.include_contingency_island_analysis`)
+- `protection_contingencies`, `topology_changes` — legacy compatibility tables (v0.11.0); optional when enabled; deprecated for new RAS writes
 
 RAS safety note: all public examples in this repository use synthetic demonstration data only. No CEII, utility identifiers, or protected topology data are included.
 
@@ -144,7 +145,7 @@ RAS safety note: all public examples in this repository use synthetic demonstrat
 
 ## Data Contract (Locked)
 
-- Current schema contract: **v0.12.0** (CGMES 3.0+ only). v0.12.0 adds optional canonical `remedial_action_schemes` for executable RAS/SPS sequences and establishes a single-model path for new writes. Legacy v0.11.0 `protection_contingencies`/`topology_changes` remain supported for backward-compatible reads and deterministic migration. The RPF version gate accepts v0.12.0, v0.11.0, and v0.10.0.
+- Current schema contract: **v0.12.1** (CGMES 3.0+ only). v0.12.1 unifies optional canonical `remedial_action_schemes` with optional `contingency_island_analysis` audit rows. The RPF version gate accepts **only** v0.12.1 — prior contract files must be re-emitted.
 - Canonical source: raptrix-cim-arrow/src/schema.rs
 - Contract policy and semantics: docs/schema-contract.md
 - Plain-English field guide: [docs/rpf-field-guide.md](docs/rpf-field-guide.md)
@@ -158,11 +159,11 @@ RPF standardization here is intentional: it enables direct CIM-to-powerflow inte
 
 ### Versioning Policy
 
-Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is at schema **`v0.12.0`** while the converter crate release is **`0.5.2`**.
+Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is at schema **`v0.12.1`** while the converter crate release is **`0.5.3`**.
 
-Readers in this repository accept `v0.12.0` / `0.12.0` and retain `v0.11.0` / `0.11.0` and `v0.10.0` / `0.10.0` for backward-compatible reads.
+Readers in this repository accept only `v0.12.1` / `0.12.1`. Prior contract versions must be re-emitted.
 
-**v0.12.0**: Adds optional canonical `remedial_action_schemes` for executable RAS/SPS triggers and sequenced actions, plus metadata `raptrix.features.remedial_action_schemes` and `rpf.ras.schema_mode=canonical_v12`. New RAS writes use this single schema.
+**v0.12.1**: Unifies optional canonical `remedial_action_schemes` with optional `contingency_island_analysis` (topology filter audit rows), plus metadata `raptrix.features.remedial_action_schemes`, `raptrix.features.contingency_island_analysis`, and `rpf.ras.schema_mode=canonical_v12` when RAS rows are emitted.
 
 **v0.11.0**: Adds optional protection-informed contingency tables (`protection_contingencies`, `topology_changes`), the `protection_event` element-type token, and the `rpf.protection.fidelity` metadata key — additive and backward-compatible with v0.10.0.
 **v0.9.1**: Adds optional `loads` ZIP fidelity fields (`p_i_pu`, `q_i_pu`, `p_y_pu`, `q_y_pu`) while preserving existing `p_pu`/`q_pu` constant-power semantics and required table shape.

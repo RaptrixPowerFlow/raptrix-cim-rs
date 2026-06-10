@@ -31,6 +31,7 @@ Cargo.lock
 
 # Internal-only marketing guide must never be committed.
 INTERNAL-MARKETING-GUIDE.md
+INTERNAL-MARKETING-GUIDE-Raptrix-Suite-v*.md
 docs/roadmap.internal*
 
 # Local Python virtual environment

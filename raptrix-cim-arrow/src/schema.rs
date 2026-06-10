@@ -7,7 +7,7 @@ Copyright (c) 2026 Raptrix Power
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Arrow schema definitions for the Raptrix Power Interchange v0.12.0 profile.
+//! Arrow schema definitions for the Raptrix Power Interchange v0.12.1 profile.
 //!
 //! **CGMES 3.0+ Only**: This module targets CGMES v3.0 and later (v17+ CIM) merged profiles.
 //! Support for legacy CGMES 2.4.x was dropped in this release for simplicity and performance.
@@ -16,12 +16,13 @@ Copyright (c) 2026 Raptrix Power
 //! `.rpf` contract, plus deterministic schema registry helpers used by both
 //! writers and readers.
 //!
-//! ## v0.12.0 — 18 canonical tables (additive: canonical RAS schema)
-//! Adds one optional root table — `remedial_action_schemes` — as the canonical RAS/SPS
-//! representation for new writes. v0.11.0 `protection_contingencies` and
-//! `topology_changes` remain supported for backward reads and migration only. Optional
-//! file metadata keys: `raptrix.features.remedial_action_schemes` and
-//! `rpf.ras.schema_mode` (default `canonical_v12` when emitted).
+//! ## v0.12.1 — unified optional tables (canonical RAS + contingency topology audit)
+//! Merges optional `remedial_action_schemes` (canonical RAS/SPS for new writes) with
+//! optional `contingency_island_analysis` (contingency topology filter audit rows).
+//! Optional file metadata keys: `raptrix.features.remedial_action_schemes`,
+//! `raptrix.features.contingency_island_analysis`, and `rpf.ras.schema_mode`
+//! (default `canonical_v12` when RAS rows are emitted). `SUPPORTED_RPF_VERSIONS`
+//! accepts **only** v0.12.1 — prior contract files must be re-emitted.
 //!
 //! ## v0.11.0 — 18 canonical tables (additive: protection-informed contingencies)
 //! Adds two optional root tables — `protection_contingencies` (logical protection-group
@@ -73,18 +74,15 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, Schema};
 
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / Raptrix Power Interchange v0.12.0 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow / Raptrix Power Interchange v0.12.1 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.";
 
 /// Canonical RPF format version tag embedded as file-level metadata.
-pub const RPF_VERSION: &str = "v0.12.0";
+pub const RPF_VERSION: &str = "v0.12.1";
 
 /// Supported RPF versions accepted by generic Arrow IPC readers.
 ///
-/// v0.12.0 is the current contract release. v0.11.0 and v0.10.0 are retained for
-/// backward-compatible reads.
-pub const SUPPORTED_RPF_VERSIONS: &[&str] = &[
-    "v0.12.0", "0.12.0", "v0.11.0", "0.11.0", "v0.10.0", "0.10.0",
-];
+/// v0.12.1 is the current contract release. Prior contract versions must be re-emitted.
+pub const SUPPORTED_RPF_VERSIONS: &[&str] = &["v0.12.1", "0.12.1"];
 
 /// Validates a nominal kV value for required network voltage fields.
 pub fn validate_nominal_kv(value: f64, context: &str) -> Result<(), String> {
@@ -201,10 +199,13 @@ pub const METADATA_KEY_FEATURE_TOPOLOGY_CHANGES: &str = "raptrix.features.topolo
 /// Values: `logical` (logical protection-group baseline only) | `breaker_level`
 /// (breaker/switch-resolved) | `mixed` (both present across rows).
 pub const METADATA_KEY_PROTECTION_FIDELITY: &str = "rpf.protection.fidelity";
-/// File-level feature flag: optional `remedial_action_schemes` root table is present (v0.12.0+).
+/// File-level feature flag: optional `remedial_action_schemes` root table is present (v0.12.1+).
 pub const METADATA_KEY_FEATURE_REMEDIAL_ACTION_SCHEMES: &str =
     "raptrix.features.remedial_action_schemes";
-/// Optional metadata key declaring canonical RAS schema mode (v0.12.0+).
+/// File-level feature flag: optional `contingency_island_analysis` root table is present (v0.12.1+).
+pub const METADATA_KEY_FEATURE_CONTINGENCY_ISLAND_ANALYSIS: &str =
+    "raptrix.features.contingency_island_analysis";
+/// Optional metadata key declaring canonical RAS schema mode (v0.12.1+).
 /// Current value: `canonical_v12`.
 pub const METADATA_KEY_RAS_SCHEMA_MODE: &str = "rpf.ras.schema_mode";
 
@@ -240,6 +241,8 @@ pub const TABLE_ZONES: &str = "zones";
 pub const TABLE_OWNERS: &str = "owners";
 /// Canonical contingencies table name.
 pub const TABLE_CONTINGENCIES: &str = "contingencies";
+/// Optional contingency topology filter audit rows (v0.12.1+).
+pub const TABLE_CONTINGENCY_ISLAND_ANALYSIS: &str = "contingency_island_analysis";
 /// Canonical interfaces table name.
 pub const TABLE_INTERFACES: &str = "interfaces";
 /// Canonical dynamics models table name.
@@ -254,7 +257,7 @@ pub const TABLE_SCENARIO_CONTEXT: &str = "scenario_context";
 pub const TABLE_PROTECTION_CONTINGENCIES: &str = "protection_contingencies";
 /// Optional post-event topology-change table name (v0.11.0+).
 pub const TABLE_TOPOLOGY_CHANGES: &str = "topology_changes";
-/// Optional canonical RAS/SPS table name (v0.12.0+).
+/// Optional canonical RAS/SPS table name (v0.12.1+).
 pub const TABLE_REMEDIAL_ACTION_SCHEMES: &str = "remedial_action_schemes";
 /// Optional detail table emitted only when connectivity-detail mode is enabled.
 pub const TABLE_CONNECTIVITY_GROUPS: &str = "connectivity_groups";
@@ -1072,11 +1075,19 @@ pub fn remedial_action_schemes_schema() -> Schema {
     )
 }
 
-/// Returns optional canonical RAS table schemas in deterministic order (v0.12.0+).
+/// Returns optional canonical RAS table schemas in deterministic order (v0.12.1+).
 pub fn remedial_action_table_schemas() -> Vec<(&'static str, Schema)> {
     vec![(
         TABLE_REMEDIAL_ACTION_SCHEMES,
         remedial_action_schemes_schema(),
+    )]
+}
+
+/// Returns optional contingency island analysis table schemas in deterministic order (v0.12.1+).
+pub fn contingency_island_table_schemas() -> Vec<(&'static str, Schema)> {
+    vec![(
+        TABLE_CONTINGENCY_ISLAND_ANALYSIS,
+        contingency_island_analysis_schema(),
     )]
 }
 
@@ -1194,6 +1205,27 @@ pub fn contingencies_schema() -> Schema {
             Field::new("recovery_possible", DataType::Boolean, true),
             Field::new("recovery_time_min", DataType::Float64, true),
             Field::new("greedy_reserve_summary", DataType::Utf8, true),
+        ],
+        schema_metadata(),
+    )
+}
+
+/// `contingency_island_analysis` table schema (v0.12.1+, optional).
+///
+/// Optional contingency topology filter audit rows keyed by `contingency_id`.
+pub fn contingency_island_analysis_schema() -> Schema {
+    Schema::new_with_metadata(
+        vec![
+            Field::new("contingency_id", dict_utf8(), false),
+            Field::new("classification", dict_utf8(), true),
+            Field::new("filter_reason", dict_utf8(), true),
+            Field::new("island_load_mw", DataType::Float64, true),
+            Field::new("island_gen_mw", DataType::Float64, true),
+            Field::new("bus_count", DataType::Int32, true),
+            Field::new("max_kv", DataType::Float64, true),
+            Field::new("is_main_island", DataType::Boolean, true),
+            Field::new("excluded_from_events", DataType::Boolean, true),
+            Field::new("params_snapshot_json", DataType::Utf8, true),
         ],
         schema_metadata(),
     )
@@ -1578,6 +1610,7 @@ pub fn table_schema(table_name: &str) -> Option<Schema> {
         TABLE_ZONES => Some(zones_schema()),
         TABLE_OWNERS => Some(owners_schema()),
         TABLE_CONTINGENCIES => Some(contingencies_schema()),
+        TABLE_CONTINGENCY_ISLAND_ANALYSIS => Some(contingency_island_analysis_schema()),
         TABLE_INTERFACES => Some(interfaces_schema()),
         TABLE_DYNAMICS_MODELS => Some(dynamics_models_schema()),
         TABLE_PROTECTION_CONTINGENCIES => Some(protection_contingencies_schema()),
@@ -1675,20 +1708,21 @@ mod tests {
             "remedial_action_schemes must resolve via table_schema()"
         );
         assert!(
+            table_schema("contingency_island_analysis").is_some(),
+            "contingency_island_analysis must resolve via table_schema()"
+        );
+        assert!(
             !all.iter().any(|(n, _)| *n == "protection_contingencies"
                 || *n == "topology_changes"
-                || *n == "remedial_action_schemes"),
-            "optional RAS/protection tables must NOT appear in all_table_schemas()"
+                || *n == "remedial_action_schemes"
+                || *n == "contingency_island_analysis"),
+            "optional RAS/protection/island tables must NOT appear in all_table_schemas()"
         );
 
-        // version gate: v0.12.0 current, v0.11.0 and v0.10.0 retained for backward reads
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.12.0"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.12.0"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.11.0"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.11.0"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.10.0"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.10.0"));
-        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 6);
+        // version gate: v0.12.1 only — prior contract files must be re-emitted
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.12.1"));
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.12.1"));
+        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 2);
     }
 
     #[test]
@@ -1709,6 +1743,22 @@ mod tests {
         let optional = super::remedial_action_table_schemas();
         assert_eq!(optional.len(), 1);
         assert_eq!(optional[0].0, "remedial_action_schemes");
+    }
+
+    #[test]
+    fn contingency_island_analysis_match_v0121_contract() {
+        let cia = super::contingency_island_analysis_schema();
+        assert_eq!(cia.fields().len(), 10);
+        assert_eq!(cia.field(0).name(), "contingency_id");
+        assert!(!cia.field(0).is_nullable());
+        assert_eq!(cia.field(1).name(), "classification");
+        assert!(cia.field(1).is_nullable());
+        assert_eq!(cia.field(9).name(), "params_snapshot_json");
+        assert!(cia.field(9).is_nullable());
+
+        let optional = super::contingency_island_table_schemas();
+        assert_eq!(optional.len(), 1);
+        assert_eq!(optional[0].0, "contingency_island_analysis");
     }
 
     #[test]

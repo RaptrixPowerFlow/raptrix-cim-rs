@@ -193,7 +193,7 @@ pub struct WriteOptions {
     pub computational_load_mode: Option<bool>,
     /// v0.10.0: append optional root `computational_load_profiles` column (may be zero-row).
     pub emit_computational_load_profiles: bool,
-    /// v0.12.0: append optional canonical `remedial_action_schemes` table.
+    /// v0.12.1: append optional canonical `remedial_action_schemes` table.
     pub emit_remedial_action_schemes: bool,
 }
 
@@ -1993,6 +1993,7 @@ pub fn write_complete_rpf_with_options(
             include_facts_solved: false,
             include_computational_load_profiles: options.emit_computational_load_profiles,
             include_remedial_action_schemes: options.emit_remedial_action_schemes,
+            include_contingency_island_analysis: false,
             // CIM exporter does not synthesize protection-informed contingencies; the closed
             // core / EMS ingestion paths populate these v0.11.0 optional tables.
             include_protection_contingencies: false,

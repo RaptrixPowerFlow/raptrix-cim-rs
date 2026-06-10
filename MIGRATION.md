@@ -4,6 +4,26 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 
 Copyright (c) 2026 Raptrix Power
 
+## v0.12.1 (breaking — re-export required)
+
+### What changed
+
+- **Schema contract bump** to v0.12.1 with unified optional tables: `remedial_action_schemes` (canonical RAS/SPS) and `contingency_island_analysis` (contingency topology filter audit rows).
+- New optional file metadata: `raptrix.features.contingency_island_analysis`.
+- **`SUPPORTED_RPF_VERSIONS`** accepts only **`v0.12.1`** / **`0.12.1`**.
+
+### Compatibility
+
+- **Re-export required.** v0.12.0 and all prior contract files are rejected by the version gate. Re-emit cases through a v0.12.1-capable writer.
+
+### Reader upgrade (raptrix-core C++ and downstream converters)
+
+- Accept **`v0.12.1`** / **`0.12.1`** in the RPF version gate.
+- Detect optional `contingency_island_analysis` via `raptrix.features.contingency_island_analysis`; absent in standard planning files.
+- Enable emission with `RootWriteOptions.include_contingency_island_analysis`.
+
+---
+
 ## v0.11.0 (additive — no migration required)
 
 ### What changed

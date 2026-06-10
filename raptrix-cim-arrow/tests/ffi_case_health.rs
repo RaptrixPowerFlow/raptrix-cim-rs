@@ -11,6 +11,9 @@ use std::path::{Path, PathBuf};
 use raptrix_cim_arrow::ffi::{
     RPF_HEALTH_HEALTHY, RPF_HEALTH_PATHOLOGICAL, RPF_HEALTH_STRESSED, RpfCaseHealthFFI,
 };
+use raptrix_cim_arrow::{
+    METADATA_KEY_RPF_VERSION, METADATA_KEY_VERSION, SUPPORTED_RPF_VERSIONS, rpf_file_metadata,
+};
 
 unsafe extern "C" {
     fn inspect_rpf_file_c(path: *const c_char) -> *mut RpfCaseHealthFFI;
@@ -38,14 +41,25 @@ fn golden_rpf(name: &str) -> Option<PathBuf> {
     path.is_file().then_some(path)
 }
 
+fn contract_supported(path: &Path) -> bool {
+    let metadata = rpf_file_metadata(path).unwrap_or_else(|e| {
+        panic!("rpf_file_metadata({}) failed: {e:#}", path.display());
+    });
+    let version = metadata
+        .get(METADATA_KEY_RPF_VERSION)
+        .or_else(|| metadata.get(METADATA_KEY_VERSION));
+    version.is_some_and(|version| SUPPORTED_RPF_VERSIONS.contains(&version.as_str()))
+}
+
 fn first_golden_rpf() -> Option<PathBuf> {
-    golden_rpf("ieee14.rpf").or_else(|| {
+    let mut candidates = golden_rpf("ieee14.rpf").into_iter().chain(
         std::fs::read_dir(psse_golden_dir())
-            .ok()?
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .find(|p| p.extension().map(|x| x == "rpf").unwrap_or(false))
-    })
+            .ok()
+            .into_iter()
+            .flat_map(|entries| entries.filter_map(|e| e.ok()).map(|e| e.path()))
+            .filter(|p| p.extension().map(|x| x == "rpf").unwrap_or(false)),
+    );
+    candidates.find(|path| contract_supported(path))
 }
 
 unsafe fn last_error_message() -> String {
@@ -59,7 +73,7 @@ unsafe fn last_error_message() -> String {
 #[test]
 fn ffi_inspect_roundtrip() {
     let Some(path) = first_golden_rpf() else {
-        eprintln!("skip ffi_inspect_roundtrip: no golden RPF present");
+        eprintln!("skip ffi_inspect_roundtrip: no v0.12.1 golden RPF present");
         return;
     };
     run_ffi_roundtrip(&path);

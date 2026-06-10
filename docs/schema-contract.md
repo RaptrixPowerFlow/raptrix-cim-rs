@@ -3,18 +3,24 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 Copyright (c) 2026 Raptrix Power
 -->
 
-# Schema Contract (Locked contract: v0.12.0 — CGMES 3.0+ Only)
+# Schema Contract (Locked contract: v0.12.1 — CGMES 3.0+ Only)
 
 This repository is the authoritative source of truth for the Raptrix Power Interchange (`.rpf`) wire contract used by CIM-first conversion pipelines.
 
-**v0.12.0** is the current contract release. `SUPPORTED_RPF_VERSIONS` accepts **`v0.12.0`** / **`0.12.0`** and retains **`v0.11.0`** / **`0.11.0`** and **`v0.10.0`** / **`0.10.0`** for backward-compatible reads.
+**v0.12.1** is the current contract release. `SUPPORTED_RPF_VERSIONS` accepts **`v0.12.1`** / **`0.12.1`** only — prior contract files must be re-emitted.
+
+## v0.12.1 Additive Changes
+
+- **Optional root table `contingency_island_analysis`** (enabled via `RootWriteOptions.include_contingency_island_analysis`; file metadata `raptrix.features.contingency_island_analysis=true` when present): optional contingency topology filter audit rows keyed by `contingency_id`.
+- **Unified optional extensions**: merges public v0.12.0 `remedial_action_schemes` with `contingency_island_analysis` under a single v0.12.1 contract.
+- **Version gate**: `SUPPORTED_RPF_VERSIONS` accepts only v0.12.1.
 
 ## v0.12.0 Additive Changes
 
 - **Optional root table `remedial_action_schemes`** (enabled via `RootWriteOptions.include_remedial_action_schemes`; file metadata `raptrix.features.remedial_action_schemes=true` when present): canonical single-table representation for executable RAS/SPS data, including arming/trigger conditions, sequenced actions, delay/priority/merit order metadata, and action targets.
 - **New optional file metadata key `rpf.ras.schema_mode`**: defaults to `canonical_v12` when `remedial_action_schemes` is emitted.
-- **Single-model write policy**: new RAS writes in v0.12.0 use `remedial_action_schemes` as the authoritative schema.
-- **Legacy compatibility policy**: `protection_contingencies` and `topology_changes` are retained for backward-compatible reads and deterministic migration, but deprecated for new RAS writes.
+- **Single-model write policy**: new RAS writes use `remedial_action_schemes` as the authoritative schema.
+- **Legacy compatibility policy**: `protection_contingencies` and `topology_changes` remain optional when explicitly enabled; deprecated for new RAS writes.
 - **Public-safety requirement**: public examples and fixtures must be synthetic demonstration data only; no CEII or utility-specific topology identifiers.
 
 ### v0.11 -> v0.12 Migration Mapping (Deterministic)
@@ -142,8 +148,8 @@ Every `.rpf` file must include:
 
 Current locked values:
 
-- `raptrix.version = 0.12.0` (also accepted as `v0.12.0`; `0.11.0` / `v0.11.0` and `0.10.0` / `v0.10.0` accepted for reads)
-- `raptrix.branding = Raptrix CIM-Arrow / Raptrix Power Interchange v0.12.0 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.`
+- `raptrix.version = 0.12.1` (also accepted as `v0.12.1`)
+- `raptrix.branding = Raptrix CIM-Arrow / Raptrix Power Interchange v0.12.1 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.`
 - `rpf.case_fingerprint = <required deterministic case identity fingerprint>`
 - `rpf.validation_mode = topology_only | solved_ready`
 - `rpf.case_mode = flat_start_planning | warm_start_planning | solved_snapshot | hour_ahead_advisory` (v0.8.4+, required; `hour_ahead_advisory` added in v0.9.0)
@@ -161,8 +167,9 @@ Optional file-level metadata keys:
 - `raptrix.features.protection_contingencies = true` when optional `protection_contingencies` table is emitted (v0.11.0+)
 - `raptrix.features.topology_changes = true` when optional `topology_changes` table is emitted (v0.11.0+)
 - `rpf.protection.fidelity = logical | breaker_level | mixed` (v0.11.0+, optional; defaults to `logical` when `protection_contingencies` is present without an explicit value)
-- `raptrix.features.remedial_action_schemes = true` when optional `remedial_action_schemes` table is emitted (v0.12.0+)
-- `rpf.ras.schema_mode = canonical_v12` when canonical v0.12 RAS rows are emitted (v0.12.0+)
+- `raptrix.features.remedial_action_schemes = true` when optional `remedial_action_schemes` table is emitted (v0.12.1+)
+- `raptrix.features.contingency_island_analysis = true` when optional `contingency_island_analysis` table is emitted (v0.12.1+)
+- `rpf.ras.schema_mode = canonical_v12` when canonical v0.12 RAS rows are emitted (v0.12.1+)
 - `rpf.rows.<table_name> = <row_count>` for each emitted table
 - `rpf.solver.version = <string>` solver software version (only when `solved_state_presence = actual_solved`)
 - `rpf.solver.iterations = <int>` Newton-Raphson iteration count (only when solved)
@@ -224,7 +231,8 @@ Optional root columns, when present, are appended after the required columns in 
 29. `scenario_context` (v0.9.0+, optional analysis context)
 30. `protection_contingencies` (v0.11.0+, optional protection-informed contingencies)
 31. `topology_changes` (v0.11.0+, optional post-event topology metadata)
-32. `remedial_action_schemes` (v0.12.0+, optional canonical RAS/SPS schema)
+32. `remedial_action_schemes` (v0.12.1+, optional canonical RAS/SPS schema)
+33. `contingency_island_analysis` (v0.12.1+, optional contingency topology filter audit rows)
 
 `connectivity_groups` is an optional detail table emitted only in connectivity-detail mode and is appended after the required root columns when that mode is active.
 
@@ -305,9 +313,13 @@ Optional protection-informed tables (v0.11.0+, emitted only when explicitly enab
 - `protection_contingencies`
 - `topology_changes` (requires `protection_contingencies`)
 
-Optional canonical RAS/SPS table (v0.12.0+):
+Optional canonical RAS/SPS table (v0.12.1+):
 
 - `remedial_action_schemes`
+
+Optional contingency topology filter audit table (v0.12.1+):
+
+- `contingency_island_analysis`
 
 ## Column Reference
 
@@ -631,6 +643,21 @@ Inductive steps must be represented in `switched_shunt_banks`.
 - `status_change`: Boolean, required
 - `equipment_kind`: Dictionary<Int32, Utf8>, nullable
 - `equipment_id`: Dictionary<Int32, Utf8>, nullable
+
+### contingency_island_analysis
+
+Optional contingency topology filter audit rows (v0.12.1+):
+
+- `contingency_id`: Dictionary<Int32, Utf8>, required — FK to `contingencies.contingency_id`
+- `classification`: Dictionary<Int32, Utf8>, nullable
+- `filter_reason`: Dictionary<Int32, Utf8>, nullable
+- `island_load_mw`: Float64, nullable
+- `island_gen_mw`: Float64, nullable
+- `bus_count`: Int32, nullable
+- `max_kv`: Float64, nullable
+- `is_main_island`: Boolean, nullable
+- `excluded_from_events`: Boolean, nullable
+- `params_snapshot_json`: Utf8, nullable
 
 ### interfaces
 
@@ -1008,7 +1035,7 @@ Locked contract: v0.7.0 adds optional node-breaker detail tables (`node_breaker_
 An independent parser is considered compliant if it:
 
 1. Opens `.rpf` as Arrow IPC File format.
-2. Verifies `raptrix.version` is in the set of supported contract versions (current: `0.12.0` / `v0.12.0`; `0.11.0` / `v0.11.0` and `0.10.0` / `v0.10.0` retained for backward-compatible reads).
+2. Verifies `raptrix.version` is in the set of supported contract versions (current: `0.12.1` / `v0.12.1` only).
 3. Verifies required root columns appear in canonical order.
 4. Uses `rpf.rows.<table_name>` metadata to trim padded null tails.
 5. Treats the 15 required root columns as mandatory even when their logical row counts are zero.
@@ -1024,6 +1051,7 @@ An independent parser is considered compliant if it:
 14. Treats `facts_devices` and `facts_solved` as optional additive tables; if `rpf.facts_solved_state_presence = actual_solved`, expects `facts_solved` to be present.
 15. Treats `protection_contingencies` and `topology_changes` as optional additive tables (v0.11.0+) detected by `raptrix.features.protection_contingencies` / `raptrix.features.topology_changes`; when both are present, expects every non-null `protection_contingencies.topology_change_id` to resolve to a `topology_changes.topology_change_id`. Tolerates unknown `scheme_type` / `change_type` tokens.
 16. Treats `remedial_action_schemes` as the canonical optional v0.12 RAS schema when `raptrix.features.remedial_action_schemes=true` and `rpf.ras.schema_mode=canonical_v12`; expects this table to be used for new-write RAS semantics.
+17. Treats `contingency_island_analysis` as an optional additive table (v0.12.1+) detected by `raptrix.features.contingency_island_analysis`; each row keys to `contingencies.contingency_id`.
 
 For a plain-English explanation of all fields see [rpf-field-guide.md](rpf-field-guide.md).
 

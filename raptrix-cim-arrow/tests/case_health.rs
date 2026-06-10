@@ -6,7 +6,10 @@
 
 use std::path::{Path, PathBuf};
 
-use raptrix_cim_arrow::{RpfHealthGrade, inspect_rpf_file};
+use raptrix_cim_arrow::{
+    METADATA_KEY_RPF_VERSION, METADATA_KEY_VERSION, RpfHealthGrade, SUPPORTED_RPF_VERSIONS,
+    inspect_rpf_file, rpf_file_metadata,
+};
 
 fn psse_golden_dir() -> PathBuf {
     std::env::var("RAPTRIX_PSSE_GOLDEN_DIR")
@@ -26,7 +29,30 @@ fn golden_rpf(name: &str) -> Option<PathBuf> {
     path.is_file().then_some(path)
 }
 
+fn skip_unsupported_contract(path: &Path) -> bool {
+    let metadata = rpf_file_metadata(path).unwrap_or_else(|e| {
+        panic!("rpf_file_metadata({}) failed: {e:#}", path.display());
+    });
+    let version = metadata
+        .get(METADATA_KEY_RPF_VERSION)
+        .or_else(|| metadata.get(METADATA_KEY_VERSION));
+    if let Some(version) = version
+        && !SUPPORTED_RPF_VERSIONS.contains(&version.as_str())
+    {
+        eprintln!(
+            "skip {}: contract version {} not supported (re-export as v0.12.1)",
+            path.display(),
+            version
+        );
+        return true;
+    }
+    false
+}
+
 fn assert_health_sane(path: &Path, expect_large: bool) {
+    if skip_unsupported_contract(path) {
+        return;
+    }
     let health = inspect_rpf_file(path).unwrap_or_else(|e| {
         panic!("inspect_rpf_file({}) failed: {e:#}", path.display());
     });
@@ -83,6 +109,9 @@ fn health_golden_texas2k() {
         eprintln!("skip health_golden_texas2k: golden RPF not present");
         return;
     };
+    if skip_unsupported_contract(&path) {
+        return;
+    }
     assert_health_sane(&path, true);
     let health = inspect_rpf_file(&path).unwrap();
     assert!(
@@ -102,6 +131,9 @@ fn health_golden_nyiso() {
         eprintln!("skip health_golden_nyiso: golden RPF not present");
         return;
     };
+    if skip_unsupported_contract(&path) {
+        return;
+    }
     assert_health_sane(&path, true);
     let health = inspect_rpf_file(&path).unwrap();
     assert!(health.topology.island_count >= 1);
