@@ -33,6 +33,7 @@ Cargo.lock
 INTERNAL-MARKETING-GUIDE.md
 INTERNAL-MARKETING-GUIDE-Raptrix-Suite-v*.md
 docs/roadmap.internal*
+docs/node-breaker-fixture-feedback.md
 
 # Local Python virtual environment
 .venv/
