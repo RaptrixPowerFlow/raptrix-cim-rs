@@ -1351,7 +1351,7 @@ mod tests {
             .expect_err("v0.9.3 reader should reject missing required nominal_kv fields");
         let message = format!("{err:#}");
         assert!(message.contains("missing non-nullable field 'to_nominal_kv'"));
-        assert_eq!(SCHEMA_VERSION, "v0.12.1");
+        assert_eq!(SCHEMA_VERSION, "v0.12.2");
         Ok(())
     }
 
@@ -1492,13 +1492,19 @@ mod tests {
             .iter()
             .find(|(name, _)| name == TABLE_GENERATORS)
             .context("missing generators table")?;
-        assert_eq!(generators.schema().fields().len(), 25);
+        assert_eq!(generators.schema().fields().len(), 26);
         let controlled = generators
             .column(24)
             .as_any()
             .downcast_ref::<Int32Array>()
             .context("controlled_bus_id must be Int32")?;
         assert_eq!(controlled.len(), 0);
+        let mrid = generators
+            .column(25)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .context("mrid must be Utf8")?;
+        assert_eq!(mrid.len(), 0);
         Ok(())
     }
 

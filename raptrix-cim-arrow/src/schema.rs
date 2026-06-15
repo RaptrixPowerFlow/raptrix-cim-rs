@@ -7,7 +7,7 @@ Copyright (c) 2026 Raptrix Power
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Arrow schema definitions for the Raptrix Power Interchange v0.12.1 profile.
+//! Arrow schema definitions for the Raptrix Power Interchange v0.12.2 profile.
 //!
 //! **CGMES 3.0+ Only**: This module targets CGMES v3.0 and later (v17+ CIM) merged profiles.
 //! Support for legacy CGMES 2.4.x was dropped in this release for simplicity and performance.
@@ -74,15 +74,16 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, Schema};
 
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / Raptrix Power Interchange v0.12.1 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow / Raptrix Power Interchange v0.12.2 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.";
 
 /// Canonical RPF format version tag embedded as file-level metadata.
-pub const RPF_VERSION: &str = "v0.12.1";
+pub const RPF_VERSION: &str = "v0.12.2";
 
 /// Supported RPF versions accepted by generic Arrow IPC readers.
 ///
-/// v0.12.1 is the current contract release. Prior contract versions must be re-emitted.
-pub const SUPPORTED_RPF_VERSIONS: &[&str] = &["v0.12.1", "0.12.1"];
+/// v0.12.2 is the current contract release. v0.12.1 files remain readable (additive
+/// `mrid` columns). Prior contract versions must be re-emitted.
+pub const SUPPORTED_RPF_VERSIONS: &[&str] = &["v0.12.2", "0.12.2", "v0.12.1", "0.12.1"];
 
 /// Validates a nominal kV value for required network voltage fields.
 pub fn validate_nominal_kv(value: f64, context: &str) -> Result<(), String> {
@@ -103,6 +104,8 @@ pub const METADATA_KEY_BRANDING: &str = "raptrix.branding";
 pub const METADATA_KEY_VERSION: &str = "raptrix.version";
 /// File-level metadata key for RPF version alias.
 pub const METADATA_KEY_RPF_VERSION: &str = "rpf_version";
+/// Schema metadata key indicating stable equipment `mrid` column support (v0.12.2+).
+pub const METADATA_KEY_MRID_SUPPORT: &str = "rpf.mrid_support";
 /// Required metadata key containing deterministic case identity fingerprint.
 pub const METADATA_KEY_CASE_FINGERPRINT: &str = "rpf.case_fingerprint";
 /// Required metadata key describing validation readiness mode.
@@ -610,6 +613,7 @@ pub fn schema_metadata() -> HashMap<String, String> {
         METADATA_KEY_RPF_VERSION.to_string(),
         SCHEMA_VERSION.to_string(),
     );
+    metadata.insert(METADATA_KEY_MRID_SUPPORT.to_string(), "v1".to_string());
     metadata
 }
 
@@ -761,6 +765,8 @@ pub fn branches_schema() -> Schema {
             // v0.8.8: multi-section logical-line linkage columns.
             Field::new("parent_line_id", DataType::Int32, true),
             Field::new("section_index", DataType::Int32, true),
+            // v0.12.2: stable CIM mRID (ACLineSegment.base.m_rid etc.)
+            Field::new("mrid", DataType::Utf8, true),
         ],
         schema_metadata(),
     )
@@ -845,6 +851,8 @@ pub fn generators_schema() -> Schema {
             Field::new("params", map_string_f64(), true),
             // v0.9.5: remote voltage regulation target (PSS/E IREG; CIM RegulatingControl denormalized)
             Field::new("controlled_bus_id", DataType::Int32, false),
+            // v0.12.2: stable CIM mRID (SynchronousMachine.base.m_rid etc.)
+            Field::new("mrid", DataType::Utf8, true),
         ],
         schema_metadata(),
     )
@@ -1117,6 +1125,8 @@ pub fn transformers_2w_schema() -> Schema {
             Field::new("name", dict_utf8_u32(), true),
             Field::new("from_nominal_kv", DataType::Float64, false),
             Field::new("to_nominal_kv", DataType::Float64, false),
+            // v0.12.2: stable CIM mRID (PowerTransformer.base.m_rid etc.)
+            Field::new("mrid", DataType::Utf8, true),
         ],
         schema_metadata(),
     )
@@ -1150,6 +1160,8 @@ pub fn transformers_3w_schema() -> Schema {
             Field::new("nominal_kv_h", DataType::Float64, false),
             Field::new("nominal_kv_m", DataType::Float64, false),
             Field::new("nominal_kv_l", DataType::Float64, false),
+            // v0.12.2: stable CIM mRID (PowerTransformer.base.m_rid etc.)
+            Field::new("mrid", DataType::Utf8, true),
         ],
         schema_metadata(),
     )
@@ -1719,10 +1731,12 @@ mod tests {
             "optional RAS/protection/island tables must NOT appear in all_table_schemas()"
         );
 
-        // version gate: v0.12.1 only — prior contract files must be re-emitted
+        // version gate: v0.12.2 current; v0.12.1 remains readable (additive mrid columns)
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.12.2"));
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.12.2"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.12.1"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.12.1"));
-        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 2);
+        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 4);
     }
 
     #[test]
@@ -1863,10 +1877,29 @@ mod tests {
     #[test]
     fn generators_schema_v095_controlled_bus_id() {
         let generators = generators_schema();
-        assert_eq!(generators.fields().len(), 25);
+        assert_eq!(generators.fields().len(), 26);
         assert_eq!(generators.field(24).name(), "controlled_bus_id");
         assert_eq!(generators.field(24).data_type(), &DataType::Int32);
         assert!(!generators.field(24).is_nullable());
+        assert_eq!(generators.field(25).name(), "mrid");
+        assert_eq!(generators.field(25).data_type(), &DataType::Utf8);
+        assert!(generators.field(25).is_nullable());
+    }
+
+    #[test]
+    fn equipment_tables_v0122_mrid_columns() {
+        for (table_name, schema) in [
+            ("branches", branches_schema()),
+            ("generators", generators_schema()),
+            ("transformers_2w", super::transformers_2w_schema()),
+            ("transformers_3w", super::transformers_3w_schema()),
+        ] {
+            let mrid = schema
+                .field_with_name("mrid")
+                .unwrap_or_else(|_| panic!("{table_name} must include mrid column"));
+            assert_eq!(mrid.data_type(), &DataType::Utf8);
+            assert!(mrid.is_nullable(), "{table_name}.mrid must be nullable");
+        }
     }
 
     #[test]
@@ -1914,7 +1947,7 @@ mod tests {
     #[test]
     fn branches_schema_appends_facts_columns() {
         let branches = branches_schema();
-        assert_eq!(branches.fields().len(), 27);
+        assert_eq!(branches.fields().len(), 28);
         assert_eq!(branches.field(17).name(), "device_type");
         assert_eq!(branches.field(18).name(), "control_mode");
         assert_eq!(branches.field(19).name(), "control_target_flow_mw");
@@ -1925,6 +1958,7 @@ mod tests {
         assert_eq!(branches.field(24).name(), "facts_params");
         assert_eq!(branches.field(25).name(), "parent_line_id");
         assert_eq!(branches.field(26).name(), "section_index");
+        assert_eq!(branches.field(27).name(), "mrid");
     }
 
     #[test]

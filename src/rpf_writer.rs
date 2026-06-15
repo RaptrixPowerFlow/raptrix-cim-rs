@@ -477,6 +477,8 @@ struct BranchRow<'a> {
     owner_id: Option<i32>,
     from_nominal_kv: f64,
     to_nominal_kv: f64,
+    /// v0.12.2: stable CIM mRID (ACLineSegment.base.m_rid).
+    mrid: Option<Cow<'a, str>>,
 }
 
 #[derive(Debug, Clone)]
@@ -510,6 +512,8 @@ struct GenRow<'a> {
     d: f64,
     /// v0.9.5: PSS/E IREG / CIM RegulatingControl target as dense `bus_id`; `0` or `bus_id` = local.
     controlled_bus_id: i32,
+    /// v0.12.2: stable CIM mRID (SynchronousMachine.base.m_rid); distinct from `market_resource_id`.
+    mrid: Option<Cow<'a, str>>,
 }
 
 #[derive(Debug, Clone)]
@@ -582,6 +586,8 @@ struct Transformer2WRow<'a> {
     status: bool,
     from_nominal_kv: f64,
     to_nominal_kv: f64,
+    /// v0.12.2: stable CIM mRID (PowerTransformer.base.m_rid or synthesized leg suffix).
+    mrid: Option<Cow<'a, str>>,
 }
 
 #[derive(Debug, Clone)]
@@ -609,6 +615,8 @@ struct Transformer3WRow<'a> {
     nominal_kv_h: f64,
     nominal_kv_m: f64,
     nominal_kv_l: f64,
+    /// v0.12.2: stable CIM mRID (PowerTransformer.base.m_rid).
+    mrid: Option<Cow<'a, str>>,
 }
 
 #[derive(Debug, Clone)]
@@ -981,6 +989,10 @@ fn star_expand_3w_transformers<'a>(
             status: true,
             from_nominal_kv: row.nominal_kv_h,
             to_nominal_kv: row.nominal_kv_h,
+            mrid: row
+                .mrid
+                .as_ref()
+                .map(|m| Cow::Owned(format!("{}_H", m.as_ref()))),
         });
 
         // M → star leg.
@@ -1007,6 +1019,10 @@ fn star_expand_3w_transformers<'a>(
             status: true,
             from_nominal_kv: row.nominal_kv_m,
             to_nominal_kv: row.nominal_kv_m,
+            mrid: row
+                .mrid
+                .as_ref()
+                .map(|m| Cow::Owned(format!("{}_M", m.as_ref()))),
         });
 
         // L → star leg.
@@ -1033,6 +1049,10 @@ fn star_expand_3w_transformers<'a>(
             status: true,
             from_nominal_kv: row.nominal_kv_l,
             to_nominal_kv: row.nominal_kv_l,
+            mrid: row
+                .mrid
+                .as_ref()
+                .map(|m| Cow::Owned(format!("{}_L", m.as_ref()))),
         });
     }
     out
@@ -3025,6 +3045,7 @@ fn parse_eq_topology_rows(
                         "missing required BaseVoltage nominal_kv for branch to bus key '{to_bus_key}'"
                     )
                 })?,
+            mrid: Some(Cow::Owned(line_mrid.to_owned())),
         });
     }
 
@@ -3158,6 +3179,7 @@ fn parse_eq_topology_rows(
             xd_prime: machine.xd_prime.unwrap_or(0.0),
             d: machine.d.unwrap_or(0.0),
             controlled_bus_id: bus_id,
+            mrid: Some(Cow::Owned(machine_id_text.clone())),
         });
     }
 
@@ -3400,6 +3422,7 @@ fn parse_eq_topology_rows(
                             to_bus_key
                         )
                     })?,
+                mrid: Some(Cow::Owned(transformer.base.m_rid.to_string())),
             });
         } else {
             let terminal_h = unique_terminals.first().copied().with_context(|| {
@@ -3491,6 +3514,7 @@ fn parse_eq_topology_rows(
                             bus_l_key
                         )
                     })?,
+                mrid: Some(Cow::Owned(transformer.base.m_rid.to_string())),
             });
         }
     }
@@ -4260,6 +4284,7 @@ fn build_branches_batch(rows: &[BranchRow<'_>]) -> Result<RecordBatch> {
     let mut name_b = StringDictionaryBuilder::<UInt32Type>::new();
     let mut from_nominal_kv_b = Float64Builder::new();
     let mut to_nominal_kv_b = Float64Builder::new();
+    let mut mrid_b = StringBuilder::new();
 
     for row in rows {
         branch_id_b.append_value(row.branch_id);
@@ -4283,6 +4308,11 @@ fn build_branches_batch(rows: &[BranchRow<'_>]) -> Result<RecordBatch> {
         name_b.append(row.name.as_ref())?;
         from_nominal_kv_b.append_value(row.from_nominal_kv);
         to_nominal_kv_b.append_value(row.to_nominal_kv);
+        if let Some(mrid) = row.mrid.as_deref() {
+            mrid_b.append_value(mrid);
+        } else {
+            mrid_b.append_null();
+        }
     }
 
     let arrays: Vec<ArrayRef> = vec![
@@ -4315,6 +4345,7 @@ fn build_branches_batch(rows: &[BranchRow<'_>]) -> Result<RecordBatch> {
         new_null_array(schema.field(24).data_type(), rows.len()),
         new_null_array(schema.field(25).data_type(), rows.len()),
         new_null_array(schema.field(26).data_type(), rows.len()),
+        Arc::new(mrid_b.finish()) as ArrayRef,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build branches record batch")
@@ -4347,6 +4378,7 @@ fn build_generators_batch(rows: &[GenRow<'_>], _base_mva: f64) -> Result<RecordB
     let mut owner_id_b = Int32Builder::new();
     let mut market_resource_id_b = StringBuilder::new();
     let mut controlled_bus_id_b = Int32Builder::new();
+    let mut mrid_b = StringBuilder::new();
     let mut params_b = MapBuilder::new(
         Some(MapFieldNames {
             entry: "entries".to_string(),
@@ -4436,6 +4468,11 @@ fn build_generators_batch(rows: &[GenRow<'_>], _base_mva: f64) -> Result<RecordB
             .append(true)
             .context("failed to append generators.params map row")?;
         controlled_bus_id_b.append_value(row.controlled_bus_id);
+        if let Some(mrid) = row.mrid.as_deref() {
+            mrid_b.append_value(mrid);
+        } else {
+            mrid_b.append_null();
+        }
     }
 
     let arrays: Vec<ArrayRef> = vec![
@@ -4464,6 +4501,7 @@ fn build_generators_batch(rows: &[GenRow<'_>], _base_mva: f64) -> Result<RecordB
         Arc::new(market_resource_id_b.finish()) as ArrayRef,
         Arc::new(params_b.finish()) as ArrayRef,
         Arc::new(controlled_bus_id_b.finish()) as ArrayRef,
+        Arc::new(mrid_b.finish()) as ArrayRef,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build generators record batch")
@@ -4544,6 +4582,7 @@ fn build_transformers_2w_batch(rows: &[Transformer2WRow<'_>]) -> Result<RecordBa
     let mut name_b = StringDictionaryBuilder::<UInt32Type>::new();
     let mut from_nominal_kv_b = Float64Builder::new();
     let mut to_nominal_kv_b = Float64Builder::new();
+    let mut mrid_b = StringBuilder::new();
 
     for row in rows {
         from_bus_id_b.append_value(row.from_bus_id);
@@ -4568,6 +4607,11 @@ fn build_transformers_2w_batch(rows: &[Transformer2WRow<'_>]) -> Result<RecordBa
         name_b.append(row.name.as_ref())?;
         from_nominal_kv_b.append_value(row.from_nominal_kv);
         to_nominal_kv_b.append_value(row.to_nominal_kv);
+        if let Some(mrid) = row.mrid.as_deref() {
+            mrid_b.append_value(mrid);
+        } else {
+            mrid_b.append_null();
+        }
     }
 
     let arrays: Vec<ArrayRef> = vec![
@@ -4593,6 +4637,7 @@ fn build_transformers_2w_batch(rows: &[Transformer2WRow<'_>]) -> Result<RecordBa
         Arc::new(name_b.finish()) as ArrayRef,
         Arc::new(from_nominal_kv_b.finish()) as ArrayRef,
         Arc::new(to_nominal_kv_b.finish()) as ArrayRef,
+        Arc::new(mrid_b.finish()) as ArrayRef,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build transformers_2w record batch")
@@ -4628,6 +4673,7 @@ fn build_transformers_3w_batch(rows: &[Transformer3WRow<'_>]) -> Result<RecordBa
     let mut nominal_kv_h_b = Float64Builder::new();
     let mut nominal_kv_m_b = Float64Builder::new();
     let mut nominal_kv_l_b = Float64Builder::new();
+    let mut mrid_b = StringBuilder::new();
 
     for row in rows {
         bus_h_id_b.append_value(row.bus_h_id);
@@ -4654,6 +4700,11 @@ fn build_transformers_3w_batch(rows: &[Transformer3WRow<'_>]) -> Result<RecordBa
         nominal_kv_h_b.append_value(row.nominal_kv_h);
         nominal_kv_m_b.append_value(row.nominal_kv_m);
         nominal_kv_l_b.append_value(row.nominal_kv_l);
+        if let Some(mrid) = row.mrid.as_deref() {
+            mrid_b.append_value(mrid);
+        } else {
+            mrid_b.append_null();
+        }
     }
 
     let arrays: Vec<ArrayRef> = vec![
@@ -4681,6 +4732,7 @@ fn build_transformers_3w_batch(rows: &[Transformer3WRow<'_>]) -> Result<RecordBa
         Arc::new(nominal_kv_h_b.finish()) as ArrayRef,
         Arc::new(nominal_kv_m_b.finish()) as ArrayRef,
         Arc::new(nominal_kv_l_b.finish()) as ArrayRef,
+        Arc::new(mrid_b.finish()) as ArrayRef,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build transformers_3w record batch")
@@ -6072,6 +6124,7 @@ mod tests {
             xd_prime: 0.2,
             d: 0.5,
             controlled_bus_id: 1,
+            mrid: Some(Cow::Borrowed("G1")),
         };
         assert_eq!(infer_dynamics_model_type(&full), "GENROU");
 
@@ -6349,6 +6402,7 @@ mod tests {
             nominal_kv_h: 230.0,
             nominal_kv_m: 115.0,
             nominal_kv_l: 13.8,
+            mrid: None,
         }
     }
 
@@ -6376,6 +6430,7 @@ mod tests {
             status: true,
             from_nominal_kv: 230.0,
             to_nominal_kv: 230.0,
+            mrid: None,
         }
     }
 

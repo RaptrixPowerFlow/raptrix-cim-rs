@@ -3,11 +3,25 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 Copyright (c) 2026 Raptrix Power
 -->
 
-# Schema Contract (Locked contract: v0.12.1 — CGMES 3.0+ Only)
+# Schema Contract (Locked contract: v0.12.2 — CGMES 3.0+ Only)
 
 This repository is the authoritative source of truth for the Raptrix Power Interchange (`.rpf`) wire contract used by CIM-first conversion pipelines.
 
-**v0.12.1** is the current contract release. `SUPPORTED_RPF_VERSIONS` accepts **`v0.12.1`** / **`0.12.1`** only — prior contract files must be re-emitted.
+**v0.12.2** is the current contract release. `SUPPORTED_RPF_VERSIONS` accepts **`v0.12.2`** / **`0.12.2`** and retains **`v0.12.1`** / **`0.12.1`** for backward reads.
+
+## v0.12.2 Additive Changes
+
+- **Nullable `mrid` column** on `branches`, `generators`, `transformers_2w`, and `transformers_3w`: stable CIM-compatible equipment identifiers populated from source mRIDs on export.
+- **Schema metadata key `rpf.mrid_support = v1`**: indicates stable equipment identifier column support.
+- **Version gate**: `SUPPORTED_RPF_VERSIONS` accepts v0.12.2 and retains v0.12.1.
+- **Downstream guidance**: New `mrid` columns provide stable CIM-compatible identifiers. Downstream tools (Sentinel v2.4, Studio, etc.) should prefer `mrid` for equipment_id mapping.
+
+| Table | Source mRID | Notes |
+| --- | --- | --- |
+| `branches` | `ACLineSegment.base.m_rid` | Populated on CIM export |
+| `generators` | `SynchronousMachine.base.m_rid` | Distinct from `market_resource_id` |
+| `transformers_2w` | `PowerTransformer.base.m_rid` | Populated on CIM export |
+| `transformers_3w` | `PowerTransformer.base.m_rid` | Star-expanded legs use `{mrid}_H` / `_M` / `_L` |
 
 ## v0.12.1 Additive Changes
 
@@ -148,8 +162,8 @@ Every `.rpf` file must include:
 
 Current locked values:
 
-- `raptrix.version = 0.12.1` (also accepted as `v0.12.1`)
-- `raptrix.branding = Raptrix CIM-Arrow / Raptrix Power Interchange v0.12.1 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.`
+- `raptrix.version = 0.12.2` (also accepted as `v0.12.2`; v0.12.1 retained for backward reads)
+- `raptrix.branding = Raptrix CIM-Arrow / Raptrix Power Interchange v0.12.2 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.`
 - `rpf.case_fingerprint = <required deterministic case identity fingerprint>`
 - `rpf.validation_mode = topology_only | solved_ready`
 - `rpf.case_mode = flat_start_planning | warm_start_planning | solved_snapshot | hour_ahead_advisory` (v0.8.4+, required; `hour_ahead_advisory` added in v0.9.0)
@@ -170,6 +184,7 @@ Optional file-level metadata keys:
 - `raptrix.features.remedial_action_schemes = true` when optional `remedial_action_schemes` table is emitted (v0.12.1+)
 - `raptrix.features.contingency_island_analysis = true` when optional `contingency_island_analysis` table is emitted (v0.12.1+)
 - `rpf.ras.schema_mode = canonical_v12` when canonical v0.12 RAS rows are emitted (v0.12.1+)
+- `rpf.mrid_support = v1` when stable equipment `mrid` columns are present in table schemas (v0.12.2+)
 - `rpf.rows.<table_name> = <row_count>` for each emitted table
 - `rpf.solver.version = <string>` solver software version (only when `solved_state_presence = actual_solved`)
 - `rpf.solver.iterations = <int>` Newton-Raphson iteration count (only when solved)
@@ -1035,7 +1050,7 @@ Locked contract: v0.7.0 adds optional node-breaker detail tables (`node_breaker_
 An independent parser is considered compliant if it:
 
 1. Opens `.rpf` as Arrow IPC File format.
-2. Verifies `raptrix.version` is in the set of supported contract versions (current: `0.12.1` / `v0.12.1` only).
+2. Verifies `raptrix.version` is in the set of supported contract versions (current: `0.12.2` / `v0.12.2`; retains `0.12.1` / `v0.12.1`).
 3. Verifies required root columns appear in canonical order.
 4. Uses `rpf.rows.<table_name>` metadata to trim padded null tails.
 5. Treats the 15 required root columns as mandatory even when their logical row counts are zero.

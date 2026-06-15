@@ -9,6 +9,26 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 
 Copyright (c) 2026 Raptrix Power
 
+## Converter 0.5.4 — RPF v0.12.2 stable mrid columns (2026-06-15)
+
+### Converter release: Crate version 0.5.4 (raptrix-cim-arrow) / 0.5.4 (raptrix-cim-rs) | Arrow schema v0.12.2
+
+### Added
+
+- **Nullable `mrid` column** on `branches`, `generators`, `transformers_2w`, and `transformers_3w` for stable CIM-compatible equipment identifiers.
+- **Schema metadata key `rpf.mrid_support = v1`** for introspection by downstream readers.
+- **CIM importer population**: `ACLineSegment`, `SynchronousMachine`, and `PowerTransformer` mRIDs are written on export; star-expanded 3W legs receive deterministic `{mrid}_H` / `_M` / `_L` suffixes.
+
+### Changed
+
+- **`SUPPORTED_RPF_VERSIONS`** now accepts **`v0.12.2`** / **`0.12.2`** and retains **`v0.12.1`** / **`0.12.1`** for backward reads.
+- `RPF_VERSION` / `SCHEMA_VERSION` / `BRANDING` bumped to v0.12.2.
+
+### Compatibility
+
+- **No re-export required.** v0.12.1 files remain readable; new `mrid` columns are absent (null) in legacy files. New exports populate `mrid` from CIM source data.
+- **Downstream guidance**: New `mrid` columns provide stable CIM-compatible identifiers. Downstream tools (Sentinel v2.4, Studio, etc.) should prefer `mrid` for equipment_id mapping.
+
 ## Converter 0.5.3 — RPF v0.12.1 unified optional tables (2026-06-10)
 
 ### Converter release: Crate version 0.5.3 (raptrix-cim-arrow) / 0.5.3 (raptrix-cim-rs) | Arrow schema v0.12.1
