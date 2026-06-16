@@ -595,7 +595,7 @@ fn recompute_topology(input: &RpfTables) -> Result<TopologyDiagnostics> {
         }
         islands.push(component);
     }
-    islands.sort_unstable_by(|a, b| b.len().cmp(&a.len()));
+    islands.sort_unstable_by_key(|b| std::cmp::Reverse(b.len()));
 
     let mut load_buses = HashSet::new();
     if let Some(loads) = loads {
@@ -872,16 +872,15 @@ fn grade_case(
         ));
     }
 
-    if let Some(solved) = topology.solved_state_presence.as_deref() {
-        if solved == "actual_solved"
-            && !convergence.solve_data_present
-            && batch_metrics::table_batch(&input.tables, TABLE_BUSES_SOLVED).is_none()
-        {
-            rules.push((
-                RpfHealthGrade::Pathological,
-                "solved_state_presence=actual_solved but buses_solved table is missing".to_string(),
-            ));
-        }
+    if let Some(solved) = topology.solved_state_presence.as_deref()
+        && solved == "actual_solved"
+        && !convergence.solve_data_present
+        && batch_metrics::table_batch(&input.tables, TABLE_BUSES_SOLVED).is_none()
+    {
+        rules.push((
+            RpfHealthGrade::Pathological,
+            "solved_state_presence=actual_solved but buses_solved table is missing".to_string(),
+        ));
     }
 
     if topology.detached_islands_present && topology.detached_active_network_island_count > 0 {
@@ -894,21 +893,21 @@ fn grade_case(
         ));
     }
 
-    if let Some(n) = convergence.pv_to_pq_switch_count {
-        if n >= PV_TO_PQ_STRESSED_COUNT {
-            rules.push((
-                RpfHealthGrade::Stressed,
-                format!("high PV→PQ switching during solve ({n})"),
-            ));
-        }
+    if let Some(n) = convergence.pv_to_pq_switch_count
+        && n >= PV_TO_PQ_STRESSED_COUNT
+    {
+        rules.push((
+            RpfHealthGrade::Stressed,
+            format!("high PV→PQ switching during solve ({n})"),
+        ));
     }
-    if let Some(n) = convergence.solver_q_limit_infeasible_count {
-        if n > 0 {
-            rules.push((
-                RpfHealthGrade::Stressed,
-                format!("solver reported {n} Q-limit infeasibility event(s)"),
-            ));
-        }
+    if let Some(n) = convergence.solver_q_limit_infeasible_count
+        && n > 0
+    {
+        rules.push((
+            RpfHealthGrade::Stressed,
+            format!("solver reported {n} Q-limit infeasibility event(s)"),
+        ));
     }
 
     if topology.buses_out_of_voltage_band >= VOLTAGE_OUT_OF_BAND_STRESSED {
@@ -980,15 +979,15 @@ fn grade_case(
         ));
     }
 
-    if let Some(rms) = convergence.initial_mismatch_rms {
-        if rms >= INITIAL_MISMATCH_CAUTION_RMS {
-            rules.push((
+    if let Some(rms) = convergence.initial_mismatch_rms
+        && rms >= INITIAL_MISMATCH_CAUTION_RMS
+    {
+        rules.push((
                 RpfHealthGrade::Caution,
                 format!(
                     "initial voltage mismatch RMS {rms:.4} between buses and buses_solved (threshold {INITIAL_MISMATCH_CAUTION_RMS})"
                 ),
             ));
-        }
     }
 
     if topology.zip_fidelity_presence.as_deref() == Some("partial") {
@@ -1015,7 +1014,7 @@ fn grade_case(
         ));
     }
 
-    rules.sort_by(|a, b| b.0.cmp(&a.0));
+    rules.sort_by_key(|b| std::cmp::Reverse(b.0));
     let grade = rules[0].0;
     let reasons = rules.into_iter().map(|(_, r)| r).collect();
     (grade, reasons)

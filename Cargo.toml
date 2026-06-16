@@ -2,15 +2,33 @@
 members = ["raptrix-cim-arrow"]
 resolver = "2"
 
+[workspace.package]
+edition = "2024"
+rust-version = "1.96"
+license = "MPL-2.0"
+
+[workspace.lints.rust]
+rust_2024_compatibility = "warn"
+unsafe_op_in_unsafe_fn = "warn"
+
+[workspace.lints.clippy]
+all = "warn"
+too_many_arguments = "allow"
+type_complexity = "allow"
+
 [package]
 name = "raptrix-cim-rs"
 version = "0.5.4"
-edition = "2024"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 description = "High-performance IEC 61970 Common Information Model (CIM) parser in Rust"
-license = "MPL-2.0"
 repository = "https://github.com/RaptrixPowerFlow/raptrix-cim-rs"
 keywords = ["cim", "iec61970", "power-systems", "xml", "parser"]
 categories = ["parsing", "science"]
+
+[lints]
+workspace = true
 
 [dependencies]
 quick-xml = { version = "0.39.2", features = ["serialize"] }
@@ -36,7 +54,10 @@ strict = []
 anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 
-
-
-
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+incremental = false
 

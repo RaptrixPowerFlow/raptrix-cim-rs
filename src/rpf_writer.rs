@@ -1363,7 +1363,7 @@ fn network_island_components(
         }
         islands.push(component);
     }
-    islands.sort_unstable_by(|left, right| right.len().cmp(&left.len()));
+    islands.sort_unstable_by_key(|right| std::cmp::Reverse(right.len()));
     islands
 }
 
@@ -1454,13 +1454,13 @@ fn classify_islands(
 
     for island in islands.iter().skip(1) {
         let bus_set: HashSet<i32> = island.iter().copied().collect();
-        let mut class = IslandClassification::default();
-
-        class.has_in_service_load = bus_set.iter().any(|bus_id| load_buses.contains(bus_id));
-        class.has_in_service_generation = bus_set.iter().any(|bus_id| gen_buses.contains(bus_id));
-        class.has_in_service_network = network_pairs
-            .iter()
-            .any(|(left, right)| bus_set.contains(left) && bus_set.contains(right));
+        let class = IslandClassification {
+            has_in_service_load: bus_set.iter().any(|bus_id| load_buses.contains(bus_id)),
+            has_in_service_generation: bus_set.iter().any(|bus_id| gen_buses.contains(bus_id)),
+            has_in_service_network: network_pairs
+                .iter()
+                .any(|(left, right)| bus_set.contains(left) && bus_set.contains(right)),
+        };
 
         if class.has_in_service_network {
             diagnostics.detached_active_network_island_count += 1;
@@ -3804,7 +3804,7 @@ fn parse_eq_topology_rows(
             let mut unique_nodes: Vec<&str> = Vec::new();
             for terminal in &switch_terminals {
                 let node = terminal.connectivity_node_mrid.as_str();
-                if !unique_nodes.iter().any(|existing| *existing == node) {
+                if !unique_nodes.contains(&node) {
                     unique_nodes.push(node);
                 }
             }
@@ -3945,7 +3945,7 @@ fn parse_eq_topology_rows(
 
         if let Some(points) = points_by_object_id.get(object.obj_rdf_id.as_str()) {
             let mut ordered_points = points.clone();
-            ordered_points.sort_unstable_by(|left, right| left.seq.cmp(&right.seq));
+            ordered_points.sort_unstable_by_key(|left| left.seq);
             for point in ordered_points {
                 diagram_point_rows.push(DiagramPointRow {
                     element_id: Cow::Owned(element_id.clone()),

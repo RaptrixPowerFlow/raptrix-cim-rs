@@ -250,6 +250,6 @@ pub unsafe extern "C" fn free_rpf_case_health_json(json: *mut c_char) {
 pub extern "C" fn rpf_case_health_last_error() -> *const c_char {
     LAST_ERROR.with(|slot| match slot.borrow().as_ref() {
         Some(message) => message.as_ptr(),
-        None => b"\0".as_ptr().cast(),
+        None => c"".as_ptr(),
     })
 }

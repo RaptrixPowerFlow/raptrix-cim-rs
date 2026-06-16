@@ -1,12 +1,16 @@
 [package]
 name = "raptrix-cim-arrow"
 version = "0.5.4"
-edition = "2024"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 description = "Shared Raptrix CIM-Arrow schema and RPF Arrow IPC infrastructure"
-license = "MPL-2.0"
 repository = "https://github.com/RaptrixPowerFlow/raptrix-cim-rs"
 keywords = ["arrow", "power-systems", "schema", "rpf"]
 categories = ["data-structures", "science"]
+
+[lints]
+workspace = true
 
 [lib]
 name = "raptrix_cim_arrow"

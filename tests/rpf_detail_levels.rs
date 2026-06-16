@@ -143,27 +143,23 @@ fn supported_external_v3_fixtures_match_expected_optional_tables() -> Result<()>
             .iter()
             .map(|table| table.table_name.as_str())
             .collect();
-        assert_eq!(
-            names.contains(&TABLE_CONNECTIVITY_GROUPS),
-            false,
+        assert!(
+            !names.contains(&TABLE_CONNECTIVITY_GROUPS),
             "fixture {} should not include connectivity_groups",
             file_name
         );
-        assert_eq!(
-            names.contains(&TABLE_NODE_BREAKER_DETAIL),
-            false,
+        assert!(
+            !names.contains(&TABLE_NODE_BREAKER_DETAIL),
             "fixture {} should not include node_breaker_detail",
             file_name
         );
-        assert_eq!(
-            names.contains(&TABLE_SWITCH_DETAIL),
-            false,
+        assert!(
+            !names.contains(&TABLE_SWITCH_DETAIL),
             "fixture {} should not include switch_detail",
             file_name
         );
-        assert_eq!(
-            names.contains(&TABLE_CONNECTIVITY_NODES),
-            false,
+        assert!(
+            !names.contains(&TABLE_CONNECTIVITY_NODES),
             "fixture {} should not include connectivity_nodes",
             file_name
         );

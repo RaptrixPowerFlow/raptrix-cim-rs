@@ -641,12 +641,11 @@ fn normalize_existing_path(path: &Path, cwd: &Path) -> Result<PathBuf> {
 
 fn normalize_output_path(path: &Path, cwd: &Path) -> PathBuf {
     let resolved = resolve_from_cwd(path, cwd);
-    if let Some(file_name) = resolved.file_name() {
-        if let Some(parent) = resolved.parent() {
-            if let Ok(canonical_parent) = parent.canonicalize() {
-                return canonical_parent.join(file_name);
-            }
-        }
+    if let Some(file_name) = resolved.file_name()
+        && let Some(parent) = resolved.parent()
+        && let Ok(canonical_parent) = parent.canonicalize()
+    {
+        return canonical_parent.join(file_name);
     }
     resolved
 }

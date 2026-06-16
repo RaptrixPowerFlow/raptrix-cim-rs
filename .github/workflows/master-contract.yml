@@ -23,12 +23,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup Rust (stable + rustfmt)
-        run: |
-          rustup toolchain install stable --profile minimal --component rustfmt
-          rustup default stable
-          rustc --version
-          cargo --version
+      - name: Setup Rust 1.96 (rustfmt + clippy)
+        uses: dtolnay/rust-toolchain@1.96
+        with:
+          components: rustfmt, clippy
 
       - name: Cargo fmt check
         run: cargo fmt --all -- --check

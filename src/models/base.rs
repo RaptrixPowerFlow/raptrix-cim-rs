@@ -152,6 +152,23 @@ macro_rules! impl_power_system_resource {
     };
 }
 
+// Make IdentifiedObject accessible on BaseAttributes itself for convenience.
+impl<'a> IdentifiedObject for BaseAttributes<'a> {
+    fn mrid(&self) -> &str {
+        &self.m_rid
+    }
+
+    fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    fn description(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+}
+
+impl<'a> PowerSystemResource for BaseAttributes<'a> {}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -200,20 +217,3 @@ mod tests {
         assert_eq!(attrs.mrid(), "uuid-borrow");
     }
 }
-
-// Make IdentifiedObject accessible on BaseAttributes itself for convenience.
-impl<'a> IdentifiedObject for BaseAttributes<'a> {
-    fn mrid(&self) -> &str {
-        &self.m_rid
-    }
-
-    fn name(&self) -> Option<&str> {
-        self.name.as_deref()
-    }
-
-    fn description(&self) -> Option<&str> {
-        self.description.as_deref()
-    }
-}
-
-impl<'a> PowerSystemResource for BaseAttributes<'a> {}

@@ -32,7 +32,9 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.96
+        with:
+          components: rustfmt, clippy
 
       - name: Pre-release checkpoint
         shell: pwsh
@@ -81,7 +83,9 @@ jobs:
           fi
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.96
+        with:
+          components: rustfmt, clippy
         with:
           targets: ${{ matrix.target }}
 

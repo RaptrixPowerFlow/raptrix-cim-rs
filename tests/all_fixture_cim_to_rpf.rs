@@ -74,20 +74,20 @@ fn discover_fixture_cases() -> Result<Vec<FixtureCase>> {
             continue;
         }
 
-        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-            if let Some(prefix) = stem.strip_suffix("_EQ") {
-                let dy_path = base.join(format!("{prefix}_DY.xml"));
-                cases.push(FixtureCase {
-                    name: prefix.to_string(),
-                    eq: path,
-                    dy: if dy_path.is_file() {
-                        Some(dy_path)
-                    } else {
-                        None
-                    },
-                });
-                continue;
-            }
+        if let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+            && let Some(prefix) = stem.strip_suffix("_EQ")
+        {
+            let dy_path = base.join(format!("{prefix}_DY.xml"));
+            cases.push(FixtureCase {
+                name: prefix.to_string(),
+                eq: path,
+                dy: if dy_path.is_file() {
+                    Some(dy_path)
+                } else {
+                    None
+                },
+            });
+            continue;
         }
 
         let name = path
