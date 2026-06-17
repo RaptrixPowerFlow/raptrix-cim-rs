@@ -40,7 +40,7 @@ fn skip_unsupported_contract(path: &Path) -> bool {
         && !SUPPORTED_RPF_VERSIONS.contains(&version.as_str())
     {
         eprintln!(
-            "skip {}: contract version {} not supported (re-export as v0.12.2)",
+            "skip {}: contract version {} not supported (re-export as v0.12.3)",
             path.display(),
             version
         );

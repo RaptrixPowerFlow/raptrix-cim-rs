@@ -4,6 +4,25 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 
 Copyright (c) 2026 Raptrix Power
 
+## v0.12.3 (additive — no migration required)
+
+### What changed
+
+- **SAL Baseline provenance** on `metadata`: ten nullable trailing columns for source-case upgrade tracking and convergence stats.
+- **Change tracking** on optional `topology_changes`: nullable `change_source` and `applied_phase` dictionary columns.
+- **`SUPPORTED_RPF_VERSIONS`** accepts **`v0.12.3`** / **`0.12.3`** and retains **`v0.12.2`** / **`0.12.2`** and **`v0.12.1`** / **`0.12.1`**.
+
+### Compatibility
+
+- **No re-export required.** v0.12.2 files remain readable; readers null-pad missing trailing columns.
+- **New exports** stamp `rpf_version = v0.12.3` and emit all metadata columns (SAL fields null in standard CIM exports).
+
+### Reader upgrade (raptrix-core C++ and downstream converters)
+
+- Accept **`v0.12.3`** / **`0.12.3`** in the RPF version gate.
+- Read optional nullable SAL Baseline metadata fields; null means legacy or non-SAL export.
+- Read optional nullable `topology_changes.change_source` / `applied_phase`; absent columns are null-padded on read.
+
 ## v0.12.2 (additive — no migration required)
 
 ### What changed

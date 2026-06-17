@@ -4046,6 +4046,17 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
     let mut real_time_discovery_b = BooleanBuilder::new();
     let mut default_shunt_control_mode_b = StringDictionaryBuilder::<Int32Type>::new();
     let mut computational_load_mode_b = BooleanBuilder::new();
+    // v0.12.3 SAL Baseline builders (nullable; null in standard CIM exports)
+    let mut original_sentinel_case_id_b = StringBuilder::new();
+    let mut original_model_version_b = StringBuilder::new();
+    let mut target_baseline_version_b = StringBuilder::new();
+    let mut is_sal_enhanced_b = BooleanBuilder::new();
+    let mut sal_enhancement_timestamp_b = StringBuilder::new();
+    let mut cim_model_version_used_b = StringBuilder::new();
+    let mut planning_ready_b = BooleanBuilder::new();
+    let mut upgrade_summary_b = StringBuilder::new();
+    let mut convergence_time_ms_b = Float64Builder::new();
+    let mut convergence_iterations_b = Int32Builder::new();
 
     base_mva_b.append_value(row.base_mva);
     frequency_b.append_value(row.frequency_hz);
@@ -4131,6 +4142,17 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
         Some(v) => computational_load_mode_b.append_value(v),
         None => computational_load_mode_b.append_null(),
     }
+    // v0.12.3 SAL Baseline — null in standard CIM exports
+    original_sentinel_case_id_b.append_null();
+    original_model_version_b.append_null();
+    target_baseline_version_b.append_null();
+    is_sal_enhanced_b.append_null();
+    sal_enhancement_timestamp_b.append_null();
+    cim_model_version_used_b.append_null();
+    planning_ready_b.append_null();
+    upgrade_summary_b.append_null();
+    convergence_time_ms_b.append_null();
+    convergence_iterations_b.append_null();
 
     let custom_metadata_type = schema.field(11).data_type().clone();
     let custom_metadata_array = new_null_array(&custom_metadata_type, 1);
@@ -4174,6 +4196,17 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
         Arc::new(real_time_discovery_b.finish()) as ArrayRef,
         Arc::new(default_shunt_control_mode_b.finish()) as ArrayRef,
         Arc::new(computational_load_mode_b.finish()) as ArrayRef,
+        // v0.12.3 SAL Baseline
+        Arc::new(original_sentinel_case_id_b.finish()) as ArrayRef,
+        Arc::new(original_model_version_b.finish()) as ArrayRef,
+        Arc::new(target_baseline_version_b.finish()) as ArrayRef,
+        Arc::new(is_sal_enhanced_b.finish()) as ArrayRef,
+        Arc::new(sal_enhancement_timestamp_b.finish()) as ArrayRef,
+        Arc::new(cim_model_version_used_b.finish()) as ArrayRef,
+        Arc::new(planning_ready_b.finish()) as ArrayRef,
+        Arc::new(upgrade_summary_b.finish()) as ArrayRef,
+        Arc::new(convergence_time_ms_b.finish()) as ArrayRef,
+        Arc::new(convergence_iterations_b.finish()) as ArrayRef,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build metadata record batch")

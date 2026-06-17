@@ -3,11 +3,33 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 Copyright (c) 2026 Raptrix Power
 -->
 
-# Schema Contract (Locked contract: v0.12.2 — CGMES 3.0+ Only)
+# Schema Contract (Locked contract: v0.12.3 — CGMES 3.0+ Only)
 
 This repository is the authoritative source of truth for the Raptrix Power Interchange (`.rpf`) wire contract used by CIM-first conversion pipelines.
 
-**v0.12.2** is the current contract release. `SUPPORTED_RPF_VERSIONS` accepts **`v0.12.2`** / **`0.12.2`** and retains **`v0.12.1`** / **`0.12.1`** for backward reads.
+**v0.12.3** is the current contract release. `SUPPORTED_RPF_VERSIONS` accepts **`v0.12.3`** / **`0.12.3`**, retains **`v0.12.2`** / **`0.12.2`**, and retains **`v0.12.1`** / **`0.12.1`** for backward reads.
+
+## v0.12.3 Additive Changes
+
+- **SAL Baseline provenance** on `metadata`: ten nullable trailing columns document source-case → SAL Baseline upgrades (source case ID, model versions, enhancement timestamp, convergence stats, planning-ready flag, and human-readable upgrade summary). Null in standard CIM exports.
+- **Change tracking** on optional `topology_changes`: nullable `change_source` and `applied_phase` dictionary columns (`Dictionary<Int32, Utf8>`) record why and when topology deltas were applied (e.g. `SAL_CIM_Upgrade`, `Jan_to_June_Baseline`).
+- **Version gate**: `SUPPORTED_RPF_VERSIONS` accepts v0.12.3 and retains v0.12.2 and v0.12.1.
+- **Backward compatibility**: v0.12.2 files without SAL columns remain valid; readers null-pad missing trailing metadata and topology_changes fields.
+
+| Field | Type | Example tokens / values |
+| --- | --- | --- |
+| `metadata.original_sentinel_case_id` | Utf8, nullable | Original source case identifier (field name retained for compatibility) |
+| `metadata.original_model_version` | Utf8, nullable | `"2026-01"` |
+| `metadata.target_baseline_version` | Utf8, nullable | `"2026-06"` |
+| `metadata.is_sal_enhanced` | Boolean, nullable | `true` when SAL enhancement applied |
+| `metadata.sal_enhancement_timestamp` | Utf8, nullable | RFC 3339 UTC (same pattern as `timestamp_utc`) |
+| `metadata.cim_model_version_used` | Utf8, nullable | CIM model version used during upgrade |
+| `metadata.planning_ready` | Boolean, nullable | Case ready for planning studies |
+| `metadata.upgrade_summary` | Utf8, nullable | Human-readable upgrade narrative |
+| `metadata.convergence_time_ms` | Float64, nullable | Solver convergence wall time |
+| `metadata.convergence_iterations` | Int32, nullable | Solver iteration count |
+| `topology_changes.change_source` | Dictionary\<Int32, Utf8\>, nullable | `SAL_CIM_Upgrade`, `Model_Alignment` |
+| `topology_changes.applied_phase` | Dictionary\<Int32, Utf8\>, nullable | `Jan_to_June_Baseline`, `Planning_Study_Prep` |
 
 ## v0.12.2 Additive Changes
 
@@ -162,8 +184,8 @@ Every `.rpf` file must include:
 
 Current locked values:
 
-- `raptrix.version = 0.12.2` (also accepted as `v0.12.2`; v0.12.1 retained for backward reads)
-- `raptrix.branding = Raptrix CIM-Arrow / Raptrix Power Interchange v0.12.2 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.`
+- `raptrix.version = 0.12.3` (also accepted as `v0.12.3`; v0.12.2 and v0.12.1 retained for backward reads)
+- `raptrix.branding = Raptrix CIM-Arrow / Raptrix Power Interchange v0.12.3 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.`
 - `rpf.case_fingerprint = <required deterministic case identity fingerprint>`
 - `rpf.validation_mode = topology_only | solved_ready`
 - `rpf.case_mode = flat_start_planning | warm_start_planning | solved_snapshot | hour_ahead_advisory` (v0.8.4+, required; `hour_ahead_advisory` added in v0.9.0)
@@ -376,6 +398,17 @@ This section is normative for external parser authors.
 - `pv_to_pq_switch_count`: Int32, nullable (v0.9.0+) — number of PV→PQ bus-type switches during solve
 - `real_time_discovery`: Boolean, nullable (v0.9.0+) — `true` if this case originated from live State Estimator analysis
 - `default_shunt_control_mode`: Dictionary<Int32, Utf8>, nullable (v0.9.5+) — optional declarative default shunt control mode; see v0.9.5 additive section
+- `computational_load_mode`: Boolean, nullable (v0.10.0+) — when `true`, consumers apply the computational-load runtime validation contract
+- `original_sentinel_case_id`: Utf8, nullable (v0.12.3+) — original source case identifier for SAL Baseline provenance
+- `original_model_version`: Utf8, nullable (v0.12.3+) — e.g. `"2026-01"`
+- `target_baseline_version`: Utf8, nullable (v0.12.3+) — e.g. `"2026-06"`
+- `is_sal_enhanced`: Boolean, nullable (v0.12.3+) — `true` when SAL enhancement was applied
+- `sal_enhancement_timestamp`: Utf8, nullable (v0.12.3+) — RFC 3339 UTC enhancement time (same pattern as `timestamp_utc`)
+- `cim_model_version_used`: Utf8, nullable (v0.12.3+) — CIM model version used during upgrade
+- `planning_ready`: Boolean, nullable (v0.12.3+) — case ready for planning studies
+- `upgrade_summary`: Utf8, nullable (v0.12.3+) — human-readable upgrade narrative
+- `convergence_time_ms`: Float64, nullable (v0.12.3+) — solver convergence wall time in milliseconds
+- `convergence_iterations`: Int32, nullable (v0.12.3+) — solver iteration count
 
 ### buses
 
@@ -804,6 +837,8 @@ One row per resulting topology delta produced by a contingency (typically a prot
 - `summary`: Utf8, nullable — operator-readable narrative
 - `provenance`: Dictionary<Int32,Utf8>, nullable — `declared` (planning intent; Phase 0) | `solved` (solver-derived; future)
 - `params`: Map<String,Float64>, nullable — extensible scalar parameters
+- `change_source`: Dictionary<Int32,Utf8>, nullable (v0.12.3+) — why the change was made; e.g. `SAL_CIM_Upgrade`, `Model_Alignment`
+- `applied_phase`: Dictionary<Int32,Utf8>, nullable (v0.12.3+) — when/which upgrade phase applied it; e.g. `Jan_to_June_Baseline`, `Planning_Study_Prep`
 
 Referential integrity: every non-null `protection_contingencies.topology_change_id` must resolve
 to a `topology_changes.topology_change_id` (enforced by `validate_rpf_file()` when both tables
@@ -1050,7 +1085,7 @@ Locked contract: v0.7.0 adds optional node-breaker detail tables (`node_breaker_
 An independent parser is considered compliant if it:
 
 1. Opens `.rpf` as Arrow IPC File format.
-2. Verifies `raptrix.version` is in the set of supported contract versions (current: `0.12.2` / `v0.12.2`; retains `0.12.1` / `v0.12.1`).
+2. Verifies `raptrix.version` is in the set of supported contract versions (current: `0.12.3` / `v0.12.3`; retains `0.12.2` / `v0.12.2` and `0.12.1` / `v0.12.1`).
 3. Verifies required root columns appear in canonical order.
 4. Uses `rpf.rows.<table_name>` metadata to trim padded null tails.
 5. Treats the 15 required root columns as mandatory even when their logical row counts are zero.

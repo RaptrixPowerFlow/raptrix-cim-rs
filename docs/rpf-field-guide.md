@@ -5,7 +5,7 @@ Copyright (c) 2026 Raptrix Power
 
 # RPF Field Guide — Plain-English Reference
 
-**Schema contract: v0.11.0 | Format: Apache Arrow IPC**
+**Schema contract: v0.12.3 | Format: Apache Arrow IPC**
 
 This guide explains every table and field in an `.rpf` file in plain English. It is written for engineers who need to read, validate, or build tools against RPF files without digging into Arrow source code. For the normative type-level contract see [schema-contract.md](schema-contract.md).
 
@@ -135,6 +135,16 @@ This table always has exactly one row and summarizes the case.
 | `solved_shunt_state_presence` | text | `actual_solved` when the `switched_shunts_solved` table is present and authoritative; `not_available` when the solver did not track discrete shunt steps. Null for planning cases. (v0.8.5+) |
 | `default_shunt_control_mode` | text | **(v0.9.5+)** Optional. When present, Raptrix-Sentinel and downstream solvers will default to this shunt mode (`planning_full` \| `real_time_hot_start` \| `real_time_frozen`). Enables fully declarative planning ↔ real-time handoff. Null when unspecified. |
 | `computational_load_mode` | boolean | **(v0.10.0+)** Optional. When `true`, consumers enforce the computational-load validation contract (for example non-empty `computational_load_profiles`). Null or absent means standard interchange without that contract. |
+| `original_sentinel_case_id` | text | **(v0.12.3+)** Optional. Original source case identifier when this file is a SAL Baseline upgrade. Null in standard CIM exports. |
+| `original_model_version` | text | **(v0.12.3+)** Optional. Model version of the source case, e.g. `"2026-01"`. |
+| `target_baseline_version` | text | **(v0.12.3+)** Optional. Target baseline model version, e.g. `"2026-06"`. |
+| `is_sal_enhanced` | true/false | **(v0.12.3+)** Optional. `true` when SAL enhancement was applied to produce this file. |
+| `sal_enhancement_timestamp` | text | **(v0.12.3+)** Optional. RFC 3339 UTC timestamp of SAL enhancement (same format as `timestamp_utc`). |
+| `cim_model_version_used` | text | **(v0.12.3+)** Optional. CIM model version used during the upgrade. |
+| `planning_ready` | true/false | **(v0.12.3+)** Optional. Indicates the case is ready for planning studies after upgrade. |
+| `upgrade_summary` | text | **(v0.12.3+)** Optional. Human-readable summary of model upgrades applied. |
+| `convergence_time_ms` | number | **(v0.12.3+)** Optional. Solver convergence wall time in milliseconds. |
+| `convergence_iterations` | integer | **(v0.12.3+)** Optional. Solver iteration count during upgrade convergence. |
 
 ---
 
@@ -404,6 +414,8 @@ contract are in [adr/0001-protection-informed-contingencies.md](adr/0001-protect
 | `summary` | Operator-readable narrative. |
 | `provenance` | `declared` (planning intent — what current writers emit) or `solved` (what the solver actually produced — a future capability). |
 | `params` | Extensible numeric parameters. |
+| `change_source` | **(v0.12.3+)** Optional. Why the topology change was made, e.g. `SAL_CIM_Upgrade`, `Model_Alignment`. Dictionary-encoded. |
+| `applied_phase` | **(v0.12.3+)** Optional. Which upgrade phase applied the change, e.g. `Jan_to_June_Baseline`, `Planning_Study_Prep`. Dictionary-encoded. |
 
 #### Worked example 1 — a plain single-branch outage (no protection context)
 

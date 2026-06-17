@@ -9,6 +9,24 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 
 Copyright (c) 2026 Raptrix Power
 
+## Converter 0.5.5 — RPF v0.12.3 SAL Baseline provenance (2026-06-17)
+
+### Converter release: Crate version 0.5.5 (raptrix-cim-arrow) / 0.5.5 (raptrix-cim-rs) | Arrow schema v0.12.3
+
+### Added
+
+- **SAL Baseline provenance** on `metadata`: ten nullable trailing columns (`original_sentinel_case_id`, `original_model_version`, `target_baseline_version`, `is_sal_enhanced`, `sal_enhancement_timestamp`, `cim_model_version_used`, `planning_ready`, `upgrade_summary`, `convergence_time_ms`, `convergence_iterations`).
+- **Change tracking** on optional `topology_changes`: nullable `change_source` and `applied_phase` dictionary columns (`Dictionary<Int32, Utf8>`).
+
+### Changed
+
+- **`SUPPORTED_RPF_VERSIONS`** now accepts **`v0.12.3`** / **`0.12.3`** and retains **`v0.12.2`** / **`0.12.2`** and **`v0.12.1`** / **`0.12.1`** for backward reads.
+- `RPF_VERSION` / `SCHEMA_VERSION` / `BRANDING` bumped to v0.12.3.
+
+### Compatibility
+
+- **No re-export required.** v0.12.2 files remain readable; readers null-pad missing SAL Baseline metadata and topology_changes columns. Standard CIM exports leave new fields null.
+
 ## Converter 0.5.4 — RPF v0.12.2 stable mrid columns (2026-06-15)
 
 ### Converter release: Crate version 0.5.4 (raptrix-cim-arrow) / 0.5.4 (raptrix-cim-rs) | Arrow schema v0.12.2

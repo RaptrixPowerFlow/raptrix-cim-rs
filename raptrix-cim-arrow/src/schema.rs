@@ -7,7 +7,12 @@ Copyright (c) 2026 Raptrix Power
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Arrow schema definitions for the Raptrix Power Interchange v0.12.2 profile.
+//! Arrow schema definitions for the Raptrix Power Interchange v0.12.3 profile.
+//!
+//! ## v0.12.3 — SAL Baseline provenance (additive metadata + topology_changes)
+//! Adds nullable SAL Baseline fields to `metadata` (provenance, model upgrade tracking,
+//! convergence stats) and nullable `change_source` / `applied_phase` dictionary columns to
+//! optional `topology_changes`. v0.12.2 files remain readable without re-export.
 //!
 //! **CGMES 3.0+ Only**: This module targets CGMES v3.0 and later (v17+ CIM) merged profiles.
 //! Support for legacy CGMES 2.4.x was dropped in this release for simplicity and performance.
@@ -74,16 +79,18 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, Schema};
 
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / Raptrix Power Interchange v0.12.2 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow / Raptrix Power Interchange v0.12.3 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.";
 
 /// Canonical RPF format version tag embedded as file-level metadata.
-pub const RPF_VERSION: &str = "v0.12.2";
+pub const RPF_VERSION: &str = "v0.12.3";
 
 /// Supported RPF versions accepted by generic Arrow IPC readers.
 ///
-/// v0.12.2 is the current contract release. v0.12.1 files remain readable (additive
-/// `mrid` columns). Prior contract versions must be re-emitted.
-pub const SUPPORTED_RPF_VERSIONS: &[&str] = &["v0.12.2", "0.12.2", "v0.12.1", "0.12.1"];
+/// v0.12.3 is the current contract release. v0.12.2 and v0.12.1 files remain readable
+/// (additive trailing columns). Prior contract versions must be re-emitted.
+pub const SUPPORTED_RPF_VERSIONS: &[&str] = &[
+    "v0.12.3", "0.12.3", "v0.12.2", "0.12.2", "v0.12.1", "0.12.1",
+];
 
 /// Validates a nominal kV value for required network voltage fields.
 pub fn validate_nominal_kv(value: f64, context: &str) -> Result<(), String> {
@@ -631,6 +638,12 @@ pub fn schema_metadata() -> HashMap<String, String> {
 /// real_time_frozen) for declarative shunt-mode handoff; uncoupled from `case_mode` semantics.
 ///
 /// v0.10.0 adds nullable `computational_load_mode` (Boolean) for computational-load interchange mode.
+///
+/// v0.12.3 adds nullable SAL Baseline provenance fields: `original_sentinel_case_id`,
+/// `original_model_version`, `target_baseline_version`, `is_sal_enhanced`,
+/// `sal_enhancement_timestamp`, `cim_model_version_used`, `planning_ready`, `upgrade_summary`,
+/// `convergence_time_ms`, and `convergence_iterations`. Populated when a source case
+/// is upgraded to a self-describing SAL Baseline .rpf; null in standard CIM exports.
 pub fn metadata_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
@@ -688,6 +701,17 @@ pub fn metadata_schema() -> Schema {
                 DataType::Boolean,
                 true,
             ),
+            // v0.12.3: SAL Baseline provenance
+            Field::new("original_sentinel_case_id", DataType::Utf8, true),
+            Field::new("original_model_version", DataType::Utf8, true),
+            Field::new("target_baseline_version", DataType::Utf8, true),
+            Field::new("is_sal_enhanced", DataType::Boolean, true),
+            Field::new("sal_enhancement_timestamp", DataType::Utf8, true),
+            Field::new("cim_model_version_used", DataType::Utf8, true),
+            Field::new("planning_ready", DataType::Boolean, true),
+            Field::new("upgrade_summary", DataType::Utf8, true),
+            Field::new("convergence_time_ms", DataType::Float64, true),
+            Field::new("convergence_iterations", DataType::Int32, true),
         ],
         schema_metadata(),
     )
@@ -1018,6 +1042,9 @@ pub fn protection_contingencies_schema() -> Schema {
 ///
 /// One row per resulting topology delta. `provenance` discriminates planning intent
 /// (`declared`, emitted by Phase 0 producers) from a future solver-derived delta (`solved`).
+///
+/// v0.12.3 adds nullable `change_source` and `applied_phase` dictionary columns for SAL
+/// Baseline upgrade tracking (e.g. `SAL_CIM_Upgrade`, `Jan_to_June_Baseline`).
 pub fn topology_changes_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
@@ -1034,6 +1061,9 @@ pub fn topology_changes_schema() -> Schema {
             // declared (planning intent, Phase 0) | solved (solver-derived, future).
             Field::new("provenance", dict_utf8(), true),
             Field::new("params", map_string_f64(), true),
+            // v0.12.3: SAL Baseline change tracking
+            Field::new("change_source", dict_utf8(), true),
+            Field::new("applied_phase", dict_utf8(), true),
         ],
         schema_metadata(),
     )
@@ -1731,12 +1761,14 @@ mod tests {
             "optional RAS/protection/island tables must NOT appear in all_table_schemas()"
         );
 
-        // version gate: v0.12.2 current; v0.12.1 remains readable (additive mrid columns)
+        // version gate: v0.12.3 current; v0.12.2 and v0.12.1 remain readable
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.12.3"));
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.12.3"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.12.2"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.12.2"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.12.1"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.12.1"));
-        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 4);
+        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 6);
     }
 
     #[test]
@@ -1797,7 +1829,7 @@ mod tests {
         assert!(pc.field(10).is_nullable());
 
         let tc = super::topology_changes_schema();
-        assert_eq!(tc.fields().len(), 9);
+        assert_eq!(tc.fields().len(), 11);
         assert_eq!(tc.field(0).name(), "topology_change_id");
         assert!(!tc.field(0).is_nullable());
         assert_eq!(tc.field(2).name(), "change_type");
@@ -1806,6 +1838,18 @@ mod tests {
         assert!(!tc.field(3).is_nullable());
         assert_eq!(tc.field(7).name(), "provenance");
         assert!(tc.field(7).is_nullable());
+        assert_eq!(tc.field(9).name(), "change_source");
+        assert!(tc.field(9).is_nullable());
+        assert_eq!(
+            tc.field(9).data_type(),
+            &DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8),)
+        );
+        assert_eq!(tc.field(10).name(), "applied_phase");
+        assert!(tc.field(10).is_nullable());
+        assert_eq!(
+            tc.field(10).data_type(),
+            &DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8),)
+        );
 
         // helper ordering: protection_contingencies before topology_changes
         let with_topo = super::protection_table_schemas(true);
@@ -1815,6 +1859,38 @@ mod tests {
         let without_topo = super::protection_table_schemas(false);
         assert_eq!(without_topo.len(), 1);
         assert_eq!(without_topo[0].0, "protection_contingencies");
+    }
+
+    #[test]
+    fn metadata_schema_v0123_sal_baseline_columns() {
+        let meta = super::metadata_schema();
+        assert_eq!(meta.fields().len(), 45);
+        assert_eq!(meta.field(35).name(), "original_sentinel_case_id");
+        assert_eq!(meta.field(35).data_type(), &DataType::Utf8);
+        assert!(meta.field(35).is_nullable());
+        assert_eq!(meta.field(36).name(), "original_model_version");
+        assert_eq!(meta.field(37).name(), "target_baseline_version");
+        assert_eq!(meta.field(38).name(), "is_sal_enhanced");
+        assert_eq!(meta.field(38).data_type(), &DataType::Boolean);
+        assert_eq!(meta.field(39).name(), "sal_enhancement_timestamp");
+        assert_eq!(meta.field(40).name(), "cim_model_version_used");
+        assert_eq!(meta.field(41).name(), "planning_ready");
+        assert_eq!(meta.field(42).name(), "upgrade_summary");
+        assert_eq!(meta.field(43).name(), "convergence_time_ms");
+        assert_eq!(meta.field(43).data_type(), &DataType::Float64);
+        assert_eq!(meta.field(44).name(), "convergence_iterations");
+        assert_eq!(meta.field(44).data_type(), &DataType::Int32);
+        assert!(meta.field(44).is_nullable());
+    }
+
+    #[test]
+    fn topology_changes_v0123_change_tracking_columns() {
+        let tc = super::topology_changes_schema();
+        let dict = DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8));
+        assert_eq!(tc.field(9).name(), "change_source");
+        assert_eq!(tc.field(9).data_type(), &dict);
+        assert_eq!(tc.field(10).name(), "applied_phase");
+        assert_eq!(tc.field(10).data_type(), &dict);
     }
 
     #[test]

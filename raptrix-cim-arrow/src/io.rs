@@ -1088,13 +1088,13 @@ mod tests {
         METADATA_KEY_PROTECTION_FIDELITY, METADATA_KEY_RAS_SCHEMA_MODE, METADATA_KEY_RPF_VERSION,
         METADATA_KEY_VERSION, SCHEMA_VERSION, TABLE_BRANCHES, TABLE_COMPUTATIONAL_LOAD_PROFILES,
         TABLE_CONTINGENCY_ISLAND_ANALYSIS, TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS,
-        TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED, TABLE_GENERATORS, TABLE_LOADS,
+        TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED, TABLE_GENERATORS, TABLE_LOADS, TABLE_METADATA,
         TABLE_PROTECTION_CONTINGENCIES, TABLE_REMEDIAL_ACTION_SCHEMES, TABLE_TOPOLOGY_CHANGES,
         all_table_schemas, branches_schema, computational_load_profiles_schema,
         contingency_island_analysis_schema, diagram_objects_schema, diagram_points_schema,
         facts_devices_schema, facts_solved_schema, generators_schema, loads_schema,
-        protection_contingencies_schema, remedial_action_schemes_schema, schema_metadata,
-        topology_changes_schema,
+        metadata_schema, protection_contingencies_schema, remedial_action_schemes_schema,
+        schema_metadata, topology_changes_schema,
     };
 
     use super::{
@@ -1351,7 +1351,7 @@ mod tests {
             .expect_err("v0.9.3 reader should reject missing required nominal_kv fields");
         let message = format!("{err:#}");
         assert!(message.contains("missing non-nullable field 'to_nominal_kv'"));
-        assert_eq!(SCHEMA_VERSION, "v0.12.2");
+        assert_eq!(SCHEMA_VERSION, "v0.12.3");
         Ok(())
     }
 
@@ -1424,6 +1424,88 @@ mod tests {
         assert_eq!(loads.column(6).null_count(), 0);
         assert_eq!(loads.column(7).null_count(), 0);
         assert_eq!(loads.column(8).null_count(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn read_supports_v0122_metadata_missing_sal_columns() -> Result<()> {
+        let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_backward_metadata_read");
+        std::fs::create_dir_all(&tmp_dir)?;
+        let output_path = tmp_dir.join("v0122_like_metadata.rpf");
+
+        let mut table_batches: HashMap<&'static str, RecordBatch> = all_table_schemas()
+            .into_iter()
+            .map(|(name, schema)| (name, RecordBatch::new_empty(Arc::new(schema))))
+            .collect();
+
+        // v0.12.2 metadata shape: 35 columns (before SAL Baseline fields).
+        let old_meta_fields: Vec<Field> = metadata_schema().fields()[0..35]
+            .iter()
+            .map(|field| field.as_ref().clone())
+            .collect();
+        let old_metadata_schema = Schema::new_with_metadata(old_meta_fields, schema_metadata());
+        table_batches.insert(
+            TABLE_METADATA,
+            RecordBatch::new_empty(Arc::new(old_metadata_schema.clone())),
+        );
+
+        let mut root_fields = Vec::new();
+        let mut root_columns: Vec<ArrayRef> = Vec::new();
+        for (name, _) in all_table_schemas() {
+            let table_batch = table_batches
+                .get(name)
+                .expect("table batch should exist for each required table");
+            let table_schema = table_batch.schema();
+            root_fields.push(Field::new(
+                name,
+                DataType::Struct(table_schema.fields().clone()),
+                true,
+            ));
+            root_columns.push(Arc::new(StructArray::new(
+                table_schema.fields().clone(),
+                table_batch.columns().to_vec(),
+                None,
+            )) as ArrayRef);
+        }
+
+        let legacy_version = "v0.12.2";
+        let mut root_meta = schema_metadata();
+        root_meta.insert(METADATA_KEY_VERSION.to_string(), legacy_version.to_string());
+        root_meta.insert(
+            METADATA_KEY_RPF_VERSION.to_string(),
+            legacy_version.to_string(),
+        );
+        for (name, _) in all_table_schemas() {
+            root_meta.insert(row_count_metadata_key(name), "0".to_string());
+        }
+        let root_schema = Arc::new(Schema::new_with_metadata(root_fields, root_meta));
+        let root_batch = RecordBatch::try_new(root_schema.clone(), root_columns)?;
+
+        let mut out = File::create(&output_path)?;
+        let mut writer = FileWriter::try_new(&mut out, &root_schema)?;
+        writer.write_metadata(METADATA_KEY_VERSION, legacy_version);
+        writer.write_metadata(METADATA_KEY_RPF_VERSION, legacy_version);
+        writer.write(&root_batch)?;
+        writer.finish()?;
+
+        let tables = read_rpf_tables(&output_path)?;
+        let (_, metadata) = tables
+            .iter()
+            .find(|(name, _)| name == TABLE_METADATA)
+            .context("missing metadata table")?;
+        assert_eq!(
+            metadata.schema().fields().len(),
+            metadata_schema().fields().len()
+        );
+        assert_eq!(metadata.schema().fields().len(), 45);
+        for index in 35..45 {
+            assert_eq!(
+                metadata.column(index).null_count(),
+                metadata.num_rows(),
+                "SAL Baseline column {} should be null-padded",
+                metadata.schema().field(index).name()
+            );
+        }
         Ok(())
     }
 
@@ -1705,6 +1787,8 @@ mod tests {
                 Arc::new(StringArray::from(vec![Some("section cleared")])) as _, // summary
                 one_dict("declared"),                     // provenance
                 new_null_array(tc_schema.field(8).data_type(), 1), // params
+                new_null_array(tc_schema.field(9).data_type(), 1), // change_source
+                new_null_array(tc_schema.field(10).data_type(), 1), // applied_phase
             ],
         )?;
         table_batches.insert(TABLE_TOPOLOGY_CHANGES, topology);
