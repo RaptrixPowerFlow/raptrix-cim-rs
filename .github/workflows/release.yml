@@ -86,7 +86,6 @@ jobs:
         uses: dtolnay/rust-toolchain@1.96
         with:
           components: rustfmt, clippy
-        with:
           targets: ${{ matrix.target }}
 
       - name: Build release binary
