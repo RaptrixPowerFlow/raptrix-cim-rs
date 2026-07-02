@@ -113,18 +113,21 @@ def main() -> int:
     if _remote_tag_exists(tag):
         skip = True
         tag_sha = _remote_tag_sha(tag)
-        if tag_sha == head and not _github_release_exists(tag):
+        if not _github_release_exists(tag):
             dispatch_release = True
-            reason = (
-                f"tag {tag} already exists at HEAD but GitHub Release is missing; "
-                "will dispatch release.yml"
-            )
+            if tag_sha == head:
+                reason = (
+                    f"tag {tag} exists at HEAD but GitHub Release is missing; "
+                    "will dispatch release.yml"
+                )
+            else:
+                reason = (
+                    f"tag {tag} exists on origin (at {tag_sha[:7]}, HEAD {head[:7]}) "
+                    "but GitHub Release is missing; will dispatch release.yml"
+                )
         else:
             dispatch_release = False
-            if tag_sha == head:
-                reason = f"tag {tag} already exists at HEAD with a GitHub Release"
-            else:
-                reason = f"tag {tag} already exists on origin (not at HEAD)"
+            reason = f"tag {tag} already exists on origin with a GitHub Release"
     else:
         skip = False
         dispatch_release = False
