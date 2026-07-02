@@ -60,7 +60,7 @@ jobs:
       # Pushes using GITHUB_TOKEN do not trigger other workflows (including tag
       # listeners). Dispatch Release explicitly on the new tag ref.
       - name: Dispatch Release workflow on tag
-        if: ${{ steps.meta.outputs.skip == 'false' && (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true') }}
+        if: ${{ (steps.meta.outputs.skip == 'false' || steps.meta.outputs.dispatch_release == 'true') && (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true') }}
         env:
           TAG: ${{ steps.meta.outputs.tag }}
           VERSION: ${{ steps.meta.outputs.version }}
