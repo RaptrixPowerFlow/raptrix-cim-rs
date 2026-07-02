@@ -125,6 +125,13 @@ jobs:
           path: artifacts/
           merge-multiple: true
 
+      - name: List release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          find artifacts -type f -print
+          test -n "$(find artifacts -type f -print -quit)"
+
       - name: Resolve release metadata
         id: release_meta
         shell: bash
@@ -150,10 +157,15 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          token: ${{ secrets.GH_RELEASE_PAT || github.token }}
+          # workflow_dispatch backfill runs with the default GITHUB_TOKEN; a separate
+          # PAT in GH_RELEASE_PAT is required for that path when org policy blocks
+          # release creation by the Actions integration. Tag-push releases use
+          # github.token and do not need the secret.
+          token: ${{ github.event_name == 'workflow_dispatch' && secrets.GH_RELEASE_PAT || github.token }}
           tag_name: ${{ steps.release_meta.outputs.tag_name }}
           name: ${{ steps.release_meta.outputs.release_name }}
           target_commitish: ${{ github.sha }}
           draft: ${{ steps.release_meta.outputs.draft }}
           generate_release_notes: false
-          files: artifacts/*
+          files: |
+            artifacts/**

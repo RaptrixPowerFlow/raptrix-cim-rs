@@ -48,19 +48,30 @@ jobs:
         run: python3 scripts/ci/release_auto_tag.py
 
       - name: Create and push tag
+        id: push_tag
         if: ${{ steps.meta.outputs.skip == 'false' && (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true') }}
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          REASON: ${{ steps.meta.outputs.reason }}
+          RELEASE_PAT: ${{ secrets.GH_RELEASE_PAT }}
         run: |
           set -euo pipefail
-          TAG="${{ steps.meta.outputs.tag }}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "$TAG" -m "Release $TAG (${{ steps.meta.outputs.reason }})"
-          git push origin "$TAG"
+          git tag -a "$TAG" -m "Release $TAG (${REASON})"
+          if [[ -n "${RELEASE_PAT}" ]]; then
+            echo "used_pat=true" >> "$GITHUB_OUTPUT"
+            git push "https://x-access-token:${RELEASE_PAT}@github.com/${GITHUB_REPOSITORY}.git" "$TAG"
+          else
+            echo "used_pat=false" >> "$GITHUB_OUTPUT"
+            git push origin "$TAG"
+          fi
 
       # Pushes using GITHUB_TOKEN do not trigger other workflows (including tag
-      # listeners). Dispatch Release explicitly on the new tag ref.
+      # listeners). Dispatch Release explicitly unless GH_RELEASE_PAT performed the
+      # tag push (that path triggers release.yml via the tag listener).
       - name: Dispatch Release workflow on tag
-        if: ${{ (steps.meta.outputs.skip == 'false' || steps.meta.outputs.dispatch_release == 'true') && (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true') }}
+        if: ${{ (steps.meta.outputs.dispatch_release == 'true' || steps.push_tag.outputs.used_pat == 'false') && (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true') }}
         env:
           TAG: ${{ steps.meta.outputs.tag }}
           VERSION: ${{ steps.meta.outputs.version }}
