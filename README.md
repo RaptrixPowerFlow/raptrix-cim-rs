@@ -103,7 +103,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 | Connectivity detail | `--connectivity-detail` | Granular ConnectivityNode bus mapping; emits optional `connectivity_groups` table |
 | Node-breaker | `--connectivity-detail --node-breaker` | Adds switch-topology detail tables for operational and viewer workflows |
 
-### Output tables (schema contract v0.12.3)
+### Output tables (schema contract v0.12.4)
 
 **18 canonical tables (always emitted):** `metadata`, `buses`, `branches`, `multi_section_lines`, `dc_lines_2w`, `generators`, `loads`, `fixed_shunts`, `switched_shunts`, `switched_shunt_banks`, `transformers_2w`, `transformers_3w`, `areas`, `zones`, `owners`, `contingencies`, `interfaces`, `dynamics_models`
 
@@ -145,7 +145,7 @@ RAS safety note: all public examples in this repository use synthetic demonstrat
 
 ## Data Contract (Locked)
 
-- Current schema contract: **v0.12.3** (CGMES 3.0+ only). v0.12.3 adds nullable SAL Baseline provenance fields on `metadata` and change-tracking columns on optional `topology_changes`. The RPF version gate accepts **v0.12.3** and retains **v0.12.2** and **v0.12.1** for backward reads — prior contract versions must be re-emitted.
+- Current schema contract: **v0.12.4** (CGMES 3.0+ only). v0.12.4 adds optional `q_limits_solved` and `feasibility_certificate_buses` tables and documents read-compatibility dialects for current solved-snapshot exports. The RPF version gate accepts **v0.12.4** and retains **v0.12.3**, **v0.12.2**, and **v0.12.1** for backward reads — prior contract versions must be re-emitted.
 - Canonical source: raptrix-cim-arrow/src/schema.rs
 - Contract policy and semantics: docs/schema-contract.md
 - Plain-English field guide: [docs/rpf-field-guide.md](docs/rpf-field-guide.md)
@@ -159,11 +159,13 @@ RPF standardization here is intentional: it enables direct CIM-to-powerflow inte
 
 ### Versioning Policy
 
-Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is at schema **`v0.12.3`** while the converter crate release is **`0.5.5`**.
+Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is at schema **`v0.12.4`** while the converter crate release is **`0.5.6`**.
 
-Readers in this repository accept `v0.12.3` / `0.12.3` and retain `v0.12.2` / `0.12.2` and `v0.12.1` / `0.12.1`. Prior contract versions must be re-emitted.
+Readers in this repository accept `v0.12.4` / `0.12.4` and retain `v0.12.3` / `0.12.3`, `v0.12.2` / `0.12.2`, and `v0.12.1` / `0.12.1`. Prior contract versions must be re-emitted.
 
-**v0.12.3**: Adds nullable SAL Baseline provenance fields on `metadata` and nullable `change_source` / `applied_phase` dictionary columns on optional `topology_changes`. v0.12.2 files remain readable without re-export.
+**v0.12.4**: Adds optional `q_limits_solved` and `feasibility_certificate_buses` tables, switches generic readers to name-based root-table matching with tolerant nested-type comparison, and documents snapshot read dialects for `multi_section_lines`, `dc_lines_2w`, `switched_shunt_banks`, and `generators_solved`. v0.12.3 and earlier supported files remain readable without re-export.
+
+**v0.12.3**: Adds nullable baseline provenance fields on `metadata` and nullable `change_source` / `applied_phase` dictionary columns on optional `topology_changes`. v0.12.2 files remain readable without re-export.
 
 **v0.12.2**: Adds nullable `mrid` columns on `branches`, `generators`, `transformers_2w`, and `transformers_3w` for stable CIM-compatible equipment identifiers, plus metadata `rpf.mrid_support=v1`. Downstream tools should prefer `mrid` for equipment_id mapping.
 
@@ -572,5 +574,6 @@ to implementation tasks with much less ambiguity.
 Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 
 Copyright (c) 2026 Raptrix Power
+
 
 

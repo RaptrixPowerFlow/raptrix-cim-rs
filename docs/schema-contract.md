@@ -3,15 +3,46 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 Copyright (c) 2026 Raptrix Power
 -->
 
-# Schema Contract (Locked contract: v0.12.3 — CGMES 3.0+ Only)
+# Schema Contract (Locked contract: v0.12.4 — CGMES 3.0+ Only)
 
 This repository is the authoritative source of truth for the Raptrix Power Interchange (`.rpf`) wire contract used by CIM-first conversion pipelines.
 
-**v0.12.3** is the current contract release. `SUPPORTED_RPF_VERSIONS` accepts **`v0.12.3`** / **`0.12.3`**, retains **`v0.12.2`** / **`0.12.2`**, and retains **`v0.12.1`** / **`0.12.1`** for backward reads.
+**v0.12.4** is the current contract release. `SUPPORTED_RPF_VERSIONS` accepts **`v0.12.4`** / **`0.12.4`** and retains **`v0.12.3`** / **`0.12.3`**, **`v0.12.2`** / **`0.12.2`**, and **`v0.12.1`** / **`0.12.1`** for backward reads.
+
+## v0.12.4 Additive Changes
+
+- **Optional solved-state table `q_limits_solved`** (emitted when `case_mode = solved_snapshot` and the solver recorded per-bus reactive-limit targets):
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `bus_id` | Int32, required | Foreign key into `buses.bus_id` |
+| `q_net_target_pu` | Float64, required | Net reactive target after limit enforcement |
+
+- **Optional table `feasibility_certificate_buses`** (emitted when a post-solve feasibility/complementarity certificate is present; mirrors the certificate bus audit rows for typed consumers): `bus_id` (Int32, required), `is_pv`, `switched_to_pq`, `complementarity_ok`, `voltage_box_ok` (Boolean, nullable), `q_gen_pu` (Float64, nullable), `violation_kind` (Dictionary\<Int32, Utf8\>, nullable).
+- **Version gate**: `SUPPORTED_RPF_VERSIONS` accepts v0.12.4 and retains v0.12.3, v0.12.2, and v0.12.1. The gate remains an explicit allowlist; unknown future versions are rejected.
+- **Backward compatibility**: v0.12.4 solved-snapshot files may omit the ten nullable trailing `metadata` provenance columns introduced in v0.12.3; readers null-pad absent fields and reconstruct the canonical 45-column `metadata` shape.
+
+### v0.12.4 Reader Compatibility Policy
+
+Generic readers (`raptrix-cim-arrow::read_rpf_tables`) apply the following tolerances so that files from all conforming writer implementations load identically. Writers must always target the canonical layouts.
+
+- **Name-based root matching.** Every canonical required table must be present as a root struct column, but fixed root column ordering is no longer required. Unknown trailing root columns are ignored.
+- **Nested-type tolerance.** List/map item field names (`item` vs `element`) and the nullability of nested fields may differ between writers; value types and top-level field names are still enforced.
+- **Pad-row trimming.** Writers pad all root struct columns to a common row count; the logical (real) row count for each table is declared in `rpf.rows.<table>` file metadata and readers slice to it before returning table batches. Pad rows carrying unmasked nulls in non-nullable child arrays are tolerated because they are discarded by trimming.
+- **Snapshot dialects.** Current solved-snapshot exports use alternate layouts for four tables. Readers match struct layouts by field name against the canonical layout first, then the documented dialect:
+
+| Table | Canonical layout | Snapshot dialect (read-only) |
+| --- | --- | --- |
+| `multi_section_lines` | 12 cols, per-line rows with `section_branch_ids` list | 8 cols, per-section rows (`parent_line_id`, `section_index`, `section_branch_id`) |
+| `dc_lines_2w` | 15 cols, electrical parameters (`r_ohm`, `l_henry`, setpoints) | 11 cols, MW-setpoint solver form (`is_vsc`, `p_min_mw`, `p_max_mw`, `loss_factor`) |
+| `switched_shunt_banks` | 5 cols, per-bank step rows | 8 cols, per-bank control rows (`v_low`, `v_high`, `b_steps`, `current_step`) |
+| `generators_solved` | 9 cols incl. per-unit outputs | 5 cols, MW/MVAR only (`bus_id`, `id`, `p_mw`, `q_mvar`, `status`) |
+
+Dialect layouts are read-compatibility surfaces only; they are expected to converge to the canonical layouts in a future writer release.
 
 ## v0.12.3 Additive Changes
 
-- **SAL Baseline provenance** on `metadata`: ten nullable trailing columns document source-case → SAL Baseline upgrades (source case ID, model versions, enhancement timestamp, convergence stats, planning-ready flag, and human-readable upgrade summary). Null in standard CIM exports.
+- **baseline provenance** on `metadata`: ten nullable trailing columns document source-case → baseline upgrades (source case ID, model versions, enhancement timestamp, convergence stats, planning-ready flag, and human-readable upgrade summary). Null in standard CIM exports.
 - **Change tracking** on optional `topology_changes`: nullable `change_source` and `applied_phase` dictionary columns (`Dictionary<Int32, Utf8>`) record why and when topology deltas were applied (e.g. `SAL_CIM_Upgrade`, `Jan_to_June_Baseline`).
 - **Version gate**: `SUPPORTED_RPF_VERSIONS` accepts v0.12.3 and retains v0.12.2 and v0.12.1.
 - **Backward compatibility**: v0.12.2 files without SAL columns remain valid; readers null-pad missing trailing metadata and topology_changes fields.
@@ -36,7 +67,7 @@ This repository is the authoritative source of truth for the Raptrix Power Inter
 - **Nullable `mrid` column** on `branches`, `generators`, `transformers_2w`, and `transformers_3w`: stable CIM-compatible equipment identifiers populated from source mRIDs on export.
 - **Schema metadata key `rpf.mrid_support = v1`**: indicates stable equipment identifier column support.
 - **Version gate**: `SUPPORTED_RPF_VERSIONS` accepts v0.12.2 and retains v0.12.1.
-- **Downstream guidance**: New `mrid` columns provide stable CIM-compatible identifiers. Downstream tools (Sentinel v2.4, Studio, etc.) should prefer `mrid` for equipment_id mapping.
+- **Downstream guidance**: New `mrid` columns provide stable CIM-compatible identifiers. Downstream tools should prefer `mrid` for equipment_id mapping.
 
 | Table | Source mRID | Notes |
 | --- | --- | --- |
@@ -101,7 +132,7 @@ Design rationale and the cross-repo consumption contract live in [adr/0001-prote
 
 - **`generators.controlled_bus_id`** (Int32, required, 25th column): Remote voltage regulation target bus in the same dense `bus_id` numbering as `generators.bus_id`. Semantics: **`0` or `bus_id`** = local regulation at the generator terminal bus; any other valid `bus_id` = remote **IREG** / **RegulatingControl** target (denormalized from CIM so consumers need not join `RegulatingControl` at load time). **PSS/E mapping:** machine IREG bus number → `controlled_bus_id`. **CIM mapping:** `RegulatingControl` (voltage-regulating) target terminal’s topological / connectivity resolution → `controlled_bus_id`.
 - **Backward compatibility:** 24-column `generators` tables (v0.9.4 shape ending at `params`) continue to load. Canonical readers (for example `raptrix-cim-arrow::read_rpf_tables`) synthesize missing `controlled_bus_id` as **`0`** (local regulation) when extending short structs to the locked schema — **zero-copy, zero allocation** aside from the pre-sized padding column slice.
-- **`metadata.default_shunt_control_mode`** (Dictionary\<Int32, Utf8\>, nullable) and optional file-level **`rpf.default_shunt_control_mode`**: When present, Raptrix-Sentinel and downstream solvers will default to this shunt mode (`planning_full` \| `real_time_hot_start` \| `real_time_frozen`). Enables fully declarative **planning ↔ real-time** handoff alongside `case_mode` (which remains the authoritative planning vs. solved snapshot discriminator).
+- **`metadata.default_shunt_control_mode`** (Dictionary\<Int32, Utf8\>, nullable) and optional file-level **`rpf.default_shunt_control_mode`**: When present, downstream solvers will default to this shunt mode (`planning_full` \| `real_time_hot_start` \| `real_time_frozen`). Enables fully declarative **planning ↔ real-time** handoff alongside `case_mode` (which remains the authoritative planning vs. solved snapshot discriminator).
 
 ## v0.9.3 Breaking Changes
 
@@ -399,7 +430,7 @@ This section is normative for external parser authors.
 - `real_time_discovery`: Boolean, nullable (v0.9.0+) — `true` if this case originated from live State Estimator analysis
 - `default_shunt_control_mode`: Dictionary<Int32, Utf8>, nullable (v0.9.5+) — optional declarative default shunt control mode; see v0.9.5 additive section
 - `computational_load_mode`: Boolean, nullable (v0.10.0+) — when `true`, consumers apply the computational-load runtime validation contract
-- `original_sentinel_case_id`: Utf8, nullable (v0.12.3+) — original source case identifier for SAL Baseline provenance
+- `original_sentinel_case_id`: Utf8, nullable (v0.12.3+) — original source case identifier for baseline provenance
 - `original_model_version`: Utf8, nullable (v0.12.3+) — e.g. `"2026-01"`
 - `target_baseline_version`: Utf8, nullable (v0.12.3+) — e.g. `"2026-06"`
 - `is_sal_enhanced`: Boolean, nullable (v0.12.3+) — `true` when SAL enhancement was applied

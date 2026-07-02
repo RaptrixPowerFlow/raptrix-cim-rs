@@ -9,13 +9,38 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 
 Copyright (c) 2026 Raptrix Power
 
-## Converter 0.5.5 — RPF v0.12.3 SAL Baseline provenance (2026-06-17)
+## Converter 0.5.6 — RPF v0.12.4 solved-snapshot read support (2026-07-02)
+
+### Converter release: Crate version 0.5.6 (raptrix-cim-arrow) / 0.5.6 (raptrix-cim-rs) | Arrow schema v0.12.4
+
+### Added
+
+- **Optional solved-state table `q_limits_solved`** (per-bus reactive-limit targets recorded by the solver; 2 columns).
+- **Optional table `feasibility_certificate_buses`** (post-solve feasibility/complementarity certificate audit rows; 7 columns).
+- **Read-compatibility dialects** for four tables as emitted by current solved-snapshot exports: `multi_section_lines`, `dc_lines_2w`, `switched_shunt_banks`, and `generators_solved`. Readers accept both the canonical layout and the documented snapshot dialect (matched by field names); writers in this crate always emit the canonical layout. See `docs/schema-contract.md`.
+- **`METADATA_KEY_FEATURE_FEASIBILITY_CERTIFICATE`** constant (`raptrix.features.feasibility_certificate`) marking files that carry the `feasibility_certificate_buses` table.
+
+### Changed
+
+- **`SUPPORTED_RPF_VERSIONS`** now accepts **`v0.12.4`** / **`0.12.4`** and retains **`v0.12.3`** / **`0.12.3`**, **`v0.12.2`** / **`0.12.2`**, and **`v0.12.1`** / **`0.12.1`** for backward reads.
+- `RPF_VERSION` / `SCHEMA_VERSION` / `BRANDING` bumped to v0.12.4.
+- **Root schema validation is now name-based.** Generic readers require every canonical table to be present as a root column but no longer require a fixed column order; conforming writers may append optional/extension tables in any order after their required set.
+- **Tolerant nested-type comparison on read.** List/map item field names (`item` vs `element`) and nested-field nullability differences between conforming writer implementations no longer fail validation. Top-level field names and value types are still enforced.
+- **Pad-row encoding accepted on read.** Files whose root struct columns are padded to a common row count (with real row counts in `rpf.rows.*`) are read correctly even when pad rows carry unmasked nulls in non-nullable child arrays; pad rows are always trimmed before table batches are returned.
+- **Case-health inspection tolerates dialect `generators_solved` tables.** The `pv_to_pq` per-generator metric is reported as unavailable (rather than failing the whole inspection) when the column is absent from a snapshot-dialect table.
+
+### Compatibility
+
+- **No re-export required.** v0.12.3 and earlier supported files remain readable. v0.12.4 solved-snapshot files may omit the trailing nullable `metadata` provenance columns introduced in v0.12.3; readers null-pad absent fields, reconstructing the canonical 45-column `metadata` shape.
+- Validated the read path against current solved-snapshot fixtures.
+
+## Converter 0.5.5 — RPF v0.12.3 baseline provenance (2026-06-17)
 
 ### Converter release: Crate version 0.5.5 (raptrix-cim-arrow) / 0.5.5 (raptrix-cim-rs) | Arrow schema v0.12.3
 
 ### Added
 
-- **SAL Baseline provenance** on `metadata`: ten nullable trailing columns (`original_sentinel_case_id`, `original_model_version`, `target_baseline_version`, `is_sal_enhanced`, `sal_enhancement_timestamp`, `cim_model_version_used`, `planning_ready`, `upgrade_summary`, `convergence_time_ms`, `convergence_iterations`).
+- **baseline provenance** on `metadata`: ten nullable trailing columns (`original_sentinel_case_id`, `original_model_version`, `target_baseline_version`, `is_sal_enhanced`, `sal_enhancement_timestamp`, `cim_model_version_used`, `planning_ready`, `upgrade_summary`, `convergence_time_ms`, `convergence_iterations`).
 - **Change tracking** on optional `topology_changes`: nullable `change_source` and `applied_phase` dictionary columns (`Dictionary<Int32, Utf8>`).
 
 ### Changed
@@ -25,7 +50,7 @@ Copyright (c) 2026 Raptrix Power
 
 ### Compatibility
 
-- **No re-export required.** v0.12.2 files remain readable; readers null-pad missing SAL Baseline metadata and topology_changes columns. Standard CIM exports leave new fields null.
+- **No re-export required.** v0.12.2 files remain readable; readers null-pad missing baseline provenance metadata and topology_changes columns. Standard CIM exports leave new fields null.
 
 ## Converter 0.5.4 — RPF v0.12.2 stable mrid columns (2026-06-15)
 
@@ -45,7 +70,7 @@ Copyright (c) 2026 Raptrix Power
 ### Compatibility
 
 - **No re-export required.** v0.12.1 files remain readable; new `mrid` columns are absent (null) in legacy files. New exports populate `mrid` from CIM source data.
-- **Downstream guidance**: New `mrid` columns provide stable CIM-compatible identifiers. Downstream tools (Sentinel v2.4, Studio, etc.) should prefer `mrid` for equipment_id mapping.
+- **Downstream guidance**: New `mrid` columns provide stable CIM-compatible identifiers. Downstream tools should prefer `mrid` for equipment_id mapping.
 
 ## Converter 0.5.3 — RPF v0.12.1 unified optional tables (2026-06-10)
 
@@ -178,7 +203,7 @@ Copyright (c) 2026 Raptrix Power
 ### Added
 
 - **`generators.controlled_bus_id`** (Int32, required, trailing column): denormalized remote voltage regulation target — faithful interchange for PSS/E **IREG** and CIM **RegulatingControl** (terminal / TopologicalNode resolved to the same dense `bus_id` space as `generators.bus_id`). Values **`0` or `bus_id`** mean local regulation at the machine bus; any other positive `bus_id` identifies the remote bus whose voltage is held. Closes the gap between solver-side IREG support and the public columnar contract for 2026-era grids (IBRs, multi-terminal HVDC, Smart Valves).
-- **`metadata.default_shunt_control_mode`** (Dictionary\<Int32, Utf8\>, nullable) and file-level **`rpf.default_shunt_control_mode`**: optional declarative default for shunt control (`planning_full` \| `real_time_hot_start` \| `real_time_frozen`). When present, Raptrix-Sentinel and downstream solvers can default to this shunt mode for zero-config **planning ↔ real-time** handoff (bounded shunt steps for sub-10 ms N-100+ screening). Planning exports from `raptrix-cim-rs` stamp `planning_full` by default; solved snapshots omit the key unless explicitly provided via `WriteOptions.default_shunt_control_mode`.
+- **`metadata.default_shunt_control_mode`** (Dictionary\<Int32, Utf8\>, nullable) and file-level **`rpf.default_shunt_control_mode`**: optional declarative default for shunt control (`planning_full` \| `real_time_hot_start` \| `real_time_frozen`). When present, downstream solvers can default to this shunt mode for zero-config **planning ↔ real-time** handoff. Planning exports from `raptrix-cim-rs` stamp `planning_full` by default; solved snapshots omit the key unless explicitly provided via `WriteOptions.default_shunt_control_mode`.
 
 ### Changed
 
@@ -663,6 +688,7 @@ Copyright (c) 2026 Raptrix Power
 - Backwards compatibility is preserved: existing `v0.5.2` Parquet files remain valid for the core ingest path.
 - This is a MINOR bump because the new node-breaker functionality is additive and optional, aligned with Semantic Versioning and interoperability goals.
 - PATCH releases remain reserved for fixes only; this release unlocks full operational CGMES fidelity while leaving the lean planning-model core untouched for speed.
+
 
 
 

@@ -4,11 +4,33 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 
 Copyright (c) 2026 Raptrix Power
 
+## v0.12.4 (additive — no migration required)
+
+### What changed
+
+- **Contract version tag and Power Interchange branding** advanced to v0.12.4 for current PowerFlow solved-snapshot exports.
+- **New optional tables**: `q_limits_solved` (solved-state, 2 columns) and `feasibility_certificate_buses` (post-solve feasibility audit rows, 7 columns).
+- **Read-compatibility dialects** documented and accepted for `multi_section_lines`, `dc_lines_2w`, `switched_shunt_banks`, and `generators_solved` as emitted by current solved-snapshot exports. Writers must continue to target the canonical layouts.
+- **`SUPPORTED_RPF_VERSIONS`** accepts **`v0.12.4`** / **`0.12.4`** and retains **`v0.12.3`**, **`v0.12.2`**, and **`v0.12.1`** aliases.
+
+### Compatibility
+
+- **No re-export required.** v0.12.3 and earlier supported files remain readable.
+- v0.12.4 solved-snapshot files may omit the nullable trailing `metadata` provenance columns introduced in v0.12.3; readers null-pad absent fields and reconstruct the canonical 45-column `metadata` shape.
+- Generic readers now match root tables **by name** (fixed ordering is no longer required), tolerate nested list-item naming/nullability differences between conforming writers, and trim writer pad rows via `rpf.rows.*` row counts.
+
+### Reader upgrade checklist (downstream consumers)
+
+- Accept **`v0.12.4`** / **`0.12.4`** in the RPF version gate; keep the explicit allowlist (do not accept unknown future versions).
+- Resolve root tables by column name, not position.
+- Treat `q_limits_solved` and `feasibility_certificate_buses` as optional; absent in standard planning files.
+- When validating struct layouts, match against the canonical layout first and the documented snapshot dialect second (see `docs/schema-contract.md`).
+
 ## v0.12.3 (additive — no migration required)
 
 ### What changed
 
-- **SAL Baseline provenance** on `metadata`: ten nullable trailing columns for source-case upgrade tracking and convergence stats.
+- **baseline provenance** on `metadata`: ten nullable trailing columns for source-case upgrade tracking and convergence stats.
 - **Change tracking** on optional `topology_changes`: nullable `change_source` and `applied_phase` dictionary columns.
 - **`SUPPORTED_RPF_VERSIONS`** accepts **`v0.12.3`** / **`0.12.3`** and retains **`v0.12.2`** / **`0.12.2`** and **`v0.12.1`** / **`0.12.1`**.
 
@@ -20,7 +42,7 @@ Copyright (c) 2026 Raptrix Power
 ### Reader upgrade (raptrix-core C++ and downstream converters)
 
 - Accept **`v0.12.3`** / **`0.12.3`** in the RPF version gate.
-- Read optional nullable SAL Baseline metadata fields; null means legacy or non-SAL export.
+- Read optional nullable baseline provenance metadata fields; null means legacy or standard export.
 - Read optional nullable `topology_changes.change_source` / `applied_phase`; absent columns are null-padded on read.
 
 ## v0.12.2 (additive — no migration required)
@@ -35,7 +57,7 @@ Copyright (c) 2026 Raptrix Power
 
 - **No re-export required.** v0.12.1 files remain readable; `mrid` columns are absent (null) in legacy files.
 - **New exports** populate `mrid` from CIM source mRIDs where available.
-- **Downstream guidance**: New `mrid` columns provide stable CIM-compatible identifiers. Downstream tools (Sentinel v2.4, Studio, etc.) should prefer `mrid` for equipment_id mapping.
+- **Downstream guidance**: New `mrid` columns provide stable CIM-compatible identifiers. Downstream tools should prefer `mrid` for equipment_id mapping.
 
 ### Reader upgrade (raptrix-core C++ and downstream converters)
 
@@ -90,7 +112,7 @@ Copyright (c) 2026 Raptrix Power
 ### What changed
 
 - `generators` gains required trailing column **`controlled_bus_id`** (Int32): PSS/E **IREG** / CIM **RegulatingControl** denormalized to dense `bus_id`. `0` or `bus_id` = local regulation.
-- `metadata` gains nullable **`default_shunt_control_mode`** (dictionary-encoded string); optional file-level **`rpf.default_shunt_control_mode`** may mirror it for Sentinel / solver handoff (`planning_full` \| `real_time_hot_start` \| `real_time_frozen`).
+- `metadata` gains nullable **`default_shunt_control_mode`** (dictionary-encoded string); optional file-level **`rpf.default_shunt_control_mode`** may mirror it for solver handoff (`planning_full` \| `real_time_hot_start` \| `real_time_frozen`).
 
 ### Compatibility
 

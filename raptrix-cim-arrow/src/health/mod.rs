@@ -744,7 +744,8 @@ fn collect_convergence(input: &RpfTables) -> Result<RpfConvergenceHints> {
     let pv_to_pq_from_generators_solved = gens_solved
         .filter(|b| b.num_rows() > 0)
         .map(batch_metrics::count_pv_to_pq_solved)
-        .transpose()?;
+        .transpose()?
+        .flatten();
 
     let initial_mismatch_rms = match (buses, buses_solved) {
         (Some(b), Some(s)) if s.num_rows() > 0 => {

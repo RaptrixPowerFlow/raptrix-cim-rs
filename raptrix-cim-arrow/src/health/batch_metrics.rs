@@ -376,15 +376,19 @@ pub(crate) fn count_gens_at_q_limit(batch: &RecordBatch, epsilon: f64) -> Result
     Ok(count)
 }
 
-pub(crate) fn count_pv_to_pq_solved(batch: &RecordBatch) -> Result<usize> {
-    let pv = column_bool(batch, "pv_to_pq")?.with_context(|| "column 'pv_to_pq' missing")?;
+pub(crate) fn count_pv_to_pq_solved(batch: &RecordBatch) -> Result<Option<usize>> {
+    // Snapshot dialects of generators_solved may omit this column; treat the
+    // metric as unavailable rather than failing the whole health inspection.
+    let Some(pv) = column_bool(batch, "pv_to_pq")? else {
+        return Ok(None);
+    };
     let mut count = 0usize;
     for row in 0..batch.num_rows() {
         if pv.is_valid(row) && pv.value(row) {
             count += 1;
         }
     }
-    Ok(count)
+    Ok(Some(count))
 }
 
 pub(crate) fn initial_voltage_mismatch_rms(

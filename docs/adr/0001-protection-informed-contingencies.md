@@ -252,7 +252,7 @@ what the closed solver may rely on, so the two repos can evolve independently.
   handling react to the resulting bus-branch graph. Declared `resulting_islands` are treated
   as advisory metadata, not as solver input.
 - If `data_confidence = assumed`, the core SHOULD still solve but MUST surface the lower
-  confidence in results/provenance so downstream (Sentinel/Studio) can flag it.
+  confidence in results/provenance so downstream consumers can flag it.
 - Unknown `scheme_type` / `change_type` tokens MUST NOT cause rejection; the outage set is
   still applied.
 
@@ -281,7 +281,7 @@ can emit solver-derived `provenance = solved` topology deltas.
   stub, Python `ContingencySpec` extension, basic round-trip preservation.
 - **Phase 2 (closed `raptrix-core`)**: topology processor recomputes topology from
   `breaker_ids` + node-breaker detail; emit `provenance = solved` `topology_changes`;
-  real-time performance tuning for Sentinel.
+  downstream real-time performance tuning.
 - **Phase 3+**: Gymnasium env integration, Raptrix-Studio investigation support, EMS
   ingestion that populates these tables, pilot feedback into planning.
 

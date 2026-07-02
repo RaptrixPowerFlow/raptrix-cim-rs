@@ -103,15 +103,35 @@ fn health_golden_ieee14() {
     assert!(health.counts.buses < 500);
 }
 
+/// Optional gate against any locally available large converted case.
+///
+/// Scans the golden directory (or `RAPTRIX_PSSE_GOLDEN_DIR`) for the first
+/// readable `.rpf` with at least 1,000 buses; skips silently when none exist,
+/// so CI without local fixtures stays green.
 #[test]
-fn health_golden_texas2k() {
-    let Some(path) = golden_rpf("Texas2k_series25_case1_summerpeak.rpf") else {
-        eprintln!("skip health_golden_texas2k: golden RPF not present");
+fn health_golden_large_external() {
+    let Ok(entries) = std::fs::read_dir(psse_golden_dir()) else {
+        eprintln!("skip health_golden_large_external: golden dir not present");
         return;
     };
-    if skip_unsupported_contract(&path) {
+    let mut candidates: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().map(|x| x == "rpf").unwrap_or(false))
+        .collect();
+    candidates.sort();
+    let large = candidates.into_iter().find(|path| {
+        if skip_unsupported_contract(path) {
+            return false;
+        }
+        inspect_rpf_file(path)
+            .map(|h| h.counts.buses >= 1_000)
+            .unwrap_or(false)
+    });
+    let Some(path) = large else {
+        eprintln!("skip health_golden_large_external: no large supported RPF present");
         return;
-    }
+    };
     assert_health_sane(&path, true);
     let health = inspect_rpf_file(&path).unwrap();
     assert!(
@@ -123,18 +143,5 @@ fn health_golden_texas2k() {
         health.grade,
         health.reasons
     );
-}
-
-#[test]
-fn health_golden_nyiso() {
-    let Some(path) = golden_rpf("NYISO_offpeak2019_v23.rpf") else {
-        eprintln!("skip health_golden_nyiso: golden RPF not present");
-        return;
-    };
-    if skip_unsupported_contract(&path) {
-        return;
-    }
-    assert_health_sane(&path, true);
-    let health = inspect_rpf_file(&path).unwrap();
     assert!(health.topology.island_count >= 1);
 }

@@ -58,7 +58,7 @@ These are key-value strings in the Arrow file header. Every RPF reader should ch
 
 | Key | Example | What it means |
 |---|---|---|
-| `rpf.default_shunt_control_mode` | `planning_full` | **Optional.** When present, Raptrix-Sentinel and downstream solvers will default to this shunt mode (`planning_full` \| `real_time_hot_start` \| `real_time_frozen`). Enables fully declarative planning ↔ real-time handoff. Mirrors the nullable `metadata` table column of the same logical value. Planning exports from `raptrix-cim-rs` stamp `planning_full` by default. |
+| `rpf.default_shunt_control_mode` | `planning_full` | **Optional.** When present, downstream solvers will default to this shunt mode (`planning_full` \| `real_time_hot_start` \| `real_time_frozen`). Enables fully declarative planning ↔ real-time handoff. Mirrors the nullable `metadata` table column of the same logical value. Planning exports from `raptrix-cim-rs` stamp `planning_full` by default. |
 
 ### `rpf.solved_state_presence` values
 
@@ -133,9 +133,9 @@ This table always has exactly one row and summarizes the case.
 | `slack_bus_id_solved` | integer | The `bus_id` used as the angle reference (slack bus) in the solve. Prevents silent reference-frame mismatch when solved snapshots are re-used. Null for planning cases. (v0.8.5+) |
 | `angle_reference_deg` | number | The angle value in degrees assigned to the slack bus during the solve, almost always 0.0. Null for planning cases. (v0.8.5+) |
 | `solved_shunt_state_presence` | text | `actual_solved` when the `switched_shunts_solved` table is present and authoritative; `not_available` when the solver did not track discrete shunt steps. Null for planning cases. (v0.8.5+) |
-| `default_shunt_control_mode` | text | **(v0.9.5+)** Optional. When present, Raptrix-Sentinel and downstream solvers will default to this shunt mode (`planning_full` \| `real_time_hot_start` \| `real_time_frozen`). Enables fully declarative planning ↔ real-time handoff. Null when unspecified. |
+| `default_shunt_control_mode` | text | **(v0.9.5+)** Optional. When present, downstream solvers will default to this shunt mode (`planning_full` \| `real_time_hot_start` \| `real_time_frozen`). Enables fully declarative planning ↔ real-time handoff. Null when unspecified. |
 | `computational_load_mode` | boolean | **(v0.10.0+)** Optional. When `true`, consumers enforce the computational-load validation contract (for example non-empty `computational_load_profiles`). Null or absent means standard interchange without that contract. |
-| `original_sentinel_case_id` | text | **(v0.12.3+)** Optional. Original source case identifier when this file is a SAL Baseline upgrade. Null in standard CIM exports. |
+| `original_sentinel_case_id` | text | **(v0.12.3+)** Optional. Original source case identifier when this file is a baseline upgrade. Null in standard CIM exports. |
 | `original_model_version` | text | **(v0.12.3+)** Optional. Model version of the source case, e.g. `"2026-01"`. |
 | `target_baseline_version` | text | **(v0.12.3+)** Optional. Target baseline model version, e.g. `"2026-06"`. |
 | `is_sal_enhanced` | true/false | **(v0.12.3+)** Optional. `true` when SAL enhancement was applied to produce this file. |

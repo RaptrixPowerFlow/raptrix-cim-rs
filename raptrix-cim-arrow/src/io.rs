@@ -46,7 +46,7 @@ use crate::schema::{
     computational_load_table_schemas, contingency_island_table_schemas,
     diagram_layout_table_schemas, facts_table_schemas, node_breaker_table_schemas,
     protection_table_schemas, remedial_action_table_schemas, schema_metadata,
-    solved_state_table_schemas, table_schema,
+    solved_state_table_schemas, table_schema_variants,
 };
 
 /// Summary stats for a single logical table found in an `.rpf` file.
@@ -257,6 +257,103 @@ pub fn root_rpf_schema_with_options(options: &RootWriteOptions) -> Schema {
     Schema::new_with_metadata(fields, schema_metadata())
 }
 
+/// Compares an expected contract type against an actual on-wire type, tolerating
+/// cosmetic nested-container differences that vary between conforming writer
+/// implementations (v0.12.4 read-compatibility policy):
+///
+/// - list/large-list/map item **field names** (`item` vs `element` vs `entries`)
+/// - **nullability of nested fields** (item nullability inside lists, field
+///   nullability inside nested structs)
+///
+/// Top-level field names and all value types must still match exactly.
+fn rpf_types_compatible(expected: &DataType, actual: &DataType) -> bool {
+    match (expected, actual) {
+        (DataType::List(e), DataType::List(a))
+        | (DataType::LargeList(e), DataType::LargeList(a))
+        | (DataType::List(e), DataType::LargeList(a))
+        | (DataType::LargeList(e), DataType::List(a)) => {
+            rpf_types_compatible(e.data_type(), a.data_type())
+        }
+        (DataType::Map(e, _), DataType::Map(a, _)) => {
+            rpf_types_compatible(e.data_type(), a.data_type())
+        }
+        (DataType::Struct(expected_fields), DataType::Struct(actual_fields)) => {
+            expected_fields.len() == actual_fields.len()
+                && expected_fields
+                    .iter()
+                    .zip(actual_fields.iter())
+                    .all(|(e, a)| {
+                        e.name() == a.name() && rpf_types_compatible(e.data_type(), a.data_type())
+                    })
+        }
+        (
+            DataType::Dictionary(expected_key, expected_value),
+            DataType::Dictionary(actual_key, actual_value),
+        ) => expected_key == actual_key && rpf_types_compatible(expected_value, actual_value),
+        _ => expected == actual,
+    }
+}
+
+/// Validates the actual on-wire struct fields of a table against one schema
+/// variant. Returns a human-readable mismatch description on failure.
+fn match_schema_variant(
+    table_name: &str,
+    expected_schema: &Schema,
+    actual_fields: &arrow::datatypes::Fields,
+) -> std::result::Result<(), String> {
+    if actual_fields.len() > expected_schema.fields().len() {
+        return Err(format!(
+            "invalid struct column '{table_name}': expected at most {} fields, found {}",
+            expected_schema.fields().len(),
+            actual_fields.len()
+        ));
+    }
+    for index in 0..actual_fields.len() {
+        let expected_field = expected_schema.field(index);
+        let actual_field = &actual_fields[index];
+        if actual_field.name() != expected_field.name()
+            || !rpf_types_compatible(expected_field.data_type(), actual_field.data_type())
+        {
+            return Err(format!(
+                "invalid struct field in '{table_name}' at index {index}: expected '{}'/{:?}, found '{}'/{:?}",
+                expected_field.name(),
+                expected_field.data_type(),
+                actual_field.name(),
+                actual_field.data_type()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Selects the first accepted schema variant matching the on-wire struct layout.
+///
+/// Variants come from [`table_schema_variants`]: canonical layout first, then any
+/// documented read-compatibility dialects. On failure the canonical variant's
+/// mismatch is reported (it is the contract layout writers must target).
+fn select_schema_variant(
+    table_name: &str,
+    variants: &[Schema],
+    actual_fields: &arrow::datatypes::Fields,
+) -> Result<usize> {
+    let mut canonical_error: Option<String> = None;
+    for (variant_index, variant) in variants.iter().enumerate() {
+        match match_schema_variant(table_name, variant, actual_fields) {
+            Ok(()) => return Ok(variant_index),
+            Err(message) => {
+                if canonical_error.is_none() {
+                    canonical_error = Some(message);
+                }
+            }
+        }
+    }
+    bail!(
+        "{}",
+        canonical_error
+            .unwrap_or_else(|| format!("invalid struct column '{table_name}': no schema variant"))
+    )
+}
+
 fn require_non_null_count_equals_len(
     table_name: &str,
     batch: &RecordBatch,
@@ -278,7 +375,24 @@ fn require_non_null_count_equals_len(
 
 /// Reads all known tables from an RPF v0.7.x root Arrow IPC file.
 pub fn read_rpf_tables(path: impl AsRef<Path>) -> Result<Vec<(String, RecordBatch)>> {
-    let path = path.as_ref();
+    match read_rpf_tables_impl(path.as_ref(), false) {
+        Ok(tables) => Ok(tables),
+        // Solved-snapshot exporters pad root struct columns to a common row
+        // count with nulls in non-nullable child arrays without masking the
+        // parent struct validity. Strict Arrow IPC validation rejects that
+        // encoding even though the pad rows are discarded via `rpf.rows.*`
+        // trimming. Retry with buffer validation skipped for exactly this
+        // known-benign artifact; all schema/contract validation still runs.
+        Err(error)
+            if format!("{error:#}").contains("Found unmasked nulls for non-nullable") =>
+        {
+            read_rpf_tables_impl(path.as_ref(), true)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn read_rpf_tables_impl(path: &Path, skip_buffer_validation: bool) -> Result<Vec<(String, RecordBatch)>> {
     let file = File::open(path)
         .with_context(|| format!("failed to open .rpf file at {}", path.display()))?;
     let mmap = unsafe { MmapOptions::new().map(&file) }
@@ -290,6 +404,12 @@ pub fn read_rpf_tables(path: impl AsRef<Path>) -> Result<Vec<(String, RecordBatc
             path.display()
         )
     })?;
+    if skip_buffer_validation {
+        // SAFETY: only reached after a strict read failed solely due to the
+        // documented pad-row encoding; rows beyond `rpf.rows.*` are trimmed
+        // before any table batch is returned.
+        reader = unsafe { reader.with_skip_validation(true) };
+    }
 
     let reader_schema = reader.schema();
     validate_supported_rpf_version(reader_schema.metadata())?;
@@ -302,12 +422,16 @@ pub fn read_rpf_tables(path: impl AsRef<Path>) -> Result<Vec<(String, RecordBatc
             reader_schema.fields().len()
         );
     }
-    for (idx, (expected_name, _)) in all_table_schemas().iter().enumerate() {
-        let actual_name = reader_schema.field(idx).name();
-        if actual_name != *expected_name {
-            bail!(
-                "invalid RPF root schema at column {idx}: expected '{expected_name}', found '{actual_name}'"
-            );
+    // v0.12.4: root tables are matched by name, not position. Conforming writers
+    // may order optional/extension root columns differently; every canonical
+    // required table must still be present.
+    for (expected_name, _) in all_table_schemas() {
+        if !reader_schema
+            .fields()
+            .iter()
+            .any(|field| field.name() == expected_name)
+        {
+            bail!("invalid RPF root schema: missing required table '{expected_name}'");
         }
     }
 
@@ -318,9 +442,10 @@ pub fn read_rpf_tables(path: impl AsRef<Path>) -> Result<Vec<(String, RecordBatc
 
         for column_idx in 0..reader_schema.fields().len() {
             let table_name = reader_schema.field(column_idx).name().as_str();
-            let Some(expected_schema) = table_schema(table_name) else {
+            let variants = table_schema_variants(table_name);
+            if variants.is_empty() {
                 continue;
-            };
+            }
             let struct_array = root_batch
                 .column(column_idx)
                 .as_any()
@@ -340,29 +465,8 @@ pub fn read_rpf_tables(path: impl AsRef<Path>) -> Result<Vec<(String, RecordBatc
                 }
             };
 
-            if struct_array.columns().len() > expected_schema.fields().len() {
-                bail!(
-                    "invalid struct column '{table_name}': expected at most {} fields, found {}",
-                    expected_schema.fields().len(),
-                    struct_array.columns().len()
-                );
-            }
-
-            for index in 0..struct_array.columns().len() {
-                let expected_field = expected_schema.field(index);
-                let actual_field = &actual_fields[index];
-                if actual_field.name() != expected_field.name()
-                    || actual_field.data_type() != expected_field.data_type()
-                {
-                    bail!(
-                        "invalid struct field in '{table_name}' at index {index}: expected '{}'/{:?}, found '{}'/{:?}",
-                        expected_field.name(),
-                        expected_field.data_type(),
-                        actual_field.name(),
-                        actual_field.data_type()
-                    );
-                }
-            }
+            let variant_index = select_schema_variant(table_name, &variants, actual_fields)?;
+            let expected_schema = &variants[variant_index];
 
             let expected_rows = reader_schema
                 .metadata()
@@ -404,8 +508,31 @@ pub fn read_rpf_tables(path: impl AsRef<Path>) -> Result<Vec<(String, RecordBatc
                 trimmed_columns.push(new_null_array(expected_field.data_type(), expected_rows));
             }
 
+            // Reconstruct under the matched variant. Present columns keep their
+            // on-wire types (tolerated nested differences); padded trailing
+            // columns take the contract types.
+            let reconstructed_fields: Vec<Field> = expected_schema
+                .fields()
+                .iter()
+                .enumerate()
+                .map(|(index, expected_field)| {
+                    if index < actual_fields.len() {
+                        let actual_field = &actual_fields[index];
+                        Field::new(
+                            expected_field.name(),
+                            actual_field.data_type().clone(),
+                            expected_field.is_nullable() || actual_field.is_nullable(),
+                        )
+                    } else {
+                        expected_field.as_ref().clone()
+                    }
+                })
+                .collect();
+            let reconstructed_schema =
+                Schema::new_with_metadata(reconstructed_fields, expected_schema.metadata().clone());
+
             let table_batch =
-                RecordBatch::try_new(Arc::new(expected_schema.clone()), trimmed_columns)
+                RecordBatch::try_new(Arc::new(reconstructed_schema), trimmed_columns)
                     .with_context(|| {
                         format!("failed reconstructing table '{table_name}' from root record batch")
                     })?;
@@ -1351,7 +1478,7 @@ mod tests {
             .expect_err("v0.9.3 reader should reject missing required nominal_kv fields");
         let message = format!("{err:#}");
         assert!(message.contains("missing non-nullable field 'to_nominal_kv'"));
-        assert_eq!(SCHEMA_VERSION, "v0.12.3");
+        assert_eq!(SCHEMA_VERSION, "v0.12.4");
         Ok(())
     }
 
@@ -1438,7 +1565,7 @@ mod tests {
             .map(|(name, schema)| (name, RecordBatch::new_empty(Arc::new(schema))))
             .collect();
 
-        // v0.12.2 metadata shape: 35 columns (before SAL Baseline fields).
+        // v0.12.2 metadata shape: 35 columns (before baseline provenance fields).
         let old_meta_fields: Vec<Field> = metadata_schema().fields()[0..35]
             .iter()
             .map(|field| field.as_ref().clone())
@@ -1502,7 +1629,7 @@ mod tests {
             assert_eq!(
                 metadata.column(index).null_count(),
                 metadata.num_rows(),
-                "SAL Baseline column {} should be null-padded",
+                "baseline provenance column {} should be null-padded",
                 metadata.schema().field(index).name()
             );
         }

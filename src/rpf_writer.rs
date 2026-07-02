@@ -4046,7 +4046,7 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
     let mut real_time_discovery_b = BooleanBuilder::new();
     let mut default_shunt_control_mode_b = StringDictionaryBuilder::<Int32Type>::new();
     let mut computational_load_mode_b = BooleanBuilder::new();
-    // v0.12.3 SAL Baseline builders (nullable; null in standard CIM exports)
+    // v0.12.3 baseline provenance builders (nullable; null in standard CIM exports)
     let mut original_sentinel_case_id_b = StringBuilder::new();
     let mut original_model_version_b = StringBuilder::new();
     let mut target_baseline_version_b = StringBuilder::new();
@@ -4142,7 +4142,7 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
         Some(v) => computational_load_mode_b.append_value(v),
         None => computational_load_mode_b.append_null(),
     }
-    // v0.12.3 SAL Baseline — null in standard CIM exports
+    // v0.12.3 baseline provenance — null in standard CIM exports
     original_sentinel_case_id_b.append_null();
     original_model_version_b.append_null();
     target_baseline_version_b.append_null();
@@ -4196,7 +4196,7 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
         Arc::new(real_time_discovery_b.finish()) as ArrayRef,
         Arc::new(default_shunt_control_mode_b.finish()) as ArrayRef,
         Arc::new(computational_load_mode_b.finish()) as ArrayRef,
-        // v0.12.3 SAL Baseline
+        // v0.12.3 baseline provenance
         Arc::new(original_sentinel_case_id_b.finish()) as ArrayRef,
         Arc::new(original_model_version_b.finish()) as ArrayRef,
         Arc::new(target_baseline_version_b.finish()) as ArrayRef,

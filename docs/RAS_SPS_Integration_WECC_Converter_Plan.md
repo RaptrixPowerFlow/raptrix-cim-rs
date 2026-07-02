@@ -17,7 +17,7 @@ implementation plans for proprietary solver products are maintained internally.
 
 - WECC- or utility-specific protection logic, proprietary solver execution semantics, and
   closed-product ingestion paths are not documented here.
-- For production-grid RAS/SPS execution, contact Raptrix for commercial Sentinel and Forge
+- For production-grid RAS/SPS execution, contact Raptrix for commercial offerings
   integration options.
 
 See also: `docs/schema-contract.md`, `docs/architecture.md`, and `CHANGELOG.md` (v0.12.0).

@@ -9,8 +9,8 @@ Copyright (c) 2026 Raptrix Power
 
 //! Arrow schema definitions for the Raptrix Power Interchange v0.12.3 profile.
 //!
-//! ## v0.12.3 — SAL Baseline provenance (additive metadata + topology_changes)
-//! Adds nullable SAL Baseline fields to `metadata` (provenance, model upgrade tracking,
+//! ## v0.12.3 — baseline provenance (additive metadata + topology_changes)
+//! Adds nullable baseline provenance fields to `metadata` (provenance, model upgrade tracking,
 //! convergence stats) and nullable `change_source` / `applied_phase` dictionary columns to
 //! optional `topology_changes`. v0.12.2 files remain readable without re-export.
 //!
@@ -68,8 +68,8 @@ Copyright (c) 2026 Raptrix Power
 //! ## v0.9.3 — 18 canonical tables
 //! The `ibr_devices` table was removed. IBRs are now modeled exclusively in the unified
 //! `generators` table using `is_ibr = true` + `ibr_subtype`. The `contingencies` table gains
-//! 6 nullable operational-outcome columns for Sentinel. The `metadata` table gains 5 nullable
-//! Sentinel-readiness fields. A new optional `scenario_context` table is introduced.
+//! 6 nullable operational-outcome columns for real-time solvers. The `metadata` table gains 5 nullable
+//! solver-readiness fields. A new optional `scenario_context` table is introduced.
 //! The `loads` table gains 4 nullable ZIP-fidelity columns:
 //! `p_i_pu`, `q_i_pu`, `p_y_pu`, `q_y_pu`.
 
@@ -79,17 +79,17 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, Schema};
 
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / Raptrix Power Interchange v0.12.3 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow / Raptrix Power Interchange v0.12.4 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.";
 
 /// Canonical RPF format version tag embedded as file-level metadata.
-pub const RPF_VERSION: &str = "v0.12.3";
+pub const RPF_VERSION: &str = "v0.12.4";
 
 /// Supported RPF versions accepted by generic Arrow IPC readers.
 ///
-/// v0.12.3 is the current contract release. v0.12.2 and v0.12.1 files remain readable
-/// (additive trailing columns). Prior contract versions must be re-emitted.
+/// v0.12.4 is the current contract release. v0.12.3, v0.12.2, and v0.12.1 files remain
+/// readable (additive trailing columns). Prior contract versions must be re-emitted.
 pub const SUPPORTED_RPF_VERSIONS: &[&str] = &[
-    "v0.12.3", "0.12.3", "v0.12.2", "0.12.2", "v0.12.1", "0.12.1",
+    "v0.12.4", "0.12.4", "v0.12.3", "0.12.3", "v0.12.2", "0.12.2", "v0.12.1", "0.12.1",
 ];
 
 /// Validates a nominal kV value for required network voltage fields.
@@ -129,6 +129,9 @@ pub const METADATA_KEY_FEATURE_DYNAMICS_STUB: &str = "raptrix.features.dynamics_
 pub const METADATA_KEY_FEATURE_FACTS: &str = "raptrix.features.facts";
 /// Optional metadata key indicating facts_solved table is emitted.
 pub const METADATA_KEY_FEATURE_FACTS_SOLVED: &str = "raptrix.features.facts_solved";
+/// Optional metadata key indicating the `feasibility_certificate_buses` table is present (v0.12.4+).
+pub const METADATA_KEY_FEATURE_FEASIBILITY_CERTIFICATE: &str =
+    "raptrix.features.feasibility_certificate";
 /// Optional metadata key indicating export is a topology-only snapshot.
 pub const METADATA_KEY_FEATURE_TOPOLOGY_ONLY: &str = "rpf.features.topology_only";
 /// Optional metadata key indicating all injections were zeroed by export.
@@ -136,7 +139,7 @@ pub const METADATA_KEY_FEATURE_ZERO_INJECTION_STUB: &str = "rpf.features.zero_in
 /// Required metadata key describing the case mode (flat_start_planning | warm_start_planning | solved_snapshot).
 /// Added in v0.8.4.
 pub const METADATA_KEY_CASE_MODE: &str = "rpf.case_mode";
-/// Optional metadata key and `metadata` table column: default shunt control mode for Sentinel / solver handoff.
+/// Optional metadata key and `metadata` table column: default shunt control mode for solver handoff.
 /// Values: `planning_full` \| `real_time_hot_start` \| `real_time_frozen`. Added in v0.9.5.
 pub const METADATA_KEY_DEFAULT_SHUNT_CONTROL_MODE: &str = "rpf.default_shunt_control_mode";
 /// Required metadata key indicating presence/provenance of solved-state fields.
@@ -261,7 +264,7 @@ pub const TABLE_DYNAMICS_MODELS: &str = "dynamics_models";
 pub const TABLE_COMPUTATIONAL_LOAD_PROFILES: &str = "computational_load_profiles";
 /// Optional FACTS devices table name.
 pub const TABLE_FACTS_DEVICES: &str = "facts_devices";
-/// Optional Sentinel scenario context table name (v0.9.0+).
+/// Optional scenario context table name (v0.9.0+).
 pub const TABLE_SCENARIO_CONTEXT: &str = "scenario_context";
 /// Optional protection-informed contingency table name (v0.11.0+).
 pub const TABLE_PROTECTION_CONTINGENCIES: &str = "protection_contingencies";
@@ -300,6 +303,12 @@ pub const TABLE_GENERATORS_SOLVED: &str = "generators_solved";
 pub const TABLE_SWITCHED_SHUNTS_SOLVED: &str = "switched_shunts_solved";
 /// Optional solved-state FACTS table emitted for solved snapshot replay (v0.8.6+).
 pub const TABLE_FACTS_SOLVED: &str = "facts_solved";
+/// Optional solved-state table emitted only when case_mode=solved_snapshot (v0.12.4+).
+/// Contains per-bus reactive-limit targets recorded by the solver for buses whose
+/// generators reached a Q limit during the solve.
+pub const TABLE_Q_LIMITS_SOLVED: &str = "q_limits_solved";
+/// Optional post-solve feasibility/complementarity certificate audit rows (v0.12.4+).
+pub const TABLE_FEASIBILITY_CERTIFICATE_BUSES: &str = "feasibility_certificate_buses";
 
 /// Optional column required on export-side solved-result tables.
 pub const COLUMN_CONTINGENCY_ID: &str = "contingency_id";
@@ -639,11 +648,11 @@ pub fn schema_metadata() -> HashMap<String, String> {
 ///
 /// v0.10.0 adds nullable `computational_load_mode` (Boolean) for computational-load interchange mode.
 ///
-/// v0.12.3 adds nullable SAL Baseline provenance fields: `original_sentinel_case_id`,
+/// v0.12.3 adds nullable baseline provenance fields: `original_sentinel_case_id`,
 /// `original_model_version`, `target_baseline_version`, `is_sal_enhanced`,
 /// `sal_enhancement_timestamp`, `cim_model_version_used`, `planning_ready`, `upgrade_summary`,
 /// `convergence_time_ms`, and `convergence_iterations`. Populated when a source case
-/// is upgraded to a self-describing SAL Baseline .rpf; null in standard CIM exports.
+/// is upgraded to a self-describing baseline .rpf; null in standard CIM exports.
 pub fn metadata_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
@@ -686,7 +695,7 @@ pub fn metadata_schema() -> Schema {
                 DataType::List(Arc::new(Field::new("item", DataType::Utf8, false))),
                 true,
             ),
-            // v0.9.0: Sentinel-readiness fields
+            // v0.9.0: solver-readiness fields
             // case_mode now also accepts "hour_ahead_advisory" in addition to existing values
             Field::new("hour_ahead_uncertainty_band", DataType::Float64, true), // e.g. 2.0 = ±2% load forecast error
             Field::new("commitment_source", DataType::Utf8, true), // "day_ahead_market", "operator_plan"
@@ -701,7 +710,7 @@ pub fn metadata_schema() -> Schema {
                 DataType::Boolean,
                 true,
             ),
-            // v0.12.3: SAL Baseline provenance
+            // v0.12.3: baseline provenance
             Field::new("original_sentinel_case_id", DataType::Utf8, true),
             Field::new("original_model_version", DataType::Utf8, true),
             Field::new("target_baseline_version", DataType::Utf8, true),
@@ -963,9 +972,9 @@ pub fn switched_shunt_banks_schema() -> Schema {
 /// `scenario_context` table schema (v0.9.0+, optional).
 ///
 /// Stores rich structured context for every flagged/exported case.
-/// Used by Sentinel for real-time intelligent contingency analysis
+/// Used by real-time solvers for intelligent contingency analysis
 /// and rich `.rpf` export for planning feedback.
-/// This is an optional table — present in Sentinel exports, absent in standard planning files.
+/// This is an optional table — present in real-time solver exports, absent in standard planning files.
 pub fn scenario_context_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
@@ -1061,7 +1070,7 @@ pub fn topology_changes_schema() -> Schema {
             // declared (planning intent, Phase 0) | solved (solver-derived, future).
             Field::new("provenance", dict_utf8(), true),
             Field::new("params", map_string_f64(), true),
-            // v0.12.3: SAL Baseline change tracking
+            // v0.12.3: baseline change tracking
             Field::new("change_source", dict_utf8(), true),
             Field::new("applied_phase", dict_utf8(), true),
         ],
@@ -1240,7 +1249,7 @@ pub fn contingencies_schema() -> Schema {
         vec![
             Field::new("contingency_id", dict_utf8(), false),
             Field::new("elements", contingencies_elements_type(), false),
-            // v0.9.0: Sentinel operational-outcome columns (nullable; null in planning/stub files)
+            // v0.9.0: operational-outcome columns (nullable; null in planning/stub files)
             Field::new("risk_score", DataType::Float64, true),
             Field::new("cleared_by_reserves", DataType::Boolean, true),
             Field::new("voltage_collapse_flag", DataType::Boolean, true),
@@ -1560,6 +1569,41 @@ pub fn switched_shunts_solved_schema() -> Schema {
     )
 }
 
+/// Optional `q_limits_solved` table schema (v0.12.4+).
+///
+/// Emitted only when `case_mode = solved_snapshot` and the solver recorded
+/// per-bus reactive-limit targets (buses whose units reached a Q limit).
+pub fn q_limits_solved_schema() -> Schema {
+    Schema::new_with_metadata(
+        vec![
+            // Foreign key into buses.bus_id — must be present for every row.
+            Field::new("bus_id", DataType::Int32, false),
+            // Net reactive-power target at the bus in per-unit after limit enforcement.
+            Field::new("q_net_target_pu", DataType::Float64, false),
+        ],
+        schema_metadata(),
+    )
+}
+
+/// Optional `feasibility_certificate_buses` table schema (v0.12.4+).
+///
+/// Emitted when a post-solve feasibility/complementarity certificate is present.
+/// Mirrors the certificate bus audit rows for typed consumers.
+pub fn feasibility_certificate_buses_schema() -> Schema {
+    Schema::new_with_metadata(
+        vec![
+            Field::new("bus_id", DataType::Int32, false),
+            Field::new("is_pv", DataType::Boolean, true),
+            Field::new("switched_to_pq", DataType::Boolean, true),
+            Field::new("q_gen_pu", DataType::Float64, true),
+            Field::new("complementarity_ok", DataType::Boolean, true),
+            Field::new("voltage_box_ok", DataType::Boolean, true),
+            Field::new("violation_kind", dict_utf8(), true),
+        ],
+        schema_metadata(),
+    )
+}
+
 /// Optional `facts_solved` table schema (v0.8.6+).
 pub fn facts_solved_schema() -> Schema {
     Schema::new_with_metadata(
@@ -1671,8 +1715,124 @@ pub fn table_schema(table_name: &str) -> Option<Schema> {
         TABLE_GENERATORS_SOLVED => Some(generators_solved_schema()),
         TABLE_SWITCHED_SHUNTS_SOLVED => Some(switched_shunts_solved_schema()),
         TABLE_FACTS_SOLVED => Some(facts_solved_schema()),
+        TABLE_Q_LIMITS_SOLVED => Some(q_limits_solved_schema()),
+        TABLE_FEASIBILITY_CERTIFICATE_BUSES => Some(feasibility_certificate_buses_schema()),
         _ => None,
     }
+}
+
+/// Solved-snapshot dialect of `multi_section_lines` (v0.12.4 read compatibility).
+///
+/// Current solved-snapshot exporters emit a per-section row layout for this table
+/// instead of the canonical per-line layout. Generic readers accept both; writers
+/// in this crate always emit the canonical layout.
+pub fn multi_section_lines_snapshot_dialect_schema() -> Schema {
+    Schema::new_with_metadata(
+        vec![
+            Field::new("line_id", DataType::Int32, true),
+            Field::new("parent_line_id", DataType::Int32, true),
+            Field::new("section_index", DataType::Int32, true),
+            Field::new("section_branch_id", DataType::Int32, true),
+            Field::new("from_bus_id", DataType::Int32, true),
+            Field::new("to_bus_id", DataType::Int32, true),
+            Field::new("status", DataType::Boolean, true),
+            Field::new("name", DataType::Utf8, true),
+        ],
+        schema_metadata(),
+    )
+}
+
+/// Solved-snapshot dialect of `dc_lines_2w` (v0.12.4 read compatibility).
+///
+/// Current solved-snapshot exporters emit a solver-oriented MW-setpoint layout
+/// for this table. Generic readers accept both; writers in this crate always
+/// emit the canonical layout.
+pub fn dc_lines_2w_snapshot_dialect_schema() -> Schema {
+    Schema::new_with_metadata(
+        vec![
+            Field::new("dc_line_id", DataType::Int32, true),
+            Field::new("from_bus_id", DataType::Int32, true),
+            Field::new("to_bus_id", DataType::Int32, true),
+            Field::new("status", DataType::Boolean, true),
+            Field::new("is_vsc", DataType::Boolean, true),
+            Field::new("control_mode", DataType::Utf8, true),
+            Field::new("name", DataType::Utf8, true),
+            Field::new("p_setpoint_mw", DataType::Float64, true),
+            Field::new("p_min_mw", DataType::Float64, true),
+            Field::new("p_max_mw", DataType::Float64, true),
+            Field::new("loss_factor", DataType::Float64, true),
+        ],
+        schema_metadata(),
+    )
+}
+
+/// Solved-snapshot dialect of `switched_shunt_banks` (v0.12.4 read compatibility).
+///
+/// Current solved-snapshot exporters emit a per-bank control layout for this table.
+/// Generic readers accept both; writers in this crate always emit the canonical layout.
+pub fn switched_shunt_banks_snapshot_dialect_schema() -> Schema {
+    Schema::new_with_metadata(
+        vec![
+            Field::new("bank_id", DataType::Int32, true),
+            Field::new("bus_id", DataType::Int32, true),
+            Field::new("status", DataType::Boolean, true),
+            Field::new("v_low", DataType::Float64, true),
+            Field::new("v_high", DataType::Float64, true),
+            Field::new(
+                "b_steps",
+                DataType::List(Arc::new(Field::new("item", DataType::Float64, true))),
+                true,
+            ),
+            Field::new("current_step", DataType::Int32, true),
+            Field::new("name", DataType::Utf8, true),
+        ],
+        schema_metadata(),
+    )
+}
+
+/// Solved-snapshot dialect of `generators_solved` (v0.12.4 read compatibility).
+///
+/// Current solved-snapshot exporters omit the per-unit output columns and emit
+/// solver-native MW/MVAR fields directly after the identity columns. Generic
+/// readers accept both; writers in this crate always emit the canonical layout.
+pub fn generators_solved_snapshot_dialect_schema() -> Schema {
+    Schema::new_with_metadata(
+        vec![
+            Field::new("bus_id", DataType::Int32, false),
+            Field::new("id", dict_utf8(), false),
+            Field::new("p_mw", DataType::Float64, true),
+            Field::new("q_mvar", DataType::Float64, true),
+            Field::new("status", DataType::Boolean, true),
+        ],
+        schema_metadata(),
+    )
+}
+
+/// Returns accepted schema variants for a table, canonical layout first.
+///
+/// Most tables have a single canonical layout. Three optional extension tables
+/// additionally accept a solved-snapshot dialect emitted by current solver
+/// exports (v0.12.4). Readers match by field names against each variant in
+/// order; writers must always use the canonical (first) layout.
+pub fn table_schema_variants(table_name: &str) -> Vec<Schema> {
+    let mut variants = Vec::new();
+    if let Some(canonical) = table_schema(table_name) {
+        variants.push(canonical);
+    }
+    match table_name {
+        TABLE_MULTI_SECTION_LINES => {
+            variants.push(multi_section_lines_snapshot_dialect_schema());
+        }
+        TABLE_DC_LINES_2W => variants.push(dc_lines_2w_snapshot_dialect_schema()),
+        TABLE_SWITCHED_SHUNT_BANKS => {
+            variants.push(switched_shunt_banks_snapshot_dialect_schema());
+        }
+        TABLE_GENERATORS_SOLVED => {
+            variants.push(generators_solved_snapshot_dialect_schema());
+        }
+        _ => {}
+    }
+    variants
 }
 
 /// Backward-compatible alias retained for older call sites.
@@ -1702,7 +1862,7 @@ mod tests {
 
     #[test]
     fn v010_schema_contract_spot_check() {
-        // contingencies must have exactly 8 fields (2 base + 6 Sentinel outcome cols)
+        // contingencies must have exactly 8 fields (2 base + 6 operational outcome cols)
         let c = contingencies_schema();
         assert_eq!(c.fields().len(), 8, "contingencies should have 8 fields");
         assert_eq!(c.field(0).name(), "contingency_id");
@@ -1761,14 +1921,61 @@ mod tests {
             "optional RAS/protection/island tables must NOT appear in all_table_schemas()"
         );
 
-        // version gate: v0.12.3 current; v0.12.2 and v0.12.1 remain readable
+        // version gate: v0.12.4 current; v0.12.3, v0.12.2, and v0.12.1 remain readable
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.12.4"));
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.12.4"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.12.3"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.12.3"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.12.2"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.12.2"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.12.1"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.12.1"));
-        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 6);
+        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 8);
+    }
+
+    #[test]
+    fn v0124_optional_tables_resolve_via_table_schema() {
+        let q = super::q_limits_solved_schema();
+        assert_eq!(q.fields().len(), 2);
+        assert_eq!(q.field(0).name(), "bus_id");
+        assert!(!q.field(0).is_nullable());
+        assert_eq!(q.field(1).name(), "q_net_target_pu");
+
+        let fc = super::feasibility_certificate_buses_schema();
+        assert_eq!(fc.fields().len(), 7);
+        assert_eq!(fc.field(0).name(), "bus_id");
+        assert!(!fc.field(0).is_nullable());
+        assert_eq!(fc.field(6).name(), "violation_kind");
+
+        assert!(table_schema("q_limits_solved").is_some());
+        assert!(table_schema("feasibility_certificate_buses").is_some());
+        let all = all_table_schemas();
+        assert!(
+            !all.iter()
+                .any(|(n, _)| *n == "q_limits_solved" || *n == "feasibility_certificate_buses"),
+            "v0.12.4 optional tables must NOT appear in all_table_schemas()"
+        );
+    }
+
+    #[test]
+    fn snapshot_dialect_variants_are_registered() {
+        for table in [
+            "multi_section_lines",
+            "dc_lines_2w",
+            "switched_shunt_banks",
+            "generators_solved",
+        ] {
+            let variants = super::table_schema_variants(table);
+            assert_eq!(variants.len(), 2, "{table} must expose canonical + dialect");
+            assert_eq!(
+                variants[0],
+                table_schema(table).unwrap(),
+                "{table} canonical variant must come first"
+            );
+        }
+        // Single-layout tables expose exactly the canonical schema.
+        assert_eq!(super::table_schema_variants("buses").len(), 1);
+        assert!(super::table_schema_variants("nonexistent_table").is_empty());
     }
 
     #[test]
