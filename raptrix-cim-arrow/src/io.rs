@@ -383,16 +383,17 @@ pub fn read_rpf_tables(path: impl AsRef<Path>) -> Result<Vec<(String, RecordBatc
         // encoding even though the pad rows are discarded via `rpf.rows.*`
         // trimming. Retry with buffer validation skipped for exactly this
         // known-benign artifact; all schema/contract validation still runs.
-        Err(error)
-            if format!("{error:#}").contains("Found unmasked nulls for non-nullable") =>
-        {
+        Err(error) if format!("{error:#}").contains("Found unmasked nulls for non-nullable") => {
             read_rpf_tables_impl(path.as_ref(), true)
         }
         Err(error) => Err(error),
     }
 }
 
-fn read_rpf_tables_impl(path: &Path, skip_buffer_validation: bool) -> Result<Vec<(String, RecordBatch)>> {
+fn read_rpf_tables_impl(
+    path: &Path,
+    skip_buffer_validation: bool,
+) -> Result<Vec<(String, RecordBatch)>> {
     let file = File::open(path)
         .with_context(|| format!("failed to open .rpf file at {}", path.display()))?;
     let mmap = unsafe { MmapOptions::new().map(&file) }
@@ -531,11 +532,10 @@ fn read_rpf_tables_impl(path: &Path, skip_buffer_validation: bool) -> Result<Vec
             let reconstructed_schema =
                 Schema::new_with_metadata(reconstructed_fields, expected_schema.metadata().clone());
 
-            let table_batch =
-                RecordBatch::try_new(Arc::new(reconstructed_schema), trimmed_columns)
-                    .with_context(|| {
-                        format!("failed reconstructing table '{table_name}' from root record batch")
-                    })?;
+            let table_batch = RecordBatch::try_new(Arc::new(reconstructed_schema), trimmed_columns)
+                .with_context(|| {
+                    format!("failed reconstructing table '{table_name}' from root record batch")
+                })?;
             out.push((table_name.to_string(), table_batch));
         }
     }

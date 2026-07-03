@@ -36,9 +36,8 @@ use arrow::record_batch::RecordBatch;
 
 use raptrix_cim_arrow::{
     BRANDING, METADATA_KEY_BRANDING, METADATA_KEY_RPF_VERSION, METADATA_KEY_VERSION,
-    buses_solved_schema, dc_lines_2w_snapshot_dialect_schema,
-    feasibility_certificate_buses_schema, generators_solved_snapshot_dialect_schema,
-    metadata_schema,
+    buses_solved_schema, dc_lines_2w_snapshot_dialect_schema, feasibility_certificate_buses_schema,
+    generators_solved_snapshot_dialect_schema, metadata_schema,
     multi_section_lines_snapshot_dialect_schema, q_limits_solved_schema, read_rpf_tables,
     row_count_metadata_key, schema_metadata, switched_shunt_banks_snapshot_dialect_schema,
     switched_shunts_solved_schema, table_schema,
@@ -69,7 +68,11 @@ fn snapshotize_type(data_type: &DataType) -> DataType {
 }
 
 fn snapshotize_schema(schema: &Schema) -> Vec<Field> {
-    schema.fields().iter().map(|f| snapshotize_field(f)).collect()
+    schema
+        .fields()
+        .iter()
+        .map(|f| snapshotize_field(f))
+        .collect()
 }
 
 /// Builds an all-null struct column of `pad_len` rows for the given fields.
@@ -288,11 +291,7 @@ fn write_synthetic_solved_snapshot(path: &std::path::Path, version: &str) -> Res
             children[*column_index] = concat(&[values.as_ref(), tail.as_ref()])?;
         }
         let array = Arc::new(StructArray::new(arrow_fields.clone(), children, None)) as ArrayRef;
-        root_fields.push(Field::new(
-            table.name,
-            DataType::Struct(arrow_fields),
-            true,
-        ));
+        root_fields.push(Field::new(table.name, DataType::Struct(arrow_fields), true));
         root_columns.push(array);
         root_meta.insert(row_count_metadata_key(table.name), table.rows.to_string());
     }
@@ -372,7 +371,9 @@ fn reads_synthetic_v0124_solved_snapshot_layout() -> Result<()> {
     assert!(by_name.contains_key("feasibility_certificate_buses"));
 
     // Solved-state tables with short field prefixes null-pad to canonical widths.
-    let buses_solved = by_name.get("buses_solved").context("buses_solved missing")?;
+    let buses_solved = by_name
+        .get("buses_solved")
+        .context("buses_solved missing")?;
     assert_eq!(
         buses_solved.schema().fields().len(),
         buses_solved_schema().fields().len()
