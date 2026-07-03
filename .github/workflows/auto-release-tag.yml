@@ -45,6 +45,7 @@ jobs:
         id: meta
         env:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: python3 scripts/ci/release_auto_tag.py
 
       - name: Create and push tag

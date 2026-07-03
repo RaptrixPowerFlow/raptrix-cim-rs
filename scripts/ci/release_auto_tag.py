@@ -115,7 +115,12 @@ def main() -> int:
         tag_sha = _remote_tag_sha(tag)
         if not _github_release_exists(tag):
             dispatch_release = True
-            if tag_sha == head:
+            if tag_sha is None:
+                reason = (
+                    f"tag {tag} exists on origin (sha unresolved) but GitHub Release "
+                    "is missing; will dispatch release.yml"
+                )
+            elif tag_sha == head:
                 reason = (
                     f"tag {tag} exists at HEAD but GitHub Release is missing; "
                     "will dispatch release.yml"
