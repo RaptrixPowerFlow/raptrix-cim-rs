@@ -2169,7 +2169,9 @@ mod tests {
             super::table_ownership("future_unknown_table"),
             super::TableOwnership::Converter
         );
-        assert!(super::is_solver_root_metadata_key(super::METADATA_KEY_CASE_MODE));
+        assert!(super::is_solver_root_metadata_key(
+            super::METADATA_KEY_CASE_MODE
+        ));
         assert!(!super::is_solver_root_metadata_key(
             super::METADATA_KEY_FEATURE_DIAGRAM_LAYOUT
         ));

@@ -121,25 +121,22 @@ fn patch_preserves_converter_gis_and_diagram_takes_solved_from_patch() -> Result
     patch_batches.insert(TABLE_BUSES, one_bus_batch(None, None)?);
     patch_batches.insert(
         TABLE_BUSES_SOLVED,
-        RecordBatch::try_new(
-            Arc::new(buses_solved_schema()),
-            {
-                let schema = buses_solved_schema();
-                schema
-                    .fields()
-                    .iter()
-                    .map(|field| {
-                        if field.name() == "bus_id" {
-                            Arc::new(Int32Array::from(vec![1])) as ArrayRef
-                        } else if field.data_type() == &arrow::datatypes::DataType::Float64 {
-                            Arc::new(Float64Array::from(vec![Some(1.02)])) as ArrayRef
-                        } else {
-                            arrow::array::new_null_array(field.data_type(), 1)
-                        }
-                    })
-                    .collect()
-            },
-        )?,
+        RecordBatch::try_new(Arc::new(buses_solved_schema()), {
+            let schema = buses_solved_schema();
+            schema
+                .fields()
+                .iter()
+                .map(|field| {
+                    if field.name() == "bus_id" {
+                        Arc::new(Int32Array::from(vec![1])) as ArrayRef
+                    } else if field.data_type() == &arrow::datatypes::DataType::Float64 {
+                        Arc::new(Float64Array::from(vec![Some(1.02)])) as ArrayRef
+                    } else {
+                        arrow::array::new_null_array(field.data_type(), 1)
+                    }
+                })
+                .collect()
+        })?,
     );
     patch_batches.insert(
         TABLE_GENERATORS_SOLVED,
@@ -178,8 +175,14 @@ fn patch_preserves_converter_gis_and_diagram_takes_solved_from_patch() -> Result
         .as_any()
         .downcast_ref::<Float64Array>()
         .context("longitude type")?;
-    assert!((lat.value(0) - 32.85).abs() < 1e-9, "GIS latitude must come from source");
-    assert!((lon.value(0) - (-97.75)).abs() < 1e-9, "GIS longitude must come from source");
+    assert!(
+        (lat.value(0) - 32.85).abs() < 1e-9,
+        "GIS latitude must come from source"
+    );
+    assert!(
+        (lon.value(0) - (-97.75)).abs() < 1e-9,
+        "GIS longitude must come from source"
+    );
 
     let diagram_objects = tables
         .iter()
@@ -230,11 +233,7 @@ fn empty_solver_patch_is_lossless_for_converter_tables() -> Result<()> {
     let source_tables: HashMap<_, _> = read_rpf_tables(&source_path)?.into_iter().collect();
     let out_tables: HashMap<_, _> = read_rpf_tables(&output_path)?.into_iter().collect();
 
-    for name in [
-        TABLE_BUSES,
-        TABLE_DIAGRAM_OBJECTS,
-        TABLE_DIAGRAM_POINTS,
-    ] {
+    for name in [TABLE_BUSES, TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS] {
         let source_batch = source_tables.get(name).context(name)?;
         let out_batch = out_tables.get(name).context(name)?;
         assert_eq!(

@@ -52,12 +52,13 @@ fn open_root_rpf(path: &Path) -> Result<RootRpf> {
         Some(Err(error))
             if format!("{error:#}").contains("Found unmasked nulls for non-nullable") =>
         {
-            let mut retry = FileReader::try_new(Cursor::new(&mmap[..]), None).with_context(|| {
-                format!(
-                    "failed to reopen Arrow IPC file reader for {}",
-                    path.display()
-                )
-            })?;
+            let mut retry =
+                FileReader::try_new(Cursor::new(&mmap[..]), None).with_context(|| {
+                    format!(
+                        "failed to reopen Arrow IPC file reader for {}",
+                        path.display()
+                    )
+                })?;
             retry = unsafe { retry.with_skip_validation(true) };
             retry
                 .next()
@@ -160,7 +161,12 @@ fn merge_metadata_batches(source: &RecordBatch, patch: &RecordBatch) -> Result<R
 
     let mut field_names: Vec<String> = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    for field in patch.schema().fields().iter().chain(source.schema().fields()) {
+    for field in patch
+        .schema()
+        .fields()
+        .iter()
+        .chain(source.schema().fields())
+    {
         if seen.insert(field.name().clone()) {
             field_names.push(field.name().clone());
         }
@@ -211,7 +217,11 @@ fn merge_metadata_batches(source: &RecordBatch, patch: &RecordBatch) -> Result<R
 }
 
 fn batch_to_struct_array(batch: &RecordBatch) -> StructArray {
-    StructArray::new(batch.schema().fields().clone(), batch.columns().to_vec(), None)
+    StructArray::new(
+        batch.schema().fields().clone(),
+        batch.columns().to_vec(),
+        None,
+    )
 }
 
 fn require_struct_column<'a>(
@@ -257,8 +267,7 @@ pub fn apply_rpf_patch(
         .iter()
         .map(|field| field.name().clone())
         .collect();
-    let mut present: std::collections::HashSet<String> =
-        out_names.iter().cloned().collect();
+    let mut present: std::collections::HashSet<String> = out_names.iter().cloned().collect();
     for field in patch.schema.fields() {
         let name = field.name().as_str();
         if table_ownership(name) == TableOwnership::Solver && present.insert(name.to_string()) {
@@ -408,11 +417,14 @@ pub fn apply_rpf_patch(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::{table_ownership, TableOwnership, TABLE_BUSES, TABLE_BUSES_SOLVED};
+    use crate::schema::{TABLE_BUSES, TABLE_BUSES_SOLVED, TableOwnership, table_ownership};
 
     #[test]
     fn ownership_defaults_unknown_to_converter() {
-        assert_eq!(table_ownership("future_enrichment_v99"), TableOwnership::Converter);
+        assert_eq!(
+            table_ownership("future_enrichment_v99"),
+            TableOwnership::Converter
+        );
         assert_eq!(table_ownership(TABLE_BUSES), TableOwnership::Converter);
         assert_eq!(table_ownership(TABLE_BUSES_SOLVED), TableOwnership::Solver);
         assert_eq!(table_ownership(TABLE_METADATA), TableOwnership::Shared);
