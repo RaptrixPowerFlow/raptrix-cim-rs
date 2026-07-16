@@ -82,13 +82,17 @@ enum Commands {
 #[derive(Debug, clap::Args)]
 #[command(group(
     ArgGroup::new("profile_mode")
-    .args(["input_dir", "eq", "tp", "sv", "ssh", "dy", "dl"])
+    .args(["input_dir", "eq", "eqbd", "tp", "sv", "ssh", "dy", "dl", "gl"])
         .multiple(true)
 ))]
 struct ConvertArgs {
     /// EQ profile path. Required when `--input-dir` is not used.
     #[arg(long)]
     eq: Option<PathBuf>,
+
+    /// EQBD (Equipment Boundary) profile path — shared BaseVoltage definitions.
+    #[arg(long)]
+    eqbd: Option<PathBuf>,
 
     /// TP profile path.
     #[arg(long)]
@@ -109,6 +113,10 @@ struct ConvertArgs {
     /// DL profile path carrying IEC 61970-453 diagram layout payloads.
     #[arg(long)]
     dl: Option<PathBuf>,
+
+    /// GL profile path carrying CIM GeographicalLocation (Location + PositionPoint).
+    #[arg(long)]
+    gl: Option<PathBuf>,
 
     /// Auto-detect CGMES profiles in a directory via case-insensitive filename matching.
     #[arg(long)]
@@ -511,24 +519,28 @@ fn collect_profile_paths(
 
 fn has_explicit_profiles(args: &ConvertArgs) -> bool {
     args.eq.is_some()
+        || args.eqbd.is_some()
         || args.tp.is_some()
         || args.sv.is_some()
         || args.ssh.is_some()
         || args.dy.is_some()
         || args.dl.is_some()
+        || args.gl.is_some()
 }
 
 fn explicit_profiles(args: &ConvertArgs, cwd: &Path) -> Result<Vec<(String, PathBuf)>> {
     let eq = args.eq.as_ref().context("No EQ profile found")?;
-    let mut profiles = Vec::with_capacity(6);
+    let mut profiles = Vec::with_capacity(8);
     profiles.push(("EQ".to_string(), normalize_existing_path(eq, cwd)?));
 
     for (profile_name, path) in [
+        ("EQBD", args.eqbd.as_ref()),
         ("TP", args.tp.as_ref()),
         ("SV", args.sv.as_ref()),
         ("SSH", args.ssh.as_ref()),
         ("DY", args.dy.as_ref()),
         ("DL", args.dl.as_ref()),
+        ("GL", args.gl.as_ref()),
     ] {
         if let Some(path) = path {
             profiles.push((
@@ -552,8 +564,9 @@ fn detect_profiles(input_dir: &Path, cwd: &Path) -> Result<Vec<(String, PathBuf)
         );
     }
 
-    let mut detected = Vec::with_capacity(6);
-    for profile in ["EQ", "TP", "SV", "SSH", "DY", "DL"] {
+    let mut detected = Vec::with_capacity(8);
+    // EQBD before EQ so filename token matching stays unambiguous in listings.
+    for profile in ["EQ", "EQBD", "TP", "SV", "SSH", "DY", "DL", "GL"] {
         if let Some(path) = find_profile_file(&canonical_input_dir, profile)? {
             detected.push((profile.to_string(), path));
         }
@@ -686,10 +699,13 @@ mod tests {
     #[test]
     fn cgmes_profile_detection_filename_tokens_cover_24x_and_3x() {
         assert!(filename_matches_profile("SmallGrid_EQ.xml", "EQ"));
+        assert!(filename_matches_profile("SmallGrid_EQBD.xml", "EQBD"));
+        assert!(!filename_matches_profile("SmallGrid_EQBD.xml", "EQ"));
         assert!(filename_matches_profile("SmallGrid-TP.rdf", "TP"));
         assert!(filename_matches_profile("CGMES_2.4.15_case_SV.XML", "SV"));
         assert!(filename_matches_profile("CGMES-v3.0.3-SSH.xml", "SSH"));
         assert!(filename_matches_profile("2026_CASE_DY.rdf", "DY"));
+        assert!(filename_matches_profile("SmallGrid_GL.xml", "GL"));
         assert!(!filename_matches_profile("SmallGrid_EQUIPMENT.xml", "EQ"));
     }
 

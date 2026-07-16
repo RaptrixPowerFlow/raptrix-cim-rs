@@ -7,7 +7,11 @@ Copyright (c) 2026 Raptrix Power
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Arrow schema definitions for the Raptrix Power Interchange v0.12.3 profile.
+//! Arrow schema definitions for the Raptrix Power Interchange v0.12.5 profile.
+//!
+//! ## v0.12.5 — optional bus GIS coordinates (additive)
+//! Adds nullable trailing `buses.latitude` / `buses.longitude` (Float64, WGS84 degrees)
+//! for operator-oriented relative layout. v0.12.4 files remain readable without re-export.
 //!
 //! ## v0.12.3 — baseline provenance (additive metadata + topology_changes)
 //! Adds nullable baseline provenance fields to `metadata` (provenance, model upgrade tracking,
@@ -79,17 +83,18 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, Schema};
 
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / Raptrix Power Interchange v0.12.4 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow / Raptrix Power Interchange v0.12.5 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.";
 
 /// Canonical RPF format version tag embedded as file-level metadata.
-pub const RPF_VERSION: &str = "v0.12.4";
+pub const RPF_VERSION: &str = "v0.12.5";
 
 /// Supported RPF versions accepted by generic Arrow IPC readers.
 ///
-/// v0.12.4 is the current contract release. v0.12.3, v0.12.2, and v0.12.1 files remain
+/// v0.12.5 is the current contract release. v0.12.4–v0.12.1 files remain
 /// readable (additive trailing columns). Prior contract versions must be re-emitted.
 pub const SUPPORTED_RPF_VERSIONS: &[&str] = &[
-    "v0.12.4", "0.12.4", "v0.12.3", "0.12.3", "v0.12.2", "0.12.2", "v0.12.1", "0.12.1",
+    "v0.12.5", "0.12.5", "v0.12.4", "0.12.4", "v0.12.3", "0.12.3", "v0.12.2", "0.12.2", "v0.12.1",
+    "0.12.1",
 ];
 
 /// Validates a nominal kV value for required network voltage fields.
@@ -309,6 +314,45 @@ pub const TABLE_FACTS_SOLVED: &str = "facts_solved";
 pub const TABLE_Q_LIMITS_SOLVED: &str = "q_limits_solved";
 /// Optional post-solve feasibility/complementarity certificate audit rows (v0.12.4+).
 pub const TABLE_FEASIBILITY_CERTIFICATE_BUSES: &str = "feasibility_certificate_buses";
+
+/// Ownership of a root table across solve → re-export (see `docs/schema-contract.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableOwnership {
+    /// Always taken from the source `.rpf` when present; patch ignored.
+    Converter,
+    /// Taken from the patch when present; otherwise retained from source.
+    Solver,
+    /// Explicit merge (today: `metadata` only).
+    Shared,
+}
+
+/// Returns table ownership for patch-based re-export.
+///
+/// Unknown table names default to [`TableOwnership::Converter`] so that an older
+/// solver binary cannot drop newer enrichment tables it does not model.
+pub fn table_ownership(table_name: &str) -> TableOwnership {
+    match table_name {
+        TABLE_BUSES_SOLVED
+        | TABLE_GENERATORS_SOLVED
+        | TABLE_SWITCHED_SHUNTS_SOLVED
+        | TABLE_FACTS_SOLVED
+        | TABLE_Q_LIMITS_SOLVED
+        | TABLE_FEASIBILITY_CERTIFICATE_BUSES => TableOwnership::Solver,
+        TABLE_METADATA => TableOwnership::Shared,
+        _ => TableOwnership::Converter,
+    }
+}
+
+/// File-level metadata keys owned by the solver patch (overlay onto source).
+pub fn is_solver_root_metadata_key(key: &str) -> bool {
+    key.starts_with("rpf.solver.")
+        || key == METADATA_KEY_CASE_MODE
+        || key == METADATA_KEY_SOLVED_STATE_PRESENCE
+        || key == METADATA_KEY_SOLVED_SHUNT_STATE_PRESENCE
+        || key == METADATA_KEY_FACTS_SOLVED_STATE_PRESENCE
+        || key == METADATA_KEY_FEATURE_FACTS_SOLVED
+        || key == METADATA_KEY_FEATURE_FEASIBILITY_CERTIFICATE
+}
 
 /// Optional column required on export-side solved-result tables.
 pub const COLUMN_CONTINGENCY_ID: &str = "contingency_id";
@@ -729,6 +773,7 @@ pub fn metadata_schema() -> Schema {
 /// `buses` table schema.
 ///
 /// v0.9.4 adds `qd_load_pu` and `qg_sched_pu` at positions 20–21 (after `bus_uuid`).
+/// v0.12.5 adds nullable trailing `latitude` / `longitude` (WGS84 degrees).
 /// `q_sched` (pos 4) retains its meaning as `qg_sched_pu − qd_load_pu` for all bus types.
 pub fn buses_schema() -> Schema {
     Schema::new_with_metadata(
@@ -760,6 +805,10 @@ pub fn buses_schema() -> Schema {
             // Identity: q_sched == qg_sched_pu - qd_load_pu  (machine-checkable)
             Field::new("qd_load_pu", DataType::Float64, false),
             Field::new("qg_sched_pu", DataType::Float64, false),
+            // v0.12.5: optional WGS84 bus coordinates for relative GIS ordering in viewers.
+            // Not required for electrical fidelity; null when the source model lacks GL data.
+            Field::new("latitude", DataType::Float64, true),
+            Field::new("longitude", DataType::Float64, true),
         ],
         schema_metadata(),
     )
@@ -1921,7 +1970,9 @@ mod tests {
             "optional RAS/protection/island tables must NOT appear in all_table_schemas()"
         );
 
-        // version gate: v0.12.4 current; v0.12.3, v0.12.2, and v0.12.1 remain readable
+        // version gate: v0.12.5 current; v0.12.4–v0.12.1 remain readable
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.12.5"));
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.12.5"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.12.4"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.12.4"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.12.3"));
@@ -1930,7 +1981,7 @@ mod tests {
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.12.2"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.12.1"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.12.1"));
-        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 8);
+        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 10);
     }
 
     #[test]
@@ -2101,15 +2152,43 @@ mod tests {
     }
 
     #[test]
+    fn table_ownership_classifier() {
+        assert_eq!(
+            super::table_ownership(super::TABLE_BUSES),
+            super::TableOwnership::Converter
+        );
+        assert_eq!(
+            super::table_ownership(super::TABLE_BUSES_SOLVED),
+            super::TableOwnership::Solver
+        );
+        assert_eq!(
+            super::table_ownership(super::TABLE_METADATA),
+            super::TableOwnership::Shared
+        );
+        assert_eq!(
+            super::table_ownership("future_unknown_table"),
+            super::TableOwnership::Converter
+        );
+        assert!(super::is_solver_root_metadata_key(super::METADATA_KEY_CASE_MODE));
+        assert!(!super::is_solver_root_metadata_key(
+            super::METADATA_KEY_FEATURE_DIAGRAM_LAYOUT
+        ));
+    }
+
+    #[test]
     fn buses_schema_v094_q_decomposition_columns() {
         let buses = super::buses_schema();
-        // v0.9.4: 22 total columns
-        assert_eq!(buses.fields().len(), 22);
+        // v0.12.5: 24 total columns (22 through qg_sched_pu + lat/lon)
+        assert_eq!(buses.fields().len(), 24);
         // New columns at indices 20 and 21
         assert_eq!(buses.field(20).name(), "qd_load_pu");
         assert!(!buses.field(20).is_nullable());
         assert_eq!(buses.field(21).name(), "qg_sched_pu");
         assert!(!buses.field(21).is_nullable());
+        assert_eq!(buses.field(22).name(), "latitude");
+        assert!(buses.field(22).is_nullable());
+        assert_eq!(buses.field(23).name(), "longitude");
+        assert!(buses.field(23).is_nullable());
     }
 
     #[test]

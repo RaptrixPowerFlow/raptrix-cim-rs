@@ -2,16 +2,18 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Stable C ABI for RPF case health inspection.
+//! Stable C ABI for RPF case health inspection and patch-based re-export.
 //!
 //! See `include/raptrix_cim_arrow_health.h` for the consumer-facing contract.
 
 use std::cell::RefCell;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
+use std::path::Path;
 use std::ptr;
 
 use crate::health::{RpfCaseHealth, RpfHealthGrade, inspect_rpf_file};
+use crate::patch::apply_rpf_patch;
 
 /// Overall case health grade (matches `RpfHealthGrade` and C header constants).
 pub const RPF_HEALTH_HEALTHY: i32 = 0;
@@ -252,4 +254,53 @@ pub extern "C" fn rpf_case_health_last_error() -> *const c_char {
         Some(message) => message.as_ptr(),
         None => c"".as_ptr(),
     })
+}
+
+fn path_from_c<'a>(ptr: *const c_char, label: &str) -> Result<&'a Path, ()> {
+    if ptr.is_null() {
+        set_last_error(format!("apply_rpf_patch_c: {label} is null"));
+        return Err(());
+    }
+    let path = unsafe {
+        CStr::from_ptr(ptr).to_str().map_err(|_| {
+            set_last_error(format!("apply_rpf_patch_c: {label} is not valid UTF-8"));
+        })?
+    };
+    Ok(Path::new(path))
+}
+
+/// Merges solver-owned tables from `patch_rpf` into `source_rpf`, writing `output_rpf`.
+///
+/// Converter-owned tables (GIS, contingencies, RAS, diagrams, unknown enrichment, …)
+/// always come from `source_rpf`. Returns `0` on success, `-1` on error.
+///
+/// # Safety
+///
+/// All path arguments must be valid, NUL-terminated UTF-8 strings (including on Windows).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn apply_rpf_patch_c(
+    source_rpf: *const c_char,
+    patch_rpf: *const c_char,
+    output_rpf: *const c_char,
+) -> i32 {
+    clear_last_error();
+    let source = match path_from_c(source_rpf, "source_rpf") {
+        Ok(path) => path,
+        Err(()) => return -1,
+    };
+    let patch = match path_from_c(patch_rpf, "patch_rpf") {
+        Ok(path) => path,
+        Err(()) => return -1,
+    };
+    let output = match path_from_c(output_rpf, "output_rpf") {
+        Ok(path) => path,
+        Err(()) => return -1,
+    };
+    match apply_rpf_patch(source, patch, output) {
+        Ok(()) => 0,
+        Err(err) => {
+            set_last_error(format!("apply_rpf_patch_c: {err:#}"));
+            -1
+        }
+    }
 }

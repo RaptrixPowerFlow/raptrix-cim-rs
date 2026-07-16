@@ -1478,7 +1478,7 @@ mod tests {
             .expect_err("v0.9.3 reader should reject missing required nominal_kv fields");
         let message = format!("{err:#}");
         assert!(message.contains("missing non-nullable field 'to_nominal_kv'"));
-        assert_eq!(SCHEMA_VERSION, "v0.12.4");
+        assert_eq!(SCHEMA_VERSION, "v0.12.5");
         Ok(())
     }
 

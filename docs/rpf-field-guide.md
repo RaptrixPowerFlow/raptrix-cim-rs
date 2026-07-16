@@ -174,6 +174,8 @@ Buses are the nodes of the network. Every generator, load, and branch connects t
 | `p_max_agg` | number | Aggregate maximum generation in per-unit across all generators at this bus. |
 | `nominal_kv` | number | Required nominal voltage level in kilovolts from the CIM `BaseVoltage`. Must be finite and strictly greater than 0. |
 | `bus_uuid` | text | The CIM mRID (UUID) of the `TopologicalNode` this bus was collapsed from. Unique and stable across exports of the same case. |
+| `latitude` | number or null | **(v0.12.5+)** Optional WGS84 latitude in degrees. Sourced from CIM GL `Location` + `PositionPoint` (yPosition). When GL attaches to an `ACLineSegment`, the line’s first/last vertices are applied to the from/to buses. Used by viewers for relative north→south ordering — not a GIS map projection. Null when unavailable. |
+| `longitude` | number or null | **(v0.12.5+)** Optional WGS84 longitude in degrees. Sourced from CIM GL `Location` + `PositionPoint` (xPosition). Same line-endpoint → bus resolution as `latitude`. Null when unavailable. |
 
 ---
 

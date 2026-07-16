@@ -24,12 +24,15 @@
 //! 1. Build canonical table `RecordBatch` values using the schema helpers.
 //! 2. Pass those batches to [`write_root_rpf`] to emit a standards-compliant
 //!    Arrow IPC `.rpf` file.
-//! 3. Use [`read_rpf_tables`], [`summarize_rpf`], or [`rpf_file_metadata`] for
+//! 3. After a solve, call [`apply_rpf_patch`] (FFI: `apply_rpf_patch_c`) with the
+//!    source `.rpf` plus a solver patch so converter-owned tables are preserved.
+//! 4. Use [`read_rpf_tables`], [`summarize_rpf`], or [`rpf_file_metadata`] for
 //!    validation, inspection, and regression tests.
 
 pub mod ffi;
 mod health;
 mod io;
+mod patch;
 mod schema;
 
 pub use health::{
@@ -42,4 +45,5 @@ pub use io::{
     row_count_metadata_key, rpf_file_metadata, summarize_rpf, validate_rpf_file, write_root_rpf,
     write_root_rpf_with_metadata,
 };
+pub use patch::apply_rpf_patch;
 pub use schema::*;

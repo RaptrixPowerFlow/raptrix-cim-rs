@@ -3,11 +3,19 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 Copyright (c) 2026 Raptrix Power
 -->
 
-# Schema Contract (Locked contract: v0.12.4 — CGMES 3.0+ Only)
+# Schema Contract (Locked contract: v0.12.5 — CGMES 3.0+ Only)
 
 This repository is the authoritative source of truth for the Raptrix Power Interchange (`.rpf`) wire contract used by CIM-first conversion pipelines.
 
-**v0.12.4** is the current contract release. `SUPPORTED_RPF_VERSIONS` accepts **`v0.12.4`** / **`0.12.4`** and retains **`v0.12.3`** / **`0.12.3`**, **`v0.12.2`** / **`0.12.2`**, and **`v0.12.1`** / **`0.12.1`** for backward reads.
+**v0.12.5** is the current contract release. `SUPPORTED_RPF_VERSIONS` accepts **`v0.12.5`** / **`0.12.5`** and retains **`v0.12.4`**–**`v0.12.1`** for backward reads.
+
+## v0.12.5 Additive Changes
+
+- **`buses.latitude` / `buses.longitude`**: nullable trailing `Float64` columns (WGS84 degrees). Optional GIS coordinates for operator-oriented relative layout (north→south / west→east ranking). Null when the source model has no CIM `Location` / `PositionPoint` data. Purely additive — v0.12.4 files remain readable.
+- **CIM GeographicalLocation ingest**: converters accept an optional GL profile (`--gl` / auto-detect `_GL`). `Location.PowerSystemResources` may reference a bus resource (`TopologicalNode` / `ConnectivityNode`) or an `ACLineSegment`. For line routes, the first `PositionPoint` maps to the from-bus and the last maps to the to-bus (via Terminal sequence 1/2); multiple contributions to one bus are averaged. Diagram layout (DL) coordinates are never copied into these fields.
+- **EQBD ingest (related converter fix)**: optional Equipment Boundary profile (`--eqbd` / `_EQBD`) supplies shared `BaseVoltage` definitions referenced by TP but omitted from MAS EQ files (required for SmallGrid/FullGrid/MiniGrid/Svedala Merged CAS packages).
+- **Version gate**: `SUPPORTED_RPF_VERSIONS` accepts v0.12.5 and retains v0.12.4, v0.12.3, v0.12.2, and v0.12.1.
+- **Backward compatibility**: readers null-pad absent trailing geo columns when reading older bus tables.
 
 ## v0.12.4 Additive Changes
 
@@ -182,6 +190,26 @@ Design rationale and the cross-repo consumption contract live in [adr/0001-prote
 - This contract is not designed as a parity-first schema for any single legacy format.
 - Interoperability with legacy toolchains may be achieved where practical, but the primary design goal is a stable, physically consistent interchange contract.
 - The normative source remains IEC 61970 CIM semantics mapped into a stable Arrow contract for deterministic downstream ingestion.
+
+## Table Ownership (solve / re-export contract)
+
+The solver (`raptrix-core`) holds a **projection** of an `.rpf` — only the electrical state needed for powerflow. Rebuilding a full `.rpf` from that projection is lossy (GIS, contingencies, RAS/SPS, diagram layout, node-breaker detail, unknown future tables, …).
+
+**Canonical rule:** the source `.rpf` is the authoritative document. After a solve, consumers apply a **solve patch** via `raptrix-cim-arrow::apply_rpf_patch` (FFI: `apply_rpf_patch_c`). Untouched tables/columns are passed through (Arrow buffer reuse). Unknown root tables default to converter-owned passthrough so older solvers cannot destroy newer file richness.
+
+| Ownership | Rule | Tables |
+| --- | --- | --- |
+| **Converter-owned** | Always taken from the source file when present. Patch copies are ignored. | All required structural tables (`buses`, `branches`, `generators`, `loads`, shunts, transformers, areas/zones/owners, `contingencies`, `interfaces`, `dynamics_models`, …), plus optional enrichment: `protection_contingencies`, `topology_changes`, `remedial_action_schemes`, `contingency_island_analysis`, `scenario_context`, `computational_load_profiles`, `facts_devices`, node-breaker / connectivity / diagram tables. Includes `buses.latitude` / `buses.longitude`. |
+| **Solver-owned** | Taken from the patch when present; otherwise retained from source. | `buses_solved`, `generators_solved`, `switched_shunts_solved`, `facts_solved`, `q_limits_solved`, `feasibility_certificate_buses` |
+| **Shared** | Explicit merge. | `metadata` table: per-column, prefer patch when non-null else source. File-level keys under `rpf.solver.*`, `rpf.case_mode`, `rpf.solved_state_presence`, and related solved-feature flags overlay from the patch; converter feature flags and unknown keys from source are preserved. `rpf.rows.*` is always recomputed for the output. |
+
+**Workflows**
+
+1. **Solve → export (preferred):** `apply_rpf_patch(source_rpf, patch_rpf, output_rpf)` where `patch_rpf` may be a full core export; only solver-owned tables (and shared metadata overlays) are taken from it.
+2. **No source file** (e.g. RAW→Network never loaded from `.rpf`): full rebuild from the solver model remains allowed; richness that was never in an `.rpf` cannot be invented.
+3. **Structural edits in Studio:** persist them to the working `.rpf` first (new source), then solve and patch. Do not expect Network-only structural edits to survive a source-passthrough export.
+
+**Guardrail:** regression tests must assert that `apply_rpf_patch(source, empty_or_solver_only_patch, out)` preserves every converter-owned table (including GIS and contingencies) bit-for-bit at the RecordBatch level.
 
 ## Contract Policy
 
@@ -466,6 +494,8 @@ This section is normative for external parser authors.
 - `bus_uuid`: Dictionary<Int32, Utf8>, required
 - `qd_load_pu`: Float64, required (v0.9.4+) — Σ(in-service load QL) / SBASE; signed (positive for inductive load, negative when PSS/E load QL < 0); zero for buses with no load
 - `qg_sched_pu`: Float64, required (v0.9.4+) — Σ(in-service generator QG) / SBASE; any sign; zero for buses with no generation
+- `latitude`: Float64, nullable (v0.12.5+) — WGS84 latitude in degrees from CIM `Location`/`PositionPoint` (yPosition). Null when unavailable.
+- `longitude`: Float64, nullable (v0.12.5+) — WGS84 longitude in degrees from CIM `Location`/`PositionPoint` (xPosition). Null when unavailable.
 
 ### branches
 

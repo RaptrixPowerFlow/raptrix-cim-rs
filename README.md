@@ -103,7 +103,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 | Connectivity detail | `--connectivity-detail` | Granular ConnectivityNode bus mapping; emits optional `connectivity_groups` table |
 | Node-breaker | `--connectivity-detail --node-breaker` | Adds switch-topology detail tables for operational and viewer workflows |
 
-### Output tables (schema contract v0.12.4)
+### Output tables (schema contract v0.12.5)
 
 **18 canonical tables (always emitted):** `metadata`, `buses`, `branches`, `multi_section_lines`, `dc_lines_2w`, `generators`, `loads`, `fixed_shunts`, `switched_shunts`, `switched_shunt_banks`, `transformers_2w`, `transformers_3w`, `areas`, `zones`, `owners`, `contingencies`, `interfaces`, `dynamics_models`
 
@@ -129,13 +129,13 @@ RAS safety note: all public examples in this repository use synthetic demonstrat
 | Strict | `--detached-island-policy strict` | Aborts if any detached island is found |
 | Prune | `--detached-island-policy prune-detached` | Silently removes detached islands before writing |
 
-### Tested CGMES v3.0 conformity cases (11/11 passing, 44 variants)
+### Tested CGMES v3.0 conformity cases (44/44 release variants passing)
 
 | Case | Profiles | Notes |
 | --- | --- | --- |
 | FullGrid-Merged | EQ + TP | Large multi-TSO assembled case |
 | MiniGrid-Merged | EQ + TP | Minimal conformity case |
-| SmallGrid-Merged | EQ + TP + DL | Standard small test grid with diagram layout |
+| SmallGrid-Merged | EQ + TP + DL + GL | Standard small test grid with diagram layout and geographical location |
 | RealGrid-Merged | EQ + TP | Representative real-network scale |
 | Svedala-Merged | EQ + TP + DL | Swedish TSO reference with diagram layout |
 | PowerFlow | EQ + TP + SV + SSH | Explicit power-flow validation case |
@@ -145,7 +145,7 @@ RAS safety note: all public examples in this repository use synthetic demonstrat
 
 ## Data Contract (Locked)
 
-- Current schema contract: **v0.12.4** (CGMES 3.0+ only). v0.12.4 adds optional `q_limits_solved` and `feasibility_certificate_buses` tables and documents read-compatibility dialects for current solved-snapshot exports. The RPF version gate accepts **v0.12.4** and retains **v0.12.3**, **v0.12.2**, and **v0.12.1** for backward reads — prior contract versions must be re-emitted.
+- Current schema contract: **v0.12.5** (CGMES 3.0+ only). v0.12.5 adds optional nullable `buses.latitude` / `buses.longitude` (WGS84) from CIM GeographicalLocation profiles. The RPF version gate accepts **v0.12.5** and retains **v0.12.4**–**v0.12.1** for backward reads — prior contract versions must be re-emitted.
 - Canonical source: raptrix-cim-arrow/src/schema.rs
 - Contract policy and semantics: docs/schema-contract.md
 - Plain-English field guide: [docs/rpf-field-guide.md](docs/rpf-field-guide.md)
@@ -159,9 +159,11 @@ RPF standardization here is intentional: it enables direct CIM-to-powerflow inte
 
 ### Versioning Policy
 
-Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is at schema **`v0.12.4`** while the converter crate release is **`0.5.6`**.
+Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is at schema **`v0.12.5`** and the converter crate release is **`0.5.7`**.
 
-Readers in this repository accept `v0.12.4` / `0.12.4` and retain `v0.12.3` / `0.12.3`, `v0.12.2` / `0.12.2`, and `v0.12.1` / `0.12.1`. Prior contract versions must be re-emitted.
+Readers in this repository accept `v0.12.5` / `0.12.5` and retain `v0.12.4` / `0.12.4` through `v0.12.1` / `0.12.1`. Prior contract versions must be re-emitted.
+
+**v0.12.5**: Adds nullable trailing `buses.latitude` / `buses.longitude` (WGS84 degrees) populated from CIM GL `Location`/`PositionPoint` when a GL profile is supplied. Line-route Locations resolve to from/to buses via Terminal endpoints. v0.12.4 files remain readable without re-export (readers null-pad missing geo columns).
 
 **v0.12.4**: Adds optional `q_limits_solved` and `feasibility_certificate_buses` tables, switches generic readers to name-based root-table matching with tolerant nested-type comparison, and documents snapshot read dialects for `multi_section_lines`, `dc_lines_2w`, `switched_shunt_banks`, and `generators_solved`. v0.12.3 and earlier supported files remain readable without re-export.
 

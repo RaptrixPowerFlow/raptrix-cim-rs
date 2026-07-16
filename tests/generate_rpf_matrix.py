@@ -31,11 +31,13 @@ class Case:
     case_name: str
     source_kind: str
     eq: Path
+    eqbd: Path | None = None
     tp: Path | None = None
     sv: Path | None = None
     ssh: Path | None = None
     dy: Path | None = None
     dl: Path | None = None
+    gl: Path | None = None
 
 
 @dataclass
@@ -91,6 +93,40 @@ def _safe_name(text: str) -> str:
     return "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in text)
 
 
+def _companion_profile(eq: Path, profile: str) -> Path | None:
+    """Resolve a sibling CGMES profile for an EQ file.
+
+    Supports classic ``Model_EQ.xml`` / ``Model_TP.xml`` naming and timestamped
+    ENTSO-E names where the profile token is mid-stem
+    (``..._EQ_001.xml`` → ``..._GL_001.xml``). EQBD is resolved as
+    ``Model_EQBD.xml`` (not via naive ``_EQ`` → ``_EQBD`` replacement alone).
+    """
+    name = eq.name
+    if profile == "EQBD":
+        for candidate_name in (
+            name.replace("_EQ.xml", "_EQBD.xml").replace("_EQ.XML", "_EQBD.XML"),
+            name.replace("_EQ_", "_EQBD_"),
+        ):
+            if candidate_name != name:
+                candidate = eq.with_name(candidate_name)
+                if candidate.is_file():
+                    return candidate
+        if eq.stem.endswith("_EQ"):
+            candidate = eq.with_name(f"{eq.stem[:-3]}_EQBD{eq.suffix}")
+            if candidate.is_file():
+                return candidate
+        return None
+    if "_EQ" in name:
+        candidate = eq.with_name(name.replace("_EQ", f"_{profile}", 1))
+        if candidate.is_file():
+            return candidate
+    if eq.stem.endswith("_EQ"):
+        candidate = eq.with_name(f"{eq.stem[:-3]}_{profile}{eq.suffix}")
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def discover_cases() -> list[Case]:
     cases: list[Case] = []
 
@@ -108,17 +144,18 @@ def discover_cases() -> list[Case]:
         if eq.name.endswith("_EQ.xml"):
             # Treat as CGMES-style naming if present.
             model = eq.stem[:-3]
-            base = eq.parent
             cases.append(
                 Case(
                     case_name=f"fixture_{_safe_name(model)}",
                     source_kind="workspace-fixture",
                     eq=eq,
-                    tp=base / f"{model}_TP.xml" if (base / f"{model}_TP.xml").is_file() else None,
-                    sv=base / f"{model}_SV.xml" if (base / f"{model}_SV.xml").is_file() else None,
-                    ssh=base / f"{model}_SSH.xml" if (base / f"{model}_SSH.xml").is_file() else None,
-                    dy=base / f"{model}_DY.xml" if (base / f"{model}_DY.xml").is_file() else None,
-                    dl=base / f"{model}_DL.xml" if (base / f"{model}_DL.xml").is_file() else None,
+                    eqbd=_companion_profile(eq, "EQBD"),
+                    tp=_companion_profile(eq, "TP"),
+                    sv=_companion_profile(eq, "SV"),
+                    ssh=_companion_profile(eq, "SSH"),
+                    dy=_companion_profile(eq, "DY"),
+                    dl=_companion_profile(eq, "DL"),
+                    gl=_companion_profile(eq, "GL"),
                 )
             )
         else:
@@ -144,11 +181,14 @@ def discover_cases() -> list[Case]:
             # This covers *-Merged assembled cases as well as standalone cases
             # (e.g. PowerFlow/PowerFlow and PST/*) that use the same naming
             # convention but live outside Merged directories.
+            # Timestamped MicroGrid ``*_EQ_001.xml`` packages are intentionally
+            # excluded from the default matrix (boundary/MAS sprawl); they remain
+            # convertible via ``--input-dir`` / explicit ``--gl``.
             eq_dirs: dict[Path, list[Path]] = {}
             for eq_file in sorted(root.glob("**/*_EQ.xml")):
                 eq_dirs.setdefault(eq_file.parent, []).append(eq_file)
 
-            for dir_path, eq_files_in_dir in sorted(eq_dirs.items()):
+            for _dir_path, eq_files_in_dir in sorted(eq_dirs.items()):
                 for eq in sorted(eq_files_in_dir):
                     model = eq.stem[:-3]
                     cases.append(
@@ -156,11 +196,13 @@ def discover_cases() -> list[Case]:
                             case_name=f"external_{_safe_name(model)}",
                             source_kind="external-cgmes",
                             eq=eq,
-                            tp=dir_path / f"{model}_TP.xml" if (dir_path / f"{model}_TP.xml").is_file() else None,
-                            sv=dir_path / f"{model}_SV.xml" if (dir_path / f"{model}_SV.xml").is_file() else None,
-                            ssh=dir_path / f"{model}_SSH.xml" if (dir_path / f"{model}_SSH.xml").is_file() else None,
-                            dy=dir_path / f"{model}_DY.xml" if (dir_path / f"{model}_DY.xml").is_file() else None,
-                            dl=dir_path / f"{model}_DL.xml" if (dir_path / f"{model}_DL.xml").is_file() else None,
+                            eqbd=_companion_profile(eq, "EQBD"),
+                            tp=_companion_profile(eq, "TP"),
+                            sv=_companion_profile(eq, "SV"),
+                            ssh=_companion_profile(eq, "SSH"),
+                            dy=_companion_profile(eq, "DY"),
+                            dl=_companion_profile(eq, "DL"),
+                            gl=_companion_profile(eq, "GL"),
                         )
                     )
 
@@ -173,16 +215,24 @@ def discover_cases() -> list[Case]:
 
 def variants_for_case(case: Case, *, include_ssh_dy: bool) -> list[tuple[str, list[str]]]:
     base = ["convert", "--eq", str(case.eq)]
+    if case.eqbd:
+        base += ["--eqbd", str(case.eqbd)]
     if case.tp:
         base += ["--tp", str(case.tp)]
     if case.sv:
         base += ["--sv", str(case.sv)]
-    if include_ssh_dy and case.ssh:
+    # SSH carries operating-point P/Q schedules required for solvable cases.
+    # Always include when present (not gated behind --include-ssh-dy).
+    if case.ssh:
         base += ["--ssh", str(case.ssh)]
     if include_ssh_dy and case.dy:
         base += ["--dy", str(case.dy)]
     if case.dl:
         base += ["--dl", str(case.dl)]
+    # GL is always included when present — bus GIS is additive and does not
+    # require the strict SSH/DY multi-profile gate.
+    if case.gl:
+        base += ["--gl", str(case.gl)]
 
     variants: list[tuple[str, list[str]]] = []
     variants.append(("topological", base.copy()))

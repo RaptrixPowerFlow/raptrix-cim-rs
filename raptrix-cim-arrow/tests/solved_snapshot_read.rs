@@ -390,15 +390,15 @@ fn reads_synthetic_v0124_solved_snapshot_layout() -> Result<()> {
 
 #[test]
 fn rejects_unknown_future_version() -> Result<()> {
-    let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_v0124_snapshot_gate");
+    let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_v0125_snapshot_gate");
     std::fs::create_dir_all(&tmp_dir)?;
     let path = tmp_dir.join("synthetic_future_version.rpf");
-    write_synthetic_solved_snapshot(&path, "v0.12.5")?;
+    write_synthetic_solved_snapshot(&path, "v0.12.6")?;
 
     let err = read_rpf_tables(&path).expect_err("future versions must be rejected");
     let message = format!("{err:#}");
     assert!(
-        message.contains("unsupported RPF version 'v0.12.5'"),
+        message.contains("unsupported RPF version 'v0.12.6'"),
         "unexpected error: {message}"
     );
     Ok(())

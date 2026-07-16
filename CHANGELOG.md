@@ -9,6 +9,33 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 
 Copyright (c) 2026 Raptrix Power
 
+## Converter 0.5.7 — RPF v0.12.5 bus GIS + patch-based re-export (2026-07-16)
+
+### Converter release: Crate version 0.5.7 (raptrix-cim-arrow) / 0.5.7 (raptrix-cim-rs) | Arrow schema v0.12.5
+
+### Added
+
+- **Nullable trailing `buses.latitude` / `buses.longitude`** (`Float64`, WGS84 degrees) for operator-oriented relative layout.
+- **CIM GeographicalLocation (GL) ingest**: `--gl` / auto-detect `_GL`; `Location` + `PositionPoint` parsed and resolved to buses.
+- **ACLineSegment endpoint → bus mapping**: first/last route vertices assign to from/to buses via Terminal sequence 1/2; multiple contributions averaged.
+- Direct Location attach to `TopologicalNode` / `ConnectivityNode` bus keys still supported when present.
+- **EQBD (Equipment Boundary) ingest**: `--eqbd` / auto-detect `_EQBD` merges boundary `BaseVoltage` definitions required by many ENTSO-E CAS Merged cases (SmallGrid, FullGrid, MiniGrid, Svedala).
+- **SSH schedule merge**: SSH `SynchronousMachine` / `EnergyConsumer` operating-point P/Q and `Equipment.inService` overlay EQ identity (field-level merge). CGMES load-sign `RotatingMachine.p/q` converted to RPF generator-sign. Matrix always includes SSH when present.
+- **Patch-based re-export** (`raptrix_cim_arrow::apply_rpf_patch`, C ABI `apply_rpf_patch_c`): merges solver-owned tables from a patch file onto a source `.rpf` so converter-owned tables (GIS, contingencies, RAS/SPS, diagrams, and unknown future tables) survive a solve → re-export cycle. Buffer-reuse passthrough for untouched tables; `metadata` merged column-wise (patch non-null wins); solver file-level metadata keys overlay the source.
+- **Table ownership contract** (`table_ownership`, `is_solver_root_metadata_key`): classifies every root table as converter-owned, solver-owned, or shared. Unknown tables default to converter-owned passthrough so older solvers cannot drop newer file richness. See `docs/schema-contract.md` § Table Ownership.
+
+### Changed
+
+- **`SUPPORTED_RPF_VERSIONS`** accepts **`v0.12.5`** / **`0.12.5`** and retains **`v0.12.4`**–**`v0.12.1`**.
+- `RPF_VERSION` / `SCHEMA_VERSION` / `BRANDING` advanced to v0.12.5.
+- Regression matrix includes GL companions when present (not gated behind `--include-ssh-dy`).
+
+### Compatibility
+
+- **No re-export required for readers.** v0.12.4 bus tables remain readable; absent geo columns are null-padded.
+- Populated coordinates require re-export with a GL profile on cases that carry GeographicalLocation data (e.g. SmallGrid).
+- Patch-based re-export is additive: existing single-shot `write_root_rpf*` writers are unchanged.
+
 ## Converter 0.5.6 — RPF v0.12.4 solved-snapshot read support (2026-07-02)
 
 ### Converter release: Crate version 0.5.6 (raptrix-cim-arrow) / 0.5.6 (raptrix-cim-rs) | Arrow schema v0.12.4

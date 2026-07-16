@@ -265,8 +265,10 @@ struct RawEnergyConsumer<'a> {
     p_mw: Option<f64>,
     #[serde(rename = "EnergyConsumer.q", default)]
     q_mvar: Option<f64>,
+    #[serde(rename = "Equipment.inService", default)]
+    in_service: Option<bool>,
     #[serde(rename = "Equipment.normallyInService", default)]
-    status: Option<bool>,
+    normally_in_service: Option<bool>,
 }
 
 impl<'de: 'a, 'a> Deserialize<'de> for EnergyConsumer<'a> {
@@ -292,7 +294,7 @@ impl<'de: 'a, 'a> Deserialize<'de> for EnergyConsumer<'a> {
             },
             p_mw: raw.p_mw,
             q_mvar: raw.q_mvar,
-            status: raw.status,
+            status: raw.in_service.or(raw.normally_in_service),
         })
     }
 }
@@ -937,12 +939,17 @@ pub struct SynchronousMachine<'a> {
 
     /// Optional IBR subtype from CIM payload.
     pub ibr_subtype: Option<Cow<'a, str>>,
+
+    /// In-service status if provided (EQ `normallyInService` / SSH `inService`).
+    pub status: Option<bool>,
 }
 
 #[derive(Deserialize)]
 struct RawSynchronousMachine<'a> {
-    #[serde(rename = "@ID", borrow)]
-    m_rid: Cow<'a, str>,
+    #[serde(rename = "@ID", default, borrow)]
+    m_rid: Option<Cow<'a, str>>,
+    #[serde(rename = "@about", default, borrow)]
+    about: Option<Cow<'a, str>>,
     #[serde(rename = "IdentifiedObject.name", default, borrow)]
     name: Option<Cow<'a, str>>,
     #[serde(rename = "IdentifiedObject.description", default, borrow)]
@@ -951,6 +958,10 @@ struct RawSynchronousMachine<'a> {
     p_sched_mw: Option<f64>,
     #[serde(rename = "RotatingMachine.q", default)]
     q_sched_mvar: Option<f64>,
+    #[serde(rename = "Equipment.inService", default)]
+    in_service: Option<bool>,
+    #[serde(rename = "Equipment.normallyInService", default)]
+    normally_in_service: Option<bool>,
     #[serde(rename = "GeneratingUnit.minOperatingP", default)]
     p_min_mw: Option<f64>,
     #[serde(rename = "GeneratingUnit.maxOperatingP", default)]
@@ -990,9 +1001,16 @@ struct RawSynchronousMachine<'a> {
 impl<'de: 'a, 'a> Deserialize<'de> for SynchronousMachine<'a> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let raw = RawSynchronousMachine::deserialize(deserializer)?;
+        let m_rid = if let Some(m_rid) = raw.m_rid {
+            strip_hash_cow(m_rid)
+        } else if let Some(about) = raw.about {
+            strip_hash_cow(about)
+        } else {
+            return Err(serde::de::Error::missing_field("@ID or @about"));
+        };
         Ok(SynchronousMachine {
             base: BaseAttributes {
-                m_rid: raw.m_rid,
+                m_rid,
                 name: raw.name,
                 description: raw.description,
             },
@@ -1014,6 +1032,7 @@ impl<'de: 'a, 'a> Deserialize<'de> for SynchronousMachine<'a> {
             market_resource_id: raw.market_resource_id,
             is_ibr: raw.is_ibr,
             ibr_subtype: raw.ibr_subtype,
+            status: raw.in_service.or(raw.normally_in_service),
         })
     }
 }
@@ -1107,6 +1126,7 @@ impl<'a> SynchronousMachine<'a> {
             market_resource_id: None,
             is_ibr: None,
             ibr_subtype: None,
+            status: None,
         }
     }
 
@@ -1134,6 +1154,7 @@ impl<'a> SynchronousMachine<'a> {
                 .map(|value| Cow::Owned(value.into_owned())),
             is_ibr: self.is_ibr,
             ibr_subtype: self.ibr_subtype.map(|value| Cow::Owned(value.into_owned())),
+            status: self.status,
         }
     }
 }

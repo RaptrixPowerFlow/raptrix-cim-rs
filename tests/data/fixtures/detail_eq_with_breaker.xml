@@ -2,11 +2,17 @@
 <rdf:RDF
   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
   xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#">
+  <cim:BaseVoltage rdf:ID="BV230">
+    <cim:IdentifiedObject.name>230</cim:IdentifiedObject.name>
+    <cim:BaseVoltage.nominalVoltage>230</cim:BaseVoltage.nominalVoltage>
+  </cim:BaseVoltage>
+
   <cim:ConnectivityNode rdf:ID="N1" />
   <cim:ConnectivityNode rdf:ID="N2" />
 
   <cim:ACLineSegment rdf:ID="L1">
     <IdentifiedObject.name>Line 1</IdentifiedObject.name>
+    <cim:ConductingEquipment.BaseVoltage rdf:resource="#BV230"/>
     <ACLineSegment.r>0.01</ACLineSegment.r>
     <ACLineSegment.x>0.05</ACLineSegment.x>
     <ACLineSegment.bch>0.001</ACLineSegment.bch>

@@ -453,6 +453,10 @@ struct BusRow<'a> {
     qd_load_pu: f64,
     /// v0.9.4: Σ(in-service generator QG) / SBASE (any sign)
     qg_sched_pu: f64,
+    /// v0.12.5: optional WGS84 latitude (degrees)
+    latitude: Option<f64>,
+    /// v0.12.5: optional WGS84 longitude (degrees)
+    longitude: Option<f64>,
 }
 
 const VALIDATION_MODE_TOPOLOGY_ONLY: &str = "topology_only";
@@ -745,6 +749,102 @@ struct DynamicsModelRow<'a> {
 struct Endpoints {
     from_terminal_idx: Option<usize>,
     to_terminal_idx: Option<usize>,
+}
+
+fn merge_synchronous_machine(
+    existing: &mut crate::models::SynchronousMachine<'static>,
+    incoming: crate::models::SynchronousMachine<'static>,
+) {
+    if existing.base.name.is_none() {
+        existing.base.name = incoming.base.name;
+    }
+    if existing.base.description.is_none() {
+        existing.base.description = incoming.base.description;
+    }
+    if incoming.p_sched_mw.is_some() {
+        existing.p_sched_mw = incoming.p_sched_mw;
+    }
+    if incoming.q_sched_mvar.is_some() {
+        existing.q_sched_mvar = incoming.q_sched_mvar;
+    }
+    if incoming.p_min_mw.is_some() {
+        existing.p_min_mw = incoming.p_min_mw;
+    }
+    if incoming.p_max_mw.is_some() {
+        existing.p_max_mw = incoming.p_max_mw;
+    }
+    if incoming.q_min_mvar.is_some() {
+        existing.q_min_mvar = incoming.q_min_mvar;
+    }
+    if incoming.q_max_mvar.is_some() {
+        existing.q_max_mvar = incoming.q_max_mvar;
+    }
+    if incoming.mbase_mva.is_some() {
+        existing.mbase_mva = incoming.mbase_mva;
+    }
+    if incoming.h.is_some() {
+        existing.h = incoming.h;
+    }
+    if incoming.xd_prime.is_some() {
+        existing.xd_prime = incoming.xd_prime;
+    }
+    if incoming.d.is_some() {
+        existing.d = incoming.d;
+    }
+    if incoming.uol_mw.is_some() {
+        existing.uol_mw = incoming.uol_mw;
+    }
+    if incoming.lol_mw.is_some() {
+        existing.lol_mw = incoming.lol_mw;
+    }
+    if incoming.unit_type.is_some() {
+        existing.unit_type = incoming.unit_type;
+    }
+    if incoming.fuel_type.is_some() {
+        existing.fuel_type = incoming.fuel_type;
+    }
+    if incoming.owner_mrid.is_some() {
+        existing.owner_mrid = incoming.owner_mrid;
+    }
+    if incoming.market_resource_id.is_some() {
+        existing.market_resource_id = incoming.market_resource_id;
+    }
+    if incoming.is_ibr.is_some() {
+        existing.is_ibr = incoming.is_ibr;
+    }
+    if incoming.ibr_subtype.is_some() {
+        existing.ibr_subtype = incoming.ibr_subtype;
+    }
+    if incoming.status.is_some() {
+        existing.status = incoming.status;
+    }
+}
+
+fn merge_energy_consumer(
+    existing: &mut crate::models::EnergyConsumer<'static>,
+    incoming: crate::models::EnergyConsumer<'static>,
+) {
+    if existing.base.name.is_none() {
+        existing.base.name = incoming.base.name;
+    }
+    if existing.base.description.is_none() {
+        existing.base.description = incoming.base.description;
+    }
+    if incoming.p_mw.is_some() {
+        existing.p_mw = incoming.p_mw;
+    }
+    if incoming.q_mvar.is_some() {
+        existing.q_mvar = incoming.q_mvar;
+    }
+    if incoming.status.is_some() {
+        existing.status = incoming.status;
+    }
+}
+
+/// CGMES `RotatingMachine.p/q` uses load sign convention (negative = generating).
+/// RPF `generators.p_sched_mw` / `q_sched_mvar` use generator sign (positive = generating).
+fn cim_rotating_machine_to_gen_sched_mw(cim_load_sign: f64) -> f64 {
+    -cim_load_sign
 }
 
 fn non_empty_name(name: &str) -> Option<&str> {
@@ -2258,11 +2358,14 @@ fn infer_dynamics_model_type(generator: &GenRow<'_>) -> &'static str {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CgmesProfileKind {
     Eq,
+    /// Equipment Boundary (EQBD) — shared BaseVoltage / boundary ConnectivityNode defs.
+    Eqbd,
     Tp,
     Sv,
     Ssh,
     Dy,
     Dl,
+    Gl,
     Unknown,
 }
 
@@ -2272,7 +2375,10 @@ fn infer_profile_kind_from_path(path: &str) -> CgmesProfileKind {
     };
     let upper = file_name.to_ascii_uppercase();
 
-    if upper.contains("_EQ") {
+    // EQBD must be matched before EQ (`_EQBD` contains the `_EQ` substring).
+    if upper.contains("_EQBD") || upper.contains("_EQ_BD") {
+        CgmesProfileKind::Eqbd
+    } else if upper.contains("_EQ") {
         CgmesProfileKind::Eq
     } else if upper.contains("_TP") {
         CgmesProfileKind::Tp
@@ -2284,6 +2390,8 @@ fn infer_profile_kind_from_path(path: &str) -> CgmesProfileKind {
         CgmesProfileKind::Dy
     } else if upper.contains("_DL") {
         CgmesProfileKind::Dl
+    } else if upper.contains("_GL") {
+        CgmesProfileKind::Gl
     } else {
         CgmesProfileKind::Unknown
     }
@@ -2491,6 +2599,19 @@ fn parse_eq_components_for_path(
             diagram_points = parsed_diagram_points;
         }
         CgmesProfileKind::Ssh => {
+            // Steady-state hypothesis: overlay schedules / in-service flags onto EQ
+            // equipment identity. Structural EQ fields remain authoritative.
+            machines = parser::synchronous_machines_from_reader(Cursor::new(&bytes))
+                .with_context(|| {
+                    format!(
+                        "failed to extract SynchronousMachine SSH schedules from CGMES input file at {path}"
+                    )
+                })?;
+            loads = parser::energy_consumers_from_reader(Cursor::new(&bytes)).with_context(|| {
+                format!(
+                    "failed to extract EnergyConsumer SSH schedules from CGMES input file at {path}"
+                )
+            })?;
             fixed_shunts = parser::fixed_shunts_from_reader(Cursor::new(&bytes)).with_context(|| {
                 format!(
                     "failed to extract LinearShuntCompensator elements from CGMES input file at {path}"
@@ -2509,6 +2630,16 @@ fn parse_eq_components_for_path(
                     )
                 })?;
         }
+        CgmesProfileKind::Eqbd => {
+            // Boundary packages commonly hold BaseVoltage definitions referenced by TP
+            // TopologicalNode.BaseVoltage but omitted from the MAS EQ file.
+            base_voltages = parser::base_voltage_specs_from_reader(Cursor::new(&bytes))
+                .with_context(|| {
+                    format!("failed to extract BaseVoltage elements from EQBD input file at {path}")
+                })?;
+        }
+        // GL is ingested opportunistically in parse_eq_topology_rows (all paths).
+        CgmesProfileKind::Gl => {}
     }
 
     Ok((
@@ -2676,6 +2807,23 @@ fn parse_eq_topology_rows(
         }
     }
 
+    // Opportunistic GL ingest: Location + PositionPoint per PowerSystemResource.
+    // Resolved to bus keys later (direct bus attach, or ACLineSegment endpoints).
+    let mut resource_geo_by_mrid: HashMap<String, Vec<parser::GeoPoint>> = HashMap::new();
+    for path in cgmes_paths {
+        let file = match std::fs::File::open(path) {
+            Ok(file) => file,
+            Err(_) => continue,
+        };
+        if let Ok(geo_rows) = parser::resource_geo_from_reader(file) {
+            for row in geo_rows {
+                resource_geo_by_mrid
+                    .entry(row.resource_rdf_id)
+                    .or_insert(row.points);
+            }
+        }
+    }
+
     if lines.is_empty() {
         bail!("no ACLineSegment elements found across supplied CGMES paths")
     }
@@ -2683,19 +2831,35 @@ fn parse_eq_topology_rows(
         bail!("no Terminal elements found across supplied CGMES paths")
     }
 
-    // Merge duplicate equipment payloads across EQ/SSH paths with last-wins
-    // semantics based on input path order.
+    // Merge duplicate equipment payloads across EQ/SSH paths. EQ usually provides
+    // identity/limits; SSH overlays operating-point schedules (field-level Some wins).
     let mut machine_by_mrid: HashMap<String, crate::models::SynchronousMachine<'static>> =
         HashMap::new();
     for machine in machines {
-        machine_by_mrid.insert(machine.base.m_rid.as_ref().to_owned(), machine);
+        let key = machine.base.m_rid.as_ref().to_owned();
+        match machine_by_mrid.entry(key) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(machine);
+            }
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                merge_synchronous_machine(entry.get_mut(), machine);
+            }
+        }
     }
     let mut machines: Vec<crate::models::SynchronousMachine<'static>> =
         machine_by_mrid.into_values().collect();
 
     let mut load_by_mrid: HashMap<String, crate::models::EnergyConsumer<'static>> = HashMap::new();
     for load in loads {
-        load_by_mrid.insert(load.base.m_rid.as_ref().to_owned(), load);
+        let key = load.base.m_rid.as_ref().to_owned();
+        match load_by_mrid.entry(key) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(load);
+            }
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                merge_energy_consumer(entry.get_mut(), load);
+            }
+        }
     }
     let mut loads: Vec<crate::models::EnergyConsumer<'static>> =
         load_by_mrid.into_values().collect();
@@ -2885,6 +3049,81 @@ fn parse_eq_topology_rows(
         bus_name_by_key.insert(*bus_key, resolved);
     }
 
+    let mut endpoints_by_line: HashMap<&str, Endpoints> = HashMap::new();
+    for (terminal_idx, terminal) in terminals.iter().enumerate() {
+        let entry = endpoints_by_line
+            .entry(terminal.line_mrid.as_str())
+            .or_default();
+        match terminal.sequence_number {
+            1 => entry.from_terminal_idx = Some(terminal_idx),
+            2 => entry.to_terminal_idx = Some(terminal_idx),
+            _ => {}
+        }
+    }
+
+    // Resolve GL resources → bus WGS84 coords.
+    // 1) Location on a bus resource (TN/CN mRID): use first PositionPoint.
+    // 2) Location on an ACLineSegment: first point → from bus, last → to bus.
+    // Multiple contributions to the same bus are averaged.
+    let bus_key_set: HashSet<&str> = sorted_bus_keys.iter().copied().collect();
+    let mut bus_geo_acc: HashMap<String, (f64, f64, u32)> = HashMap::new();
+    let mut accumulate_bus_geo = |bus_key: &str, latitude: f64, longitude: f64| {
+        let entry = bus_geo_acc
+            .entry(bus_key.to_owned())
+            .or_insert((0.0, 0.0, 0));
+        entry.0 += latitude;
+        entry.1 += longitude;
+        entry.2 += 1;
+    };
+    for (resource_mrid, points) in &resource_geo_by_mrid {
+        let Some(first) = points.first() else {
+            continue;
+        };
+        if bus_key_set.contains(resource_mrid.as_str()) {
+            accumulate_bus_geo(resource_mrid.as_str(), first.latitude, first.longitude);
+            continue;
+        }
+        let Some(endpoints) = endpoints_by_line.get(resource_mrid.as_str()).copied() else {
+            continue;
+        };
+        let (Some(from_idx), Some(to_idx)) =
+            (endpoints.from_terminal_idx, endpoints.to_terminal_idx)
+        else {
+            continue;
+        };
+        let from_node = terminals[from_idx].connectivity_node_mrid.as_str();
+        let to_node = terminals[to_idx].connectivity_node_mrid.as_str();
+        let from_bus_key = if use_topological {
+            match conn_to_topo.get(from_node).copied() {
+                Some(value) => value,
+                None => continue,
+            }
+        } else {
+            from_node
+        };
+        let to_bus_key = if use_topological {
+            match conn_to_topo.get(to_node).copied() {
+                Some(value) => value,
+                None => continue,
+            }
+        } else {
+            to_node
+        };
+        let last = points.last().unwrap_or(first);
+        accumulate_bus_geo(from_bus_key, first.latitude, first.longitude);
+        accumulate_bus_geo(to_bus_key, last.latitude, last.longitude);
+    }
+    let bus_geo_by_key: HashMap<String, (f64, f64)> = bus_geo_acc
+        .into_iter()
+        .filter_map(|(bus_key, (sum_lat, sum_lon, count))| {
+            if count == 0 {
+                return None;
+            }
+            let n = f64::from(count);
+            Some((bus_key, (sum_lat / n, sum_lon / n)))
+        })
+        .collect();
+
     let bus_rows: Vec<BusRow<'static>> = sorted_bus_keys
         .iter()
         .map(|bus_key| {
@@ -2921,21 +3160,11 @@ fn parse_eq_topology_rows(
                 bus_uuid: Cow::Owned((*bus_key).to_owned()),
                 qd_load_pu: 0.0,
                 qg_sched_pu: 0.0,
+                latitude: bus_geo_by_key.get(*bus_key).map(|(lat, _)| *lat),
+                longitude: bus_geo_by_key.get(*bus_key).map(|(_, lon)| *lon),
             })
         })
         .collect::<Result<Vec<_>>>()?;
-
-    let mut endpoints_by_line: HashMap<&str, Endpoints> = HashMap::new();
-    for (terminal_idx, terminal) in terminals.iter().enumerate() {
-        let entry = endpoints_by_line
-            .entry(terminal.line_mrid.as_str())
-            .or_default();
-        match terminal.sequence_number {
-            1 => entry.from_terminal_idx = Some(terminal_idx),
-            2 => entry.to_terminal_idx = Some(terminal_idx),
-            _ => {}
-        }
-    }
 
     lines.sort_unstable_by(|left, right| left.base.m_rid.cmp(&right.base.m_rid));
 
@@ -3147,13 +3376,20 @@ fn parse_eq_topology_rows(
             hierarchy_level: Cow::Borrowed("unit"),
             parent_generator_id: None,
             aggregation_count: None,
-            p_sched_mw: machine.p_sched_mw.unwrap_or(0.0),
-            q_sched_mvar: machine.q_sched_mvar.unwrap_or(0.0),
+            // CGMES RotatingMachine.p/q are load-sign; RPF generators are gen-sign.
+            p_sched_mw: machine
+                .p_sched_mw
+                .map(cim_rotating_machine_to_gen_sched_mw)
+                .unwrap_or(0.0),
+            q_sched_mvar: machine
+                .q_sched_mvar
+                .map(cim_rotating_machine_to_gen_sched_mw)
+                .unwrap_or(0.0),
             p_min_mw: machine.p_min_mw.unwrap_or(0.0),
             p_max_mw: machine.p_max_mw.unwrap_or(0.0),
             q_min_mvar: machine.q_min_mvar.unwrap_or(0.0),
             q_max_mvar: machine.q_max_mvar.unwrap_or(0.0),
-            status: true,
+            status: machine.status.unwrap_or(true),
             mbase_mva: machine.mbase_mva.unwrap_or(100.0),
             uol_mw: machine.uol_mw.or(machine.p_max_mw),
             lol_mw: machine.lol_mw.or(machine.p_min_mw),
@@ -4239,6 +4475,8 @@ fn build_buses_batch(rows: &[BusRow<'_>]) -> Result<RecordBatch> {
     let mut bus_uuid_b = StringDictionaryBuilder::<Int32Type>::new();
     let mut qd_load_pu_b = Float64Builder::new();
     let mut qg_sched_pu_b = Float64Builder::new();
+    let mut latitude_b = Float64Builder::new();
+    let mut longitude_b = Float64Builder::new();
 
     for row in rows {
         bus_id_b.append_value(row.bus_id);
@@ -4267,6 +4505,16 @@ fn build_buses_batch(rows: &[BusRow<'_>]) -> Result<RecordBatch> {
         bus_uuid_b.append(row.bus_uuid.as_ref())?;
         qd_load_pu_b.append_value(row.qd_load_pu);
         qg_sched_pu_b.append_value(row.qg_sched_pu);
+        if let Some(lat) = row.latitude {
+            latitude_b.append_value(lat);
+        } else {
+            latitude_b.append_null();
+        }
+        if let Some(lon) = row.longitude {
+            longitude_b.append_value(lon);
+        } else {
+            longitude_b.append_null();
+        }
     }
 
     let arrays: Vec<ArrayRef> = vec![
@@ -4292,6 +4540,8 @@ fn build_buses_batch(rows: &[BusRow<'_>]) -> Result<RecordBatch> {
         Arc::new(bus_uuid_b.finish()) as ArrayRef,
         Arc::new(qd_load_pu_b.finish()) as ArrayRef,
         Arc::new(qg_sched_pu_b.finish()) as ArrayRef,
+        Arc::new(latitude_b.finish()) as ArrayRef,
+        Arc::new(longitude_b.finish()) as ArrayRef,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build buses record batch")

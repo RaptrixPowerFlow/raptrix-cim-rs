@@ -42,6 +42,12 @@ void free_rpf_case_health_json(char* json);
 /* Last error on the calling thread; valid until the next FFI call on that thread. */
 const char* rpf_case_health_last_error(void);
 
+/* Merge solver-owned tables from patch_rpf into source_rpf, writing output_rpf.
+ * Converter-owned tables (GIS, contingencies, RAS, diagrams, unknown tables, …)
+ * always come from source_rpf. Paths must be valid NUL-terminated UTF-8.
+ * Returns 0 on success, -1 on error (see rpf_case_health_last_error). */
+int apply_rpf_patch_c(const char* source_rpf, const char* patch_rpf, const char* output_rpf);
+
 #ifdef __cplusplus
 }
 #endif

@@ -4,6 +4,29 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 
 Copyright (c) 2026 Raptrix Power
 
+## v0.12.5 (additive — no migration required)
+
+### What changed
+
+- **`buses.latitude` / `buses.longitude`**: nullable trailing `Float64` columns (WGS84 degrees) for operator-oriented relative bus layout.
+- **GL profile ingest**: converters accept `--gl` / auto-detect `_GL`. CAS GeographicalLocation data typically attaches to `ACLineSegment` routes; endpoints map to from/to buses.
+- **`SUPPORTED_RPF_VERSIONS`** accepts **`v0.12.5`** / **`0.12.5`** and retains **`v0.12.4`**–**`v0.12.1`**.
+
+### Compatibility
+
+- **No re-export required** for readers. Older bus tables without geo columns are null-padded on read.
+- Re-export with a GL profile is required only when you want populated coordinates in new files.
+
+### Reader upgrade checklist (downstream consumers)
+
+- Accept **`v0.12.5`** / **`0.12.5`** in the RPF version gate; keep the explicit allowlist.
+- Treat `buses.latitude` / `buses.longitude` as optional nullable trailing columns.
+
+### Solve → re-export (patch-based)
+
+- Solvers that load, solve, and re-emit an `.rpf` should overlay their results with `apply_rpf_patch` (C ABI `apply_rpf_patch_c`) rather than rebuilding the file from an in-memory solver projection. This preserves converter-owned tables (GIS, contingencies, RAS/SPS, diagrams, unknown enrichment).
+- Ownership rules are defined in `docs/schema-contract.md` § Table Ownership. No wire-format change; this is a writer/pipeline guideline.
+
 ## v0.12.4 (additive — no migration required)
 
 ### What changed

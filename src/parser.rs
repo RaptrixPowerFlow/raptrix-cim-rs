@@ -243,6 +243,29 @@ pub struct DiagramPointRecord {
     pub y: f64,
 }
 
+/// One WGS84 vertex from a CIM `PositionPoint`.
+///
+/// Convention: `PositionPoint.xPosition` = longitude, `PositionPoint.yPosition` = latitude.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GeoPoint {
+    pub sequence_number: i32,
+    pub latitude: f64,
+    pub longitude: f64,
+}
+
+/// Parsed GL `Location` + `PositionPoint` payload for one PowerSystemResource.
+///
+/// `resource_rdf_id` is the mRID from `Location.PowerSystemResources`. In ENTSO-E
+/// CGMES CAS GeographicalLocation profiles this is typically an `ACLineSegment`
+/// with a multi-point route; some models attach a single point directly to a
+/// bus resource (`TopologicalNode` / `ConnectivityNode`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResourceGeoRecord {
+    pub resource_rdf_id: String,
+    /// Position points sorted by ascending `sequence_number`.
+    pub points: Vec<GeoPoint>,
+}
+
 /// Parsed BaseVoltage payload keyed by mRID.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BaseVoltageSpec {
@@ -900,6 +923,82 @@ pub fn diagram_layout_from_reader<R: Read>(
     Ok((diagrams, objects, points))
 }
 
+/// Parses CIM Geographical Location (`Location` + `PositionPoint`) for GIS layout.
+///
+/// Links each `Location.PowerSystemResources` mRID to its ordered `PositionPoint`
+/// vertices. WGS84: x=longitude, y=latitude. Callers resolve resources to buses
+/// (direct bus attach, or ACLineSegment endpoints: first point → from, last → to).
+pub fn resource_geo_from_reader<R: Read>(mut reader: R) -> Result<Vec<ResourceGeoRecord>> {
+    let mut xml = String::new();
+    reader.read_to_string(&mut xml)?;
+
+    let mut location_to_resource: HashMap<String, String> = HashMap::new();
+    if contains_exact_element_tag(&xml, "cim:Location") {
+        for fragment in extract_elements(&xml, "cim:Location")? {
+            let raw: RawLocation<'_> = from_str(fragment)?;
+            let Some(location_id) = raw.resolved_mrid() else {
+                continue;
+            };
+            let Some(resource) = raw.power_system_resources else {
+                continue;
+            };
+            location_to_resource.insert(location_id, normalize_cgmes_ref(&resource.resource));
+        }
+    }
+
+    let mut points_by_resource: HashMap<String, Vec<GeoPoint>> = HashMap::new();
+    if contains_exact_element_tag(&xml, "cim:PositionPoint") {
+        for fragment in extract_elements(&xml, "cim:PositionPoint")? {
+            let raw: RawGeoPositionPoint = from_str(fragment)?;
+            let Some(location_ref) = raw.location else {
+                continue;
+            };
+            let (Some(x), Some(y)) = (raw.x, raw.y) else {
+                continue;
+            };
+            if !x.is_finite() || !y.is_finite() {
+                continue;
+            }
+            let location_id = normalize_cgmes_ref(&location_ref.resource);
+            let Some(resource_rdf_id) = location_to_resource.get(&location_id).cloned() else {
+                continue;
+            };
+            points_by_resource
+                .entry(resource_rdf_id)
+                .or_default()
+                .push(GeoPoint {
+                    sequence_number: raw.sequence_number.unwrap_or(0),
+                    // WGS84 geographic: x=lon, y=lat
+                    latitude: y,
+                    longitude: x,
+                });
+        }
+    }
+
+    let mut out: Vec<ResourceGeoRecord> = points_by_resource
+        .into_iter()
+        .map(|(resource_rdf_id, mut points)| {
+            points.sort_unstable_by(|left, right| {
+                left.sequence_number
+                    .cmp(&right.sequence_number)
+                    .then_with(|| {
+                        left.longitude
+                            .total_cmp(&right.longitude)
+                            .then_with(|| left.latitude.total_cmp(&right.latitude))
+                    })
+            });
+            // Drop duplicate sequence numbers, keeping the first after sort.
+            points.dedup_by(|a, b| a.sequence_number == b.sequence_number);
+            ResourceGeoRecord {
+                resource_rdf_id,
+                points,
+            }
+        })
+        .collect();
+    out.sort_unstable_by(|left, right| left.resource_rdf_id.cmp(&right.resource_rdf_id));
+    Ok(out)
+}
+
 /// Parses selected DY profile model blocks and resolves attached equipment mRID.
 ///
 /// This first-pass parser extracts dynamic model identity and the equipment link
@@ -1415,6 +1514,40 @@ struct RawDiagramObjectPoint {
 }
 
 #[derive(Debug, Deserialize)]
+struct RawLocation<'a> {
+    #[serde(rename = "@ID", default, borrow)]
+    m_rid: Option<Cow<'a, str>>,
+    #[serde(rename = "@about", default, borrow)]
+    about: Option<Cow<'a, str>>,
+    #[serde(rename = "Location.PowerSystemResources", default)]
+    power_system_resources: Option<RdfResourceRef>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawGeoPositionPoint {
+    #[serde(rename = "PositionPoint.Location", default)]
+    location: Option<RdfResourceRef>,
+    #[serde(rename = "PositionPoint.sequenceNumber", default)]
+    sequence_number: Option<i32>,
+    #[serde(rename = "PositionPoint.xPosition", default)]
+    x: Option<f64>,
+    #[serde(rename = "PositionPoint.yPosition", default)]
+    y: Option<f64>,
+}
+
+impl RawLocation<'_> {
+    fn resolved_mrid(&self) -> Option<String> {
+        if let Some(mrid) = &self.m_rid {
+            return Some(normalize_cgmes_ref(mrid));
+        }
+        if let Some(about) = &self.about {
+            return Some(normalize_cgmes_ref(about));
+        }
+        None
+    }
+}
+
+#[derive(Debug, Deserialize)]
 struct RawDyModel<'a> {
     #[serde(rename = "DynamicsFunctionBlock.PowerSystemResource", default)]
     power_system_resource: Option<RdfResourceRef>,
@@ -1901,5 +2034,63 @@ mod tests {
         let params: BTreeMap<_, _> = rows[0].params.iter().cloned().collect();
         assert_eq!(params.get("k_gain"), Some(&2.5));
         assert_eq!(params.get("t_open_s"), Some(&0.3));
+    }
+
+    #[test]
+    fn parse_resource_geo_single_point_on_bus_resource() {
+        let xml = r##"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/CIM100#">
+    <cim:Location rdf:ID="LOC1">
+        <cim:Location.PowerSystemResources rdf:resource="#TN_NORTH"/>
+    </cim:Location>
+    <cim:PositionPoint>
+        <cim:PositionPoint.Location rdf:resource="#LOC1"/>
+        <cim:PositionPoint.sequenceNumber>1</cim:PositionPoint.sequenceNumber>
+        <cim:PositionPoint.xPosition>-97.75</cim:PositionPoint.xPosition>
+        <cim:PositionPoint.yPosition>32.85</cim:PositionPoint.yPosition>
+    </cim:PositionPoint>
+</rdf:RDF>"##;
+
+        let rows = resource_geo_from_reader(xml.as_bytes()).expect("parse should succeed");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].resource_rdf_id, "TN_NORTH");
+        assert_eq!(rows[0].points.len(), 1);
+        assert!((rows[0].points[0].longitude - (-97.75)).abs() < 1e-9);
+        assert!((rows[0].points[0].latitude - 32.85).abs() < 1e-9);
+    }
+
+    #[test]
+    fn parse_resource_geo_line_route_keeps_ordered_endpoints() {
+        let xml = r##"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/CIM100#">
+    <cim:Location rdf:ID="LOC_LINE">
+        <cim:Location.PowerSystemResources rdf:resource="#LINE_A"/>
+    </cim:Location>
+    <cim:PositionPoint>
+        <cim:PositionPoint.Location rdf:resource="#LOC_LINE"/>
+        <cim:PositionPoint.sequenceNumber>3</cim:PositionPoint.sequenceNumber>
+        <cim:PositionPoint.xPosition>-3.0</cim:PositionPoint.xPosition>
+        <cim:PositionPoint.yPosition>53.2</cim:PositionPoint.yPosition>
+    </cim:PositionPoint>
+    <cim:PositionPoint>
+        <cim:PositionPoint.Location rdf:resource="#LOC_LINE"/>
+        <cim:PositionPoint.sequenceNumber>1</cim:PositionPoint.sequenceNumber>
+        <cim:PositionPoint.xPosition>-4.35</cim:PositionPoint.xPosition>
+        <cim:PositionPoint.yPosition>53.23</cim:PositionPoint.yPosition>
+    </cim:PositionPoint>
+    <cim:PositionPoint>
+        <cim:PositionPoint.Location rdf:resource="#LOC_LINE"/>
+        <cim:PositionPoint.sequenceNumber>2</cim:PositionPoint.sequenceNumber>
+        <cim:PositionPoint.xPosition>-3.57</cim:PositionPoint.xPosition>
+        <cim:PositionPoint.yPosition>53.24</cim:PositionPoint.yPosition>
+    </cim:PositionPoint>
+</rdf:RDF>"##;
+
+        let rows = resource_geo_from_reader(xml.as_bytes()).expect("parse should succeed");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].resource_rdf_id, "LINE_A");
+        assert_eq!(rows[0].points.len(), 3);
+        assert_eq!(rows[0].points[0].sequence_number, 1);
+        assert!((rows[0].points[0].longitude - (-4.35)).abs() < 1e-9);
+        assert_eq!(rows[0].points[2].sequence_number, 3);
+        assert!((rows[0].points[2].longitude - (-3.0)).abs() < 1e-9);
     }
 }
