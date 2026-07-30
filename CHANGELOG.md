@@ -12,6 +12,7 @@ Copyright (c) 2026 Raptrix Power
 ## Unreleased
 
 ### Added
+
 - **`raptrix-cim-arrow::computational_load`**: typed profile rows, `build_computational_load_profiles_batch`, `patch_metadata_computational_load_mode`, and `validate_computational_load_profiles_batch` (exactly one of bus/load id, priority 1–5, percentiles 0–100, closed facility_class). Used by Raptrix Studio desktop authoring.
 
 ## Converter 0.6.0 — RPF v0.13.0 clean-cut contract (2026-07-29)
@@ -21,6 +22,7 @@ Copyright (c) 2026 Raptrix Power
 **Breaking clean cut.** Writers emit only **v0.13.0**. Readers accept **only** `v0.13.0` / `0.13.0`. No dual-read of pre-0.13 files; no upgrade CLI.
 
 #### Wire changes
+
 - **Remove** required `metadata.psse_version`.
 - **Add** optional provenance: `source_format`, `source_format_version`, `source_identity_scheme`.
 - **Rename** `original_sentinel_case_id` → `baseline_source_case_id`.
@@ -35,6 +37,7 @@ Copyright (c) 2026 Raptrix Power
 - Units: intentional hybrid retained (network PU; generators MW/MVAr; CL profile MW physical).
 
 #### Docs
+
 - See `docs/schema-contract.md` (v0.13.0) and `MIGRATION.md`.
 
 ## Converter 0.5.7 — RPF v0.12.5 bus GIS + patch-based re-export (2026-07-16)
