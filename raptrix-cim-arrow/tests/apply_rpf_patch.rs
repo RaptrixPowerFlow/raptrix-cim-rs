@@ -14,8 +14,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use arrow::array::{
-    Array, ArrayRef, Float32Array, Float64Array, Int8Array, Int32Array, StringArray,
-    StringDictionaryBuilder,
+    Array, ArrayRef, Float32Array, Float64Array, Int32Array, StringArray, StringDictionaryBuilder,
 };
 use arrow::datatypes::Int32Type;
 use arrow::record_batch::RecordBatch;
@@ -37,13 +36,15 @@ fn empty_canonical_batches() -> HashMap<&'static str, RecordBatch> {
 fn one_bus_batch(lat: Option<f64>, lon: Option<f64>) -> Result<RecordBatch> {
     let mut name = StringDictionaryBuilder::<Int32Type>::new();
     name.append("NORTH")?;
+    let mut bus_type = StringDictionaryBuilder::<Int32Type>::new();
+    bus_type.append("PQ")?;
     let mut uuid = StringDictionaryBuilder::<Int32Type>::new();
     uuid.append("bus-uuid-1")?;
 
     let columns: Vec<ArrayRef> = vec![
         Arc::new(Int32Array::from(vec![1])),
         Arc::new(name.finish()),
-        Arc::new(Int8Array::from(vec![1])),
+        Arc::new(bus_type.finish()),
         Arc::new(Float64Array::from(vec![0.0])),
         Arc::new(Float64Array::from(vec![0.0])),
         Arc::new(Float64Array::from(vec![1.0])),

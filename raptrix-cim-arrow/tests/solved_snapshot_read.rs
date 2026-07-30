@@ -7,7 +7,7 @@ Copyright (c) 2026 Raptrix Power
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! v0.12.4 solved-snapshot read-compatibility tests.
+//! Solved-snapshot dialect read-compatibility tests (v0.13.0 contract).
 //!
 //! Current PowerFlow solved-snapshot exports differ from the canonical writer
 //! layout in documented, read-tolerated ways:
@@ -15,13 +15,15 @@ Copyright (c) 2026 Raptrix Power
 //! - root tables are ordered differently (extension tables trail the
 //!   solved-state tables) — readers match root columns by name;
 //! - nested list items carry different field names / nullability;
-//! - the `metadata` table ends at `computational_load_mode` (35 columns);
+//! - the `metadata` table may omit trailing baseline provenance columns
+//!   (null-padded on read);
 //! - `multi_section_lines`, `dc_lines_2w`, and `switched_shunt_banks` use the
 //!   solved-snapshot dialect layouts;
 //! - optional `q_limits_solved` and `feasibility_certificate_buses` tables are
 //!   appended.
 //!
 //! The fixture built here is fully synthetic (no real network data).
+//! Pre-v0.13.0 version stamps are rejected (clean-cut gate).
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -105,11 +107,16 @@ fn write_synthetic_solved_snapshot(path: &std::path::Path, version: &str) -> Res
     let canonical = |name: &str| -> Vec<Field> {
         snapshotize_schema(&table_schema(name).unwrap_or_else(|| panic!("schema for {name}")))
     };
-    // metadata ends at computational_load_mode (35 columns) in snapshot exports.
-    let metadata_35: Vec<Field> = snapshotize_schema(&metadata_schema())
-        .into_iter()
-        .take(35)
-        .collect();
+    // Snapshot exports may omit trailing baseline provenance (fields after computational_load_mode).
+    let metadata_through_cl_mode: Vec<Field> = {
+        let full = snapshotize_schema(&metadata_schema());
+        let end = full
+            .iter()
+            .position(|f| f.name() == "computational_load_mode")
+            .map(|i| i + 1)
+            .unwrap_or(full.len());
+        full.into_iter().take(end).collect()
+    };
     let solved_prefix = |schema: &Schema, count: usize| -> Vec<Field> {
         snapshotize_schema(schema).into_iter().take(count).collect()
     };
@@ -119,7 +126,7 @@ fn write_synthetic_solved_snapshot(path: &std::path::Path, version: &str) -> Res
     let tables = vec![
         FixtureTable {
             name: "metadata",
-            fields: metadata_35,
+            fields: metadata_through_cl_mode,
             rows: 1,
             overrides: vec![],
         },
@@ -310,11 +317,11 @@ fn write_synthetic_solved_snapshot(path: &std::path::Path, version: &str) -> Res
 }
 
 #[test]
-fn reads_synthetic_v0124_solved_snapshot_layout() -> Result<()> {
-    let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_v0124_snapshot_read");
+fn reads_synthetic_v0130_solved_snapshot_layout() -> Result<()> {
+    let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_v0130_snapshot_read");
     std::fs::create_dir_all(&tmp_dir)?;
-    let path = tmp_dir.join("synthetic_v0124_solved_snapshot.rpf");
-    write_synthetic_solved_snapshot(&path, "v0.12.4")?;
+    let path = tmp_dir.join("synthetic_v0130_solved_snapshot.rpf");
+    write_synthetic_solved_snapshot(&path, "v0.13.0")?;
 
     let tables = read_rpf_tables(&path)?;
     let by_name: HashMap<&str, &RecordBatch> = tables
@@ -335,12 +342,17 @@ fn reads_synthetic_v0124_solved_snapshot_layout() -> Result<()> {
     let branches = by_name.get("branches").context("branches missing")?;
     assert_eq!(branches.num_rows(), 2);
 
-    // 35-column snapshot metadata reconstructs to the 45-column canonical shape
-    // with null-padded trailing provenance columns.
+    // Truncated snapshot metadata reconstructs to the full canonical shape
+    // with null-padded trailing baseline provenance columns.
     let metadata = by_name.get("metadata").context("metadata missing")?;
     assert_eq!(metadata.num_rows(), 1);
-    assert_eq!(metadata.schema().fields().len(), 45);
-    for index in 35..45 {
+    let full_len = metadata_schema().fields().len();
+    assert_eq!(metadata.schema().fields().len(), full_len);
+    let cl_idx = metadata
+        .schema()
+        .index_of("computational_load_mode")
+        .context("computational_load_mode")?;
+    for index in (cl_idx + 1)..full_len {
         assert_eq!(
             metadata.column(index).null_count(),
             metadata.num_rows(),

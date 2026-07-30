@@ -3,11 +3,43 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 Copyright (c) 2026 Raptrix Power
 -->
 
-# Schema Contract (Locked contract: v0.12.5 — CGMES 3.0+ Only)
+# Schema Contract (Locked contract: v0.13.0 — CGMES 3.0+ Only)
 
 This repository is the authoritative source of truth for the Raptrix Power Interchange (`.rpf`) wire contract used by CIM-first conversion pipelines.
 
-**v0.12.5** is the current contract release. `SUPPORTED_RPF_VERSIONS` accepts **`v0.12.5`** / **`0.12.5`** and retains **`v0.12.4`**–**`v0.12.1`** for backward reads.
+**v0.13.0** is the current contract release. `SUPPORTED_RPF_VERSIONS` accepts **only** **`v0.13.0`** / **`0.13.0`** (clean cut — no pre-0.13 dual-read).
+
+## Identity model (hybrid solver flat-profile)
+
+`.rpf` is a **denormalized solver flat-profile**, not a pure CGMES mRID join graph:
+
+- **Dense `Int32 bus_id`** is the relational foreign key used by solvers, contingencies, and RAS action targets.
+- **`buses.bus_uuid`** is required; equipment **`mrid`** is optional (nullable) and must not be required for PSS/E/PSLF ingest.
+- Optional file metadata: `rpf.identity.model = hybrid_solver_flat_v1`.
+- Optional `metadata.source_identity_scheme`: `dense_bus_id` \| `mrid` \| `mixed` \| `synthetic_mrid`.
+
+## Units matrix (intentional hybrid)
+
+| Domain | Convention |
+| --- | --- |
+| Bus P/Q, ZIP loads, branch r/x/b | PU on `metadata.base_mva` |
+| Generator setpoints / limits | **MW / MVAr** |
+| `computational_load_profiles` power fields | **Physical MW** |
+| Classical `xd_prime` | pu on machine base `mbase_mva` |
+| GIS lat/lon | WGS84 degrees (Float64) |
+
+## v0.13.0 Breaking Changes
+
+- **Remove** required `metadata.psse_version`.
+- **Add** optional `source_format` (Dictionary: `psse_raw` \| `pslf_epc` \| `cgmes` \| `powerworld` \| `rpf` \| `other`), `source_format_version` (Utf8), `source_identity_scheme` (Dictionary).
+- **Rename** `original_sentinel_case_id` → `baseline_source_case_id`.
+- **Timestamps** (`timestamp_utc`, `snapshot_timestamp_utc`, `sal_enhancement_timestamp`, `scenario_context.created_timestamp_utc`): Arrow `Timestamp(Microsecond, Some("UTC"))`.
+- **`buses.type`**: Dictionary tokens `PQ` \| `PV` \| `Slack` (not Int8 1/2/3).
+- **`generators.controlled_bus_id`**: nullable Int32; **null = local regulation**.
+- Optional **`mrid`** on `loads`, `fixed_shunts`, `switched_shunts`.
+- **`dynamics_models.classical_params`**: nullable struct `{H, D, xd_prime, mbase_mva}` — prefer over map keys when both present.
+- **`computational_load_profiles`**: additive large-load columns including `priority` (1 = highest), `max_step_drop_mw`, `trip_study_percentiles` (**0–100 percentage points**, e.g. 60 and 100 — **not** 0–1 fractions), `common_mode_group`, facility/ride-through fields. **Null/empty `trip_study_percentiles` means no auto-generated percentiles from the case file**; downstream study tools may apply their own configurable defaults.
+- **Version gate**: only v0.13.0.
 
 ## v0.12.5 Additive Changes
 
@@ -243,8 +275,8 @@ Every `.rpf` file must include:
 
 Current locked values:
 
-- `raptrix.version = 0.12.3` (also accepted as `v0.12.3`; v0.12.2 and v0.12.1 retained for backward reads)
-- `raptrix.branding = Raptrix CIM-Arrow / Raptrix Power Interchange v0.12.3 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.`
+- `raptrix.version = 0.13.0` (also accepted as `v0.13.0` only)
+- `raptrix.branding = Raptrix CIM-Arrow / Raptrix Power Interchange v0.13.0 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.`
 - `rpf.case_fingerprint = <required deterministic case identity fingerprint>`
 - `rpf.validation_mode = topology_only | solved_ready`
 - `rpf.case_mode = flat_start_planning | warm_start_planning | solved_snapshot | hour_ahead_advisory` (v0.8.4+, required; `hour_ahead_advisory` added in v0.9.0)
@@ -425,13 +457,15 @@ This section is normative for external parser authors.
 
 - `base_mva`: Float64, required
 - `frequency_hz`: Float64, required
-- `psse_version`: Int32, required
+- `source_format`: Dictionary<Int32, Utf8>, nullable (v0.13.0+) — `psse_raw` \| `pslf_epc` \| `cgmes` \| `powerworld` \| `rpf` \| `other`
+- `source_format_version`: Utf8, nullable (v0.13.0+)
+- `source_identity_scheme`: Dictionary<Int32, Utf8>, nullable (v0.13.0+) — `dense_bus_id` \| `mrid` \| `mixed` \| `synthetic_mrid`
 - `study_name`: Dictionary<Int32, Utf8>, required
-- `timestamp_utc`: Utf8, required
+- `timestamp_utc`: Timestamp(us, UTC), required (v0.13.0+)
 - `raptrix_version`: Utf8, required
 - `is_planning_case`: Boolean, required
 - `source_case_id`: Dictionary<Int32, Utf8>, required
-- `snapshot_timestamp_utc`: Utf8, required
+- `snapshot_timestamp_utc`: Timestamp(us, UTC), required (v0.13.0+)
 - `case_fingerprint`: Utf8, required
 - `validation_mode`: Dictionary<Int32, Utf8>, required
 - `custom_metadata`: Map<String, String>, nullable
@@ -458,11 +492,11 @@ This section is normative for external parser authors.
 - `real_time_discovery`: Boolean, nullable (v0.9.0+) — `true` if this case originated from live State Estimator analysis
 - `default_shunt_control_mode`: Dictionary<Int32, Utf8>, nullable (v0.9.5+) — optional declarative default shunt control mode; see v0.9.5 additive section
 - `computational_load_mode`: Boolean, nullable (v0.10.0+) — when `true`, consumers apply the computational-load runtime validation contract
-- `original_sentinel_case_id`: Utf8, nullable (v0.12.3+) — original source case identifier for baseline provenance
+- `baseline_source_case_id`: Utf8, nullable (v0.13.0+; renamed from `original_sentinel_case_id`) — original source case identifier for baseline provenance
 - `original_model_version`: Utf8, nullable (v0.12.3+) — e.g. `"2026-01"`
 - `target_baseline_version`: Utf8, nullable (v0.12.3+) — e.g. `"2026-06"`
 - `is_sal_enhanced`: Boolean, nullable (v0.12.3+) — `true` when SAL enhancement was applied
-- `sal_enhancement_timestamp`: Utf8, nullable (v0.12.3+) — RFC 3339 UTC enhancement time (same pattern as `timestamp_utc`)
+- `sal_enhancement_timestamp`: Timestamp(us, UTC), nullable (v0.13.0+)
 - `cim_model_version_used`: Utf8, nullable (v0.12.3+) — CIM model version used during upgrade
 - `planning_ready`: Boolean, nullable (v0.12.3+) — case ready for planning studies
 - `upgrade_summary`: Utf8, nullable (v0.12.3+) — human-readable upgrade narrative
@@ -473,7 +507,7 @@ This section is normative for external parser authors.
 
 - `bus_id`: Int32, required
 - `name`: Dictionary<Int32, Utf8>, required
-- `type`: Int8, required
+- `type`: Dictionary<Int32, Utf8>, required — `PQ` \| `PV` \| `Slack` (v0.13.0+)
 - `p_sched`: Float64, required
 - `q_sched`: Float64, required — net scheduled reactive injection = `qg_sched_pu − qd_load_pu` (all bus types)
 - `v_mag_set`: Float64, required
@@ -588,7 +622,7 @@ Recommended `control_mode` tokens for `dc_lines_2w` are `power`, `current`, `vol
 - `owner_id`: Int32, nullable
 - `market_resource_id`: Utf8, nullable
 - `params`: Map<String, Float64>, nullable
-- `controlled_bus_id`: Int32, required (v0.9.5+) — `0` or `bus_id` = local voltage regulation; else dense `bus_id` of remote regulated bus (**PSS/E IREG** / **CIM RegulatingControl** target). v0.9.4 files omit this column; readers must synthesize **`0`** for missing values.
+- `controlled_bus_id`: Int32, nullable (v0.13.0+) — `null` = local voltage regulation; non-null dense `bus_id` = remote regulated bus (**PSS/E IREG** / **CIM RegulatingControl** target).
 
 ### ibr_devices
 
@@ -781,6 +815,8 @@ Optional contingency topology filter audit rows (v0.12.1+):
 - `gen_id`: Dictionary<Int32, Utf8>, required
 - `model_type`: Dictionary<Int32, Utf8>, required
 - `params`: Map<String, Float64>, required
+- `perc1_params`: Struct, nullable (v0.10.0+)
+- `classical_params`: Struct, nullable (v0.13.0+) — children `H`, `D`, `xd_prime`, `mbase_mva` (each Float64, nullable). Prefer over map keys when both present.
 
 Dynamics population rules for downstream consumers:
 

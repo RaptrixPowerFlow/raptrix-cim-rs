@@ -4,6 +4,41 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 
 Copyright (c) 2026 Raptrix Power
 
+## v0.13.0 (breaking clean cut — re-export required)
+
+**Product constraint:** no pre-0.13 compatibility path. Regenerate all goldens and case libraries through a v0.13.0-capable writer.
+
+### What changed
+
+| Area | Action |
+| --- | --- |
+| Version gate | Only `v0.13.0` / `0.13.0` accepted |
+| `metadata.psse_version` | **Removed** |
+| Provenance | **Add** nullable `source_format`, `source_format_version`, `source_identity_scheme` |
+| `original_sentinel_case_id` | **Rename** → `baseline_source_case_id` |
+| Timestamps | Utf8 RFC3339 → Arrow `Timestamp(Microsecond, UTC)` |
+| `buses.type` | Int8 codes → Dictionary `PQ` / `PV` / `Slack` |
+| `generators.controlled_bus_id` | Required + `0` sentinel → **nullable**; null = local |
+| Loads / shunts | Optional trailing `mrid` |
+| Dynamics | `classical_params` struct (prefer over map keys H/D/xd_prime/mbase_mva) |
+| Computational load profiles | Large-load candidate columns; `trip_study_percentiles` are **0–100**, not fractions |
+| Identity | Hybrid: dense `bus_id` FKs + optional mRID; stamp `rpf.identity.model=hybrid_solver_flat_v1` |
+
+### Consumer checklist
+
+1. Reject any file with `raptrix.version` ≠ 0.13.0.
+2. Stop reading `psse_version` / `original_sentinel_case_id` / Int8 bus types / `controlled_bus_id == 0`.
+3. Parse native UTC timestamps (or convert via Arrow).
+4. Prefer `classical_params` when present for first-swing machines.
+5. When `computational_load_mode` and profiles are non-empty, treat profiles as the default large-load candidate source; null/empty percentiles do **not** invent defaults in the wire contract (downstream study tools may apply their own configurable defaults).
+
+### Not changed
+
+- Generator power remains **MW/MVAr** (human-readable).
+- Network injections remain **PU** on `metadata.base_mva`.
+- FACTS tables remain multi-table by design.
+- No upgrade CLI is provided.
+
 ## v0.12.5 (additive — no migration required)
 
 ### What changed

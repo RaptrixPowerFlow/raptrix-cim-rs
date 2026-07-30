@@ -29,12 +29,18 @@
 //! 4. Use [`read_rpf_tables`], [`summarize_rpf`], or [`rpf_file_metadata`] for
 //!    validation, inspection, and regression tests.
 
+pub mod computational_load;
 pub mod ffi;
 mod health;
 mod io;
 mod patch;
 mod schema;
 
+pub use computational_load::{
+    BuildoutEntry, ComputationalLoadProfileRow, FACILITY_CLASSES, SeasonalEnvelopeEntry,
+    build_computational_load_profiles_batch, patch_metadata_computational_load_mode,
+    validate_computational_load_profiles_batch,
+};
 pub use health::{
     RpfCaseAggregates, RpfCaseCounts, RpfCaseHealth, RpfConvergenceHints, RpfHealthGrade,
     RpfTables, RpfTopologySignals, TopologySource, format_health_report, inspect_rpf_case,

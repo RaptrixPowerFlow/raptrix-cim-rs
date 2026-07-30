@@ -491,21 +491,12 @@ fn read_rpf_tables_impl(
             for index in struct_array.columns().len()..expected_schema.fields().len() {
                 let expected_field = expected_schema.field(index);
                 if !expected_field.is_nullable() {
-                    // v0.9.5: 24-column `generators` files omit trailing `controlled_bus_id`; synthesize
-                    // local regulation as `0` (same semantics as optional_if_short_struct in C++ readers).
-                    if table_name == TABLE_GENERATORS
-                        && expected_field.name() == "controlled_bus_id"
-                        && expected_field.data_type() == &DataType::Int32
-                    {
-                        trimmed_columns
-                            .push(Arc::new(Int32Array::from_value(0, expected_rows)) as ArrayRef);
-                        continue;
-                    }
                     bail!(
                         "invalid struct column '{table_name}': missing non-nullable field '{}'",
                         expected_field.name()
                     );
                 }
+                // v0.13.0: trailing nullable fields (e.g. controlled_bus_id, mrid) pad as null.
                 trimmed_columns.push(new_null_array(expected_field.data_type(), expected_rows));
             }
 
@@ -919,7 +910,7 @@ pub fn validate_rpf_file(path: impl AsRef<Path>, options: &RootWriteOptions) -> 
         .context("post-write contract violation: missing generators table")?;
     require_non_null_count_equals_len(TABLE_GENERATORS, generators, "generator_id")?;
     require_non_null_count_equals_len(TABLE_GENERATORS, generators, "bus_id")?;
-    require_non_null_count_equals_len(TABLE_GENERATORS, generators, "controlled_bus_id")?;
+    // controlled_bus_id is nullable in v0.13.0 (null = local regulation).
 
     let loads = by_name
         .get(TABLE_LOADS)
@@ -1215,18 +1206,18 @@ mod tests {
         METADATA_KEY_PROTECTION_FIDELITY, METADATA_KEY_RAS_SCHEMA_MODE, METADATA_KEY_RPF_VERSION,
         METADATA_KEY_VERSION, SCHEMA_VERSION, TABLE_BRANCHES, TABLE_COMPUTATIONAL_LOAD_PROFILES,
         TABLE_CONTINGENCY_ISLAND_ANALYSIS, TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS,
-        TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED, TABLE_GENERATORS, TABLE_LOADS, TABLE_METADATA,
+        TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED, TABLE_GENERATORS, TABLE_LOADS,
         TABLE_PROTECTION_CONTINGENCIES, TABLE_REMEDIAL_ACTION_SCHEMES, TABLE_TOPOLOGY_CHANGES,
         all_table_schemas, branches_schema, computational_load_profiles_schema,
         contingency_island_analysis_schema, diagram_objects_schema, diagram_points_schema,
         facts_devices_schema, facts_solved_schema, generators_schema, loads_schema,
-        metadata_schema, protection_contingencies_schema, remedial_action_schemes_schema,
-        schema_metadata, topology_changes_schema,
+        protection_contingencies_schema, remedial_action_schemes_schema, schema_metadata,
+        topology_changes_schema,
     };
 
     use super::{
         RootWriteOptions, read_rpf_tables, row_count_metadata_key, rpf_file_metadata,
-        write_root_rpf,
+        validate_rpf_file, write_root_rpf, write_root_rpf_with_metadata,
     };
 
     #[test]
@@ -1416,6 +1407,70 @@ mod tests {
     }
 
     #[test]
+    fn enable_clp_on_file_without_table_nonempty() -> Result<()> {
+        use crate::computational_load::{
+            ComputationalLoadProfileRow, build_computational_load_profiles_batch,
+            validate_computational_load_profiles_batch,
+        };
+
+        let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_clp_enable");
+        std::fs::create_dir_all(&tmp_dir)?;
+        let base_path = tmp_dir.join("base.rpf");
+        let out_path = tmp_dir.join("with_clp.rpf");
+
+        let base_batches: HashMap<&'static str, RecordBatch> = all_table_schemas()
+            .into_iter()
+            .map(|(name, schema)| (name, RecordBatch::new_empty(Arc::new(schema))))
+            .collect();
+        write_root_rpf(&base_path, &base_batches, &RootWriteOptions::default())?;
+
+        let mut tables: HashMap<String, RecordBatch> =
+            read_rpf_tables(&base_path)?.into_iter().collect();
+        let root_metadata = rpf_file_metadata(&base_path)?;
+        let profiles = build_computational_load_profiles_batch(&[ComputationalLoadProfileRow {
+            bus_id: Some(3),
+            priority: Some(1),
+            max_step_drop_mw: Some(50.0),
+            trip_study_percentiles: Some(vec![60.0, 100.0]),
+            common_mode_group: Some("campus_a".into()),
+            facility_class: Some("ai_hpc".into()),
+            poi_name: Some("POI-3".into()),
+            ..Default::default()
+        }])?;
+        validate_computational_load_profiles_batch(&profiles, Some(true))?;
+        tables.insert(TABLE_COMPUTATIONAL_LOAD_PROFILES.to_string(), profiles);
+
+        let mut batch_map: HashMap<&'static str, RecordBatch> = HashMap::new();
+        for (name, batch) in tables {
+            let key: &'static str = Box::leak(name.into_boxed_str());
+            batch_map.insert(key, batch);
+        }
+        write_root_rpf_with_metadata(
+            &out_path,
+            &batch_map,
+            &RootWriteOptions {
+                include_computational_load_profiles: true,
+                ..Default::default()
+            },
+            &root_metadata,
+        )?;
+        validate_rpf_file(
+            &out_path,
+            &RootWriteOptions {
+                include_computational_load_profiles: true,
+                ..Default::default()
+            },
+        )?;
+        let out_tables = read_rpf_tables(&out_path)?;
+        let clp = out_tables
+            .iter()
+            .find(|(n, _)| n == TABLE_COMPUTATIONAL_LOAD_PROFILES)
+            .expect("clp present");
+        assert_eq!(clp.1.num_rows(), 1);
+        Ok(())
+    }
+
+    #[test]
     fn read_rejects_branches_schema_missing_required_nominal_kv_columns() -> Result<()> {
         let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_backward_read");
         std::fs::create_dir_all(&tmp_dir)?;
@@ -1478,7 +1533,7 @@ mod tests {
             .expect_err("v0.9.3 reader should reject missing required nominal_kv fields");
         let message = format!("{err:#}");
         assert!(message.contains("missing non-nullable field 'to_nominal_kv'"));
-        assert_eq!(SCHEMA_VERSION, "v0.12.5");
+        assert_eq!(SCHEMA_VERSION, "v0.13.0");
         Ok(())
     }
 
@@ -1555,26 +1610,15 @@ mod tests {
     }
 
     #[test]
-    fn read_supports_v0122_metadata_missing_sal_columns() -> Result<()> {
-        let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_backward_metadata_read");
+    fn read_rejects_pre_v0130_version_stamps() -> Result<()> {
+        let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_reject_legacy_version");
         std::fs::create_dir_all(&tmp_dir)?;
-        let output_path = tmp_dir.join("v0122_like_metadata.rpf");
+        let output_path = tmp_dir.join("legacy_v0125.rpf");
 
-        let mut table_batches: HashMap<&'static str, RecordBatch> = all_table_schemas()
+        let table_batches: HashMap<&'static str, RecordBatch> = all_table_schemas()
             .into_iter()
             .map(|(name, schema)| (name, RecordBatch::new_empty(Arc::new(schema))))
             .collect();
-
-        // v0.12.2 metadata shape: 35 columns (before baseline provenance fields).
-        let old_meta_fields: Vec<Field> = metadata_schema().fields()[0..35]
-            .iter()
-            .map(|field| field.as_ref().clone())
-            .collect();
-        let old_metadata_schema = Schema::new_with_metadata(old_meta_fields, schema_metadata());
-        table_batches.insert(
-            TABLE_METADATA,
-            RecordBatch::new_empty(Arc::new(old_metadata_schema.clone())),
-        );
 
         let mut root_fields = Vec::new();
         let mut root_columns: Vec<ArrayRef> = Vec::new();
@@ -1595,7 +1639,7 @@ mod tests {
             )) as ArrayRef);
         }
 
-        let legacy_version = "v0.12.2";
+        let legacy_version = "v0.12.5";
         let mut root_meta = schema_metadata();
         root_meta.insert(METADATA_KEY_VERSION.to_string(), legacy_version.to_string());
         root_meta.insert(
@@ -1615,32 +1659,22 @@ mod tests {
         writer.write(&root_batch)?;
         writer.finish()?;
 
-        let tables = read_rpf_tables(&output_path)?;
-        let (_, metadata) = tables
-            .iter()
-            .find(|(name, _)| name == TABLE_METADATA)
-            .context("missing metadata table")?;
-        assert_eq!(
-            metadata.schema().fields().len(),
-            metadata_schema().fields().len()
+        let err = read_rpf_tables(&output_path).expect_err("pre-v0.13.0 must be rejected");
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("unsupported")
+                || message.contains("0.12.5")
+                || message.contains("version"),
+            "unexpected error: {message}"
         );
-        assert_eq!(metadata.schema().fields().len(), 45);
-        for index in 35..45 {
-            assert_eq!(
-                metadata.column(index).null_count(),
-                metadata.num_rows(),
-                "baseline provenance column {} should be null-padded",
-                metadata.schema().field(index).name()
-            );
-        }
         Ok(())
     }
 
     #[test]
-    fn read_supports_v094_generators_missing_controlled_bus_id() -> Result<()> {
-        let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_backward_generators_read");
+    fn read_pads_nullable_controlled_bus_id_and_mrid() -> Result<()> {
+        let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_generators_null_pad");
         std::fs::create_dir_all(&tmp_dir)?;
-        let output_path = tmp_dir.join("v094_like_generators.rpf");
+        let output_path = tmp_dir.join("generators_short_struct.rpf");
 
         let mut table_batches: HashMap<&'static str, RecordBatch> = all_table_schemas()
             .into_iter()
@@ -1648,14 +1682,16 @@ mod tests {
             .collect();
 
         let full = generators_schema();
-        let old_gen_fields: Vec<Field> = full.fields()[0..24]
+        // Drop trailing controlled_bus_id + mrid; both are nullable and pad as null.
+        let short_gen_fields: Vec<Field> = full.fields()[0..24]
             .iter()
             .map(|field| field.as_ref().clone())
             .collect();
-        let old_generators_schema = Schema::new_with_metadata(old_gen_fields, schema_metadata());
+        let short_generators_schema =
+            Schema::new_with_metadata(short_gen_fields, schema_metadata());
         table_batches.insert(
             TABLE_GENERATORS,
-            RecordBatch::new_empty(Arc::new(old_generators_schema)),
+            RecordBatch::new_empty(Arc::new(short_generators_schema)),
         );
 
         let mut root_fields = Vec::new();
@@ -1748,6 +1784,7 @@ mod tests {
                 Arc::new(Float64Array::from(vec![Some(0.03), None])) as ArrayRef,
                 Arc::new(Float64Array::from(vec![Some(-0.02), Some(0.04)])) as ArrayRef,
                 Arc::new(name_b.finish()) as ArrayRef,
+                new_null_array(&DataType::Utf8, 2), // mrid (v0.13.0)
             ],
         )?;
         table_batches.insert(TABLE_LOADS, loads_batch);

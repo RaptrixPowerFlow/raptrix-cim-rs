@@ -7,11 +7,18 @@ Copyright (c) 2026 Raptrix Power
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Arrow schema definitions for the Raptrix Power Interchange v0.12.5 profile.
+//! Arrow schema definitions for the Raptrix Power Interchange v0.13.0 profile.
+//!
+//! ## v0.13.0 — clean-cut breaking contract
+//! Removes legacy PSS/E required `psse_version`, renames `original_sentinel_case_id` →
+//! `baseline_source_case_id`, makes `controlled_bus_id` nullable (null = local regulation),
+//! converts `buses.type` to dictionary tokens (`PQ`/`PV`/`Slack`), uses native Arrow UTC
+//! timestamps, adds optional source provenance fields, large-load profile columns, and
+//! `dynamics_models.classical_params`. **Readers accept only v0.13.0** (no pre-0.13 dual-read).
 //!
 //! ## v0.12.5 — optional bus GIS coordinates (additive)
 //! Adds nullable trailing `buses.latitude` / `buses.longitude` (Float64, WGS84 degrees)
-//! for operator-oriented relative layout. v0.12.4 files remain readable without re-export.
+//! for operator-oriented relative layout. Superseded by the v0.13.0 clean cut.
 //!
 //! ## v0.12.3 — baseline provenance (additive metadata + topology_changes)
 //! Adds nullable baseline provenance fields to `metadata` (provenance, model upgrade tracking,
@@ -80,22 +87,28 @@ Copyright (c) 2026 Raptrix Power
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use arrow::datatypes::{DataType, Field, Schema};
+use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / Raptrix Power Interchange v0.12.5 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow / Raptrix Power Interchange v0.13.0 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.";
 
 /// Canonical RPF format version tag embedded as file-level metadata.
-pub const RPF_VERSION: &str = "v0.12.5";
+pub const RPF_VERSION: &str = "v0.13.0";
 
 /// Supported RPF versions accepted by generic Arrow IPC readers.
 ///
-/// v0.12.5 is the current contract release. v0.12.4–v0.12.1 files remain
-/// readable (additive trailing columns). Prior contract versions must be re-emitted.
-pub const SUPPORTED_RPF_VERSIONS: &[&str] = &[
-    "v0.12.5", "0.12.5", "v0.12.4", "0.12.4", "v0.12.3", "0.12.3", "v0.12.2", "0.12.2", "v0.12.1",
-    "0.12.1",
-];
+/// v0.13.0 is a clean-cut breaking release. Prior contract files are rejected.
+pub const SUPPORTED_RPF_VERSIONS: &[&str] = &["v0.13.0", "0.13.0"];
+
+/// Native UTC timestamp type used for case provenance timestamps (v0.13.0+).
+pub fn utc_timestamp_type() -> DataType {
+    DataType::Timestamp(TimeUnit::Microsecond, Some(Arc::<str>::from("UTC")))
+}
+
+/// Canonical bus-type dictionary tokens (v0.13.0+).
+pub const BUS_TYPE_PQ: &str = "PQ";
+pub const BUS_TYPE_PV: &str = "PV";
+pub const BUS_TYPE_SLACK: &str = "Slack";
 
 /// Validates a nominal kV value for required network voltage fields.
 pub fn validate_nominal_kv(value: f64, context: &str) -> Result<(), String> {
@@ -118,6 +131,10 @@ pub const METADATA_KEY_VERSION: &str = "raptrix.version";
 pub const METADATA_KEY_RPF_VERSION: &str = "rpf_version";
 /// Schema metadata key indicating stable equipment `mrid` column support (v0.12.2+).
 pub const METADATA_KEY_MRID_SUPPORT: &str = "rpf.mrid_support";
+/// Optional identity-model declaration (v0.13.0+): hybrid dense solver keys + optional mRID.
+pub const METADATA_KEY_IDENTITY_MODEL: &str = "rpf.identity.model";
+/// Canonical value for [`METADATA_KEY_IDENTITY_MODEL`].
+pub const IDENTITY_MODEL_HYBRID_SOLVER_FLAT_V1: &str = "hybrid_solver_flat_v1";
 /// Required metadata key containing deterministic case identity fingerprint.
 pub const METADATA_KEY_CASE_FINGERPRINT: &str = "rpf.case_fingerprint";
 /// Required metadata key describing validation readiness mode.
@@ -493,6 +510,23 @@ pub fn perc1_params_struct_type() -> DataType {
     DataType::Struct(perc1_params_struct_fields().into())
 }
 
+/// Named fields for nullable `dynamics_models.classical_params` (v0.13.0+ classical first-swing).
+///
+/// Prefer these first-class fields over string keys in `params` when both are present.
+pub fn classical_params_struct_fields() -> Vec<Field> {
+    vec![
+        Field::new("H", DataType::Float64, true),
+        Field::new("D", DataType::Float64, true),
+        Field::new("xd_prime", DataType::Float64, true),
+        Field::new("mbase_mva", DataType::Float64, true),
+    ]
+}
+
+/// Nullable struct type for `dynamics_models.classical_params`.
+pub fn classical_params_struct_type() -> DataType {
+    DataType::Struct(classical_params_struct_fields().into())
+}
+
 fn contingencies_elements_type() -> DataType {
     DataType::List(Arc::new(Field::new(
         "element",
@@ -692,23 +726,28 @@ pub fn schema_metadata() -> HashMap<String, String> {
 ///
 /// v0.10.0 adds nullable `computational_load_mode` (Boolean) for computational-load interchange mode.
 ///
-/// v0.12.3 adds nullable baseline provenance fields: `original_sentinel_case_id`,
-/// `original_model_version`, `target_baseline_version`, `is_sal_enhanced`,
-/// `sal_enhancement_timestamp`, `cim_model_version_used`, `planning_ready`, `upgrade_summary`,
-/// `convergence_time_ms`, and `convergence_iterations`. Populated when a source case
-/// is upgraded to a self-describing baseline .rpf; null in standard CIM exports.
+/// v0.13.0 clean-cut metadata:
+/// - drops required `psse_version`
+/// - optional source provenance (`source_format`, `source_format_version`, `source_identity_scheme`)
+/// - native UTC timestamps
+/// - `baseline_source_case_id` (renamed from `original_sentinel_case_id`)
 pub fn metadata_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
             Field::new("base_mva", DataType::Float64, false),
             Field::new("frequency_hz", DataType::Float64, false),
-            Field::new("psse_version", DataType::Int32, false),
+            // v0.13.0: optional source provenance (replaces required psse_version)
+            // Closed set: psse_raw | pslf_epc | cgmes | powerworld | rpf | other
+            Field::new("source_format", dict_utf8(), true),
+            Field::new("source_format_version", DataType::Utf8, true),
+            // Closed set: dense_bus_id | mrid | mixed | synthetic_mrid
+            Field::new("source_identity_scheme", dict_utf8(), true),
             Field::new("study_name", dict_utf8(), false),
-            Field::new("timestamp_utc", DataType::Utf8, false),
+            Field::new("timestamp_utc", utc_timestamp_type(), false),
             Field::new("raptrix_version", DataType::Utf8, false),
             Field::new("is_planning_case", DataType::Boolean, false),
             Field::new("source_case_id", dict_utf8(), false),
-            Field::new("snapshot_timestamp_utc", DataType::Utf8, false),
+            Field::new("snapshot_timestamp_utc", utc_timestamp_type(), false),
             Field::new("case_fingerprint", DataType::Utf8, false),
             Field::new("validation_mode", dict_utf8(), false),
             Field::new("custom_metadata", map_string_string(), true),
@@ -720,12 +759,8 @@ pub fn metadata_schema() -> Schema {
             Field::new("solver_accuracy", DataType::Float64, true),
             Field::new("solver_mode", dict_utf8(), true),
             // v0.8.5: angle-reference frame and shunt provenance
-            // bus_id of the angle reference (slack) bus used in the solve.
             Field::new("slack_bus_id_solved", DataType::Int32, true),
-            // Angle reference value in degrees applied at the slack bus (typically 0.0).
             Field::new("angle_reference_deg", DataType::Float64, true),
-            // Indicates whether switched-shunt solved state (step + susceptance) is
-            // present in switched_shunts_solved: actual_solved | not_available.
             Field::new("solved_shunt_state_presence", dict_utf8(), true),
             // v0.8.8: modern-grid profile metadata.
             Field::new("modern_grid_profile", DataType::Boolean, false),
@@ -740,12 +775,11 @@ pub fn metadata_schema() -> Schema {
                 true,
             ),
             // v0.9.0: solver-readiness fields
-            // case_mode now also accepts "hour_ahead_advisory" in addition to existing values
-            Field::new("hour_ahead_uncertainty_band", DataType::Float64, true), // e.g. 2.0 = ±2% load forecast error
-            Field::new("commitment_source", DataType::Utf8, true), // "day_ahead_market", "operator_plan"
+            Field::new("hour_ahead_uncertainty_band", DataType::Float64, true),
+            Field::new("commitment_source", DataType::Utf8, true),
             Field::new("solver_q_limit_infeasible_count", DataType::Int32, true),
             Field::new("pv_to_pq_switch_count", DataType::Int32, true),
-            Field::new("real_time_discovery", DataType::Boolean, true), // true if from live SE analysis
+            Field::new("real_time_discovery", DataType::Boolean, true),
             // v0.9.5: optional declarative shunt mode for planning ↔ real-time interchange
             Field::new("default_shunt_control_mode", dict_utf8(), true),
             // v0.10.0: computational-load interchange (see `computational_load_profiles` optional table)
@@ -754,12 +788,12 @@ pub fn metadata_schema() -> Schema {
                 DataType::Boolean,
                 true,
             ),
-            // v0.12.3: baseline provenance
-            Field::new("original_sentinel_case_id", DataType::Utf8, true),
+            // v0.13.0: baseline provenance (renamed from original_sentinel_case_id)
+            Field::new("baseline_source_case_id", DataType::Utf8, true),
             Field::new("original_model_version", DataType::Utf8, true),
             Field::new("target_baseline_version", DataType::Utf8, true),
             Field::new("is_sal_enhanced", DataType::Boolean, true),
-            Field::new("sal_enhancement_timestamp", DataType::Utf8, true),
+            Field::new("sal_enhancement_timestamp", utc_timestamp_type(), true),
             Field::new("cim_model_version_used", DataType::Utf8, true),
             Field::new("planning_ready", DataType::Boolean, true),
             Field::new("upgrade_summary", DataType::Utf8, true),
@@ -774,13 +808,14 @@ pub fn metadata_schema() -> Schema {
 ///
 /// v0.9.4 adds `qd_load_pu` and `qg_sched_pu` at positions 20–21 (after `bus_uuid`).
 /// v0.12.5 adds nullable trailing `latitude` / `longitude` (WGS84 degrees).
+/// v0.13.0: `type` is Dictionary tokens `PQ` | `PV` | `Slack` (not PSS/E 1/2/3 Int8 codes).
 /// `q_sched` (pos 4) retains its meaning as `qg_sched_pu − qd_load_pu` for all bus types.
 pub fn buses_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
             Field::new("bus_id", DataType::Int32, false),
             Field::new("name", dict_utf8(), false),
-            Field::new("type", DataType::Int8, false),
+            Field::new("type", dict_utf8(), false),
             Field::new("p_sched", DataType::Float64, false),
             Field::new("q_sched", DataType::Float64, false),
             Field::new("v_mag_set", DataType::Float64, false),
@@ -931,8 +966,9 @@ pub fn generators_schema() -> Schema {
             Field::new("owner_id", DataType::Int32, true),
             Field::new("market_resource_id", DataType::Utf8, true),
             Field::new("params", map_string_f64(), true),
-            // v0.9.5: remote voltage regulation target (PSS/E IREG; CIM RegulatingControl denormalized)
-            Field::new("controlled_bus_id", DataType::Int32, false),
+            // v0.13.0: remote voltage regulation target (PSS/E IREG; CIM RegulatingControl).
+            // null = local regulation; non-null dense bus_id = remote target.
+            Field::new("controlled_bus_id", DataType::Int32, true),
             // v0.12.2: stable CIM mRID (SynchronousMachine.base.m_rid etc.)
             Field::new("mrid", DataType::Utf8, true),
         ],
@@ -957,6 +993,8 @@ pub fn loads_schema() -> Schema {
             Field::new("p_y_pu", DataType::Float64, true),
             Field::new("q_y_pu", DataType::Float64, true),
             Field::new("name", dict_utf8_u32(), true),
+            // v0.13.0: optional stable identity
+            Field::new("mrid", DataType::Utf8, true),
         ],
         schema_metadata(),
     )
@@ -971,6 +1009,8 @@ pub fn fixed_shunts_schema() -> Schema {
             Field::new("status", DataType::Boolean, false),
             Field::new("g_pu", DataType::Float64, false),
             Field::new("b_pu", DataType::Float64, false),
+            // v0.13.0: optional stable identity
+            Field::new("mrid", DataType::Utf8, true),
         ],
         schema_metadata(),
     )
@@ -999,6 +1039,8 @@ pub fn switched_shunts_schema() -> Schema {
             // synthesized as "{bus_id}_shunt_{n}" (1-indexed).  Nullable for
             // backward compatibility; writers must populate when available.
             Field::new("shunt_id", dict_utf8(), true),
+            // v0.13.0: optional stable identity (may equal shunt_id when mRID-backed)
+            Field::new("mrid", DataType::Utf8, true),
         ],
         schema_metadata(),
     )
@@ -1041,7 +1083,7 @@ pub fn scenario_context_schema() -> Schema {
             Field::new("recommended_action", DataType::Utf8, true),
             Field::new("investigation_summary", DataType::Utf8, true),
             Field::new("load_forecast_error_pct", DataType::Float64, true), // for hour-ahead cases
-            Field::new("created_timestamp_utc", DataType::Utf8, false),
+            Field::new("created_timestamp_utc", utc_timestamp_type(), false),
             Field::new("params", map_string_f64(), true),
         ],
         schema_metadata(),
@@ -1351,6 +1393,7 @@ pub fn interfaces_schema() -> Schema {
 /// `dynamics_models` table schema.
 ///
 /// v0.10.0 adds nullable `perc1_params` struct for PERC1 baseline model parameters.
+/// v0.13.0 adds nullable `classical_params` struct for classical first-swing (H/D/xd'/mbase).
 pub fn dynamics_models_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
@@ -1359,16 +1402,21 @@ pub fn dynamics_models_schema() -> Schema {
             Field::new("model_type", dict_utf8(), false),
             Field::new("params", map_string_f64(), false),
             Field::new("perc1_params", perc1_params_struct_type(), true),
+            Field::new("classical_params", classical_params_struct_type(), true),
         ],
         schema_metadata(),
     )
 }
 
-/// Optional `computational_load_profiles` table (v0.10.0+).
+/// Optional `computational_load_profiles` table (v0.10.0+; extended in v0.13.0).
 ///
 /// One row per computational-load bus or load. Exactly one of `bus_id` or `load_id` should be
 /// non-null for a valid interchange row; enforcement is a **runtime** contract when
 /// `metadata.computational_load_mode` is true.
+///
+/// All MW fields are **physical MW**. `trip_study_percentiles` values are **0–100 percentage
+/// points** (e.g. 60, 100), not 0–1 fractions. Null/empty percentiles mean no auto-generated
+/// percentiles from the case file — consumers may apply their own configurable defaults.
 pub fn computational_load_profiles_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
@@ -1387,6 +1435,25 @@ pub fn computational_load_profiles_schema() -> Schema {
             Field::new("onsite_gen_parallel", DataType::Boolean, true),
             Field::new("bess_ramp_rate_mw_per_min", DataType::Float32, true),
             Field::new("facility_use_case_percent", map_string_f64(), true),
+            // v0.13.0 large-load candidate enrichment
+            Field::new("mrid", DataType::Utf8, true),
+            Field::new("poi_name", DataType::Utf8, true),
+            // Closed: cloud_storage | ai_hpc | crypto | mixed | other
+            Field::new("facility_class", dict_utf8(), true),
+            // Ranking 1–5 for candidate selection (1 = highest); null = lowest priority
+            Field::new("priority", DataType::Int32, true),
+            Field::new("max_step_drop_mw", DataType::Float32, true),
+            Field::new(
+                "trip_study_percentiles",
+                DataType::List(Arc::new(Field::new("item", DataType::Float32, false))),
+                true,
+            ),
+            Field::new("common_mode_group", DataType::Utf8, true),
+            Field::new("voltage_sensitivity_hint", DataType::Float32, true),
+            Field::new("transfer_to_backup_threshold_pu", DataType::Float32, true),
+            Field::new("transfer_delay_ms", DataType::Float32, true),
+            Field::new("reconnection_criteria", map_string_f64(), true),
+            Field::new("ride_through_capability", map_string_f64(), true),
         ],
         schema_metadata(),
     )
@@ -1547,8 +1614,8 @@ pub fn buses_solved_schema() -> Schema {
             // Total net reactive injection at bus in per-unit.
             Field::new("q_inj_pu", DataType::Float64, true),
             // Effective bus type after Newton-Raphson (may differ from planning
-            // intent when PV → PQ switching occurred): 1=PQ, 2=PV, 3=slack.
-            Field::new("bus_type_solved", DataType::Int8, true),
+            // intent when PV → PQ switching occurred). v0.13.0 tokens: PQ | PV | Slack.
+            Field::new("bus_type_solved", dict_utf8(), true),
             // Per-row data provenance.
             Field::new("provenance", dict_utf8(), true),
         ],
@@ -1902,10 +1969,11 @@ pub fn branch_schema() -> Schema {
 #[cfg(test)]
 mod tests {
     use super::{
-        SUPPORTED_RPF_VERSIONS, all_table_schemas, branches_schema, contingencies_schema,
-        diagram_objects_schema, diagram_points_schema, dynamics_models_schema,
-        facts_devices_schema, facts_solved_schema, generators_schema, loads_schema,
-        normalize_facts_device_type, perc1_params_struct_type, table_schema,
+        RPF_VERSION, SCHEMA_VERSION, SUPPORTED_RPF_VERSIONS, all_table_schemas, branches_schema,
+        buses_schema, contingencies_schema, diagram_objects_schema, diagram_points_schema,
+        dict_utf8, dynamics_models_schema, facts_devices_schema, facts_solved_schema,
+        generators_schema, loads_schema, normalize_facts_device_type, perc1_params_struct_type,
+        table_schema,
     };
     use arrow::datatypes::DataType;
 
@@ -1919,7 +1987,7 @@ mod tests {
         assert_eq!(c.field(7).name(), "greedy_reserve_summary");
 
         let dm = dynamics_models_schema();
-        assert_eq!(dm.fields().len(), 5);
+        assert_eq!(dm.fields().len(), 6);
         assert_eq!(dm.field(4).name(), "perc1_params");
         assert_eq!(dm.field(4).data_type(), &perc1_params_struct_type());
 
@@ -1970,18 +2038,13 @@ mod tests {
             "optional RAS/protection/island tables must NOT appear in all_table_schemas()"
         );
 
-        // version gate: v0.12.5 current; v0.12.4–v0.12.1 remain readable
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.12.5"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.12.5"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.12.4"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.12.4"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.12.3"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.12.3"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.12.2"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.12.2"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.12.1"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.12.1"));
-        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 10);
+        // version gate: v0.13.0 clean cut only
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.13.0"));
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.13.0"));
+        assert!(!SUPPORTED_RPF_VERSIONS.contains(&"v0.12.5"));
+        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 2);
+        assert_eq!(RPF_VERSION, "v0.13.0");
+        assert_eq!(SCHEMA_VERSION, RPF_VERSION);
     }
 
     #[test]
@@ -2120,25 +2183,38 @@ mod tests {
     }
 
     #[test]
-    fn metadata_schema_v0123_sal_baseline_columns() {
+    fn metadata_schema_v0130_clean_cut() {
         let meta = super::metadata_schema();
-        assert_eq!(meta.fields().len(), 45);
-        assert_eq!(meta.field(35).name(), "original_sentinel_case_id");
-        assert_eq!(meta.field(35).data_type(), &DataType::Utf8);
-        assert!(meta.field(35).is_nullable());
-        assert_eq!(meta.field(36).name(), "original_model_version");
-        assert_eq!(meta.field(37).name(), "target_baseline_version");
-        assert_eq!(meta.field(38).name(), "is_sal_enhanced");
-        assert_eq!(meta.field(38).data_type(), &DataType::Boolean);
-        assert_eq!(meta.field(39).name(), "sal_enhancement_timestamp");
-        assert_eq!(meta.field(40).name(), "cim_model_version_used");
-        assert_eq!(meta.field(41).name(), "planning_ready");
-        assert_eq!(meta.field(42).name(), "upgrade_summary");
-        assert_eq!(meta.field(43).name(), "convergence_time_ms");
-        assert_eq!(meta.field(43).data_type(), &DataType::Float64);
-        assert_eq!(meta.field(44).name(), "convergence_iterations");
-        assert_eq!(meta.field(44).data_type(), &DataType::Int32);
-        assert!(meta.field(44).is_nullable());
+        assert_eq!(meta.fields().len(), 47);
+        // No psse_version; provenance trio after frequency_hz
+        assert!(meta.field_with_name("psse_version").is_err());
+        assert_eq!(meta.field(2).name(), "source_format");
+        assert!(meta.field(2).is_nullable());
+        assert_eq!(meta.field(3).name(), "source_format_version");
+        assert_eq!(meta.field(4).name(), "source_identity_scheme");
+        assert_eq!(meta.field(6).name(), "timestamp_utc");
+        assert_eq!(meta.field(6).data_type(), &super::utc_timestamp_type());
+        assert_eq!(meta.field(10).name(), "snapshot_timestamp_utc");
+        assert_eq!(meta.field(10).data_type(), &super::utc_timestamp_type());
+        // Baseline provenance rename
+        assert_eq!(meta.field(37).name(), "baseline_source_case_id");
+        assert_eq!(meta.field(37).data_type(), &DataType::Utf8);
+        assert!(meta.field(37).is_nullable());
+        assert!(meta.field_with_name("original_sentinel_case_id").is_err());
+        assert_eq!(meta.field(38).name(), "original_model_version");
+        assert_eq!(meta.field(39).name(), "target_baseline_version");
+        assert_eq!(meta.field(40).name(), "is_sal_enhanced");
+        assert_eq!(meta.field(40).data_type(), &DataType::Boolean);
+        assert_eq!(meta.field(41).name(), "sal_enhancement_timestamp");
+        assert_eq!(meta.field(41).data_type(), &super::utc_timestamp_type());
+        assert_eq!(meta.field(42).name(), "cim_model_version_used");
+        assert_eq!(meta.field(43).name(), "planning_ready");
+        assert_eq!(meta.field(44).name(), "upgrade_summary");
+        assert_eq!(meta.field(45).name(), "convergence_time_ms");
+        assert_eq!(meta.field(45).data_type(), &DataType::Float64);
+        assert_eq!(meta.field(46).name(), "convergence_iterations");
+        assert_eq!(meta.field(46).data_type(), &DataType::Int32);
+        assert!(meta.field(46).is_nullable());
     }
 
     #[test]
@@ -2215,7 +2291,7 @@ mod tests {
     #[test]
     fn loads_schema_includes_optional_zip_columns() {
         let loads = loads_schema();
-        assert_eq!(loads.fields().len(), 10);
+        assert_eq!(loads.fields().len(), 11);
         assert_eq!(loads.field(3).name(), "p_pu");
         assert!(!loads.field(3).is_nullable());
         assert_eq!(loads.field(4).name(), "q_pu");
@@ -2228,6 +2304,8 @@ mod tests {
         assert!(loads.field(7).is_nullable());
         assert_eq!(loads.field(8).name(), "q_y_pu");
         assert!(loads.field(8).is_nullable());
+        assert_eq!(loads.field(10).name(), "mrid");
+        assert!(loads.field(10).is_nullable());
     }
 
     #[test]
@@ -2239,15 +2317,61 @@ mod tests {
     }
 
     #[test]
-    fn generators_schema_v095_controlled_bus_id() {
+    fn generators_schema_v0130_controlled_bus_id_nullable() {
         let generators = generators_schema();
         assert_eq!(generators.fields().len(), 26);
         assert_eq!(generators.field(24).name(), "controlled_bus_id");
         assert_eq!(generators.field(24).data_type(), &DataType::Int32);
-        assert!(!generators.field(24).is_nullable());
+        assert!(generators.field(24).is_nullable());
         assert_eq!(generators.field(25).name(), "mrid");
         assert_eq!(generators.field(25).data_type(), &DataType::Utf8);
         assert!(generators.field(25).is_nullable());
+    }
+
+    #[test]
+    fn buses_type_is_dictionary_tokens() {
+        let buses = buses_schema();
+        let dict = DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8));
+        assert_eq!(buses.field(2).name(), "type");
+        assert_eq!(buses.field(2).data_type(), &dict);
+    }
+
+    #[test]
+    fn dynamics_models_has_classical_params() {
+        let dyn_schema = dynamics_models_schema();
+        assert_eq!(dyn_schema.fields().len(), 6);
+        assert_eq!(dyn_schema.field(4).name(), "perc1_params");
+        assert_eq!(dyn_schema.field(5).name(), "classical_params");
+        assert!(dyn_schema.field(5).is_nullable());
+        assert_eq!(
+            dyn_schema.field(5).data_type(),
+            &super::classical_params_struct_type()
+        );
+    }
+
+    #[test]
+    fn computational_load_profiles_v0130_columns() {
+        let cl = super::computational_load_profiles_schema();
+        assert_eq!(
+            cl.field_with_name("mrid").unwrap().data_type(),
+            &DataType::Utf8
+        );
+        assert_eq!(
+            cl.field_with_name("facility_class").unwrap().data_type(),
+            &dict_utf8()
+        );
+        assert_eq!(
+            cl.field_with_name("priority").unwrap().data_type(),
+            &DataType::Int32
+        );
+        let trip = cl.field_with_name("trip_study_percentiles").unwrap();
+        assert!(trip.is_nullable());
+        assert!(matches!(trip.data_type(), DataType::List(_)));
+        assert!(
+            cl.field_with_name("common_mode_group")
+                .unwrap()
+                .is_nullable()
+        );
     }
 
     #[test]

@@ -103,7 +103,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 | Connectivity detail | `--connectivity-detail` | Granular ConnectivityNode bus mapping; emits optional `connectivity_groups` table |
 | Node-breaker | `--connectivity-detail --node-breaker` | Adds switch-topology detail tables for operational and viewer workflows |
 
-### Output tables (schema contract v0.12.5)
+### Output tables (schema contract v0.13.0)
 
 **18 canonical tables (always emitted):** `metadata`, `buses`, `branches`, `multi_section_lines`, `dc_lines_2w`, `generators`, `loads`, `fixed_shunts`, `switched_shunts`, `switched_shunt_banks`, `transformers_2w`, `transformers_3w`, `areas`, `zones`, `owners`, `contingencies`, `interfaces`, `dynamics_models`
 
@@ -145,7 +145,7 @@ RAS safety note: all public examples in this repository use synthetic demonstrat
 
 ## Data Contract (Locked)
 
-- Current schema contract: **v0.12.5** (CGMES 3.0+ only). v0.12.5 adds optional nullable `buses.latitude` / `buses.longitude` (WGS84) from CIM GeographicalLocation profiles. The RPF version gate accepts **v0.12.5** and retains **v0.12.4**–**v0.12.1** for backward reads — prior contract versions must be re-emitted.
+- Current schema contract: **v0.13.0** (CGMES 3.0+ only). Clean-cut break: readers accept **only** v0.13.0. Includes hybrid identity model, native UTC timestamps, dictionary bus types, nullable IREG, large-load profile columns, and classical dynamics params.
 - Canonical source: raptrix-cim-arrow/src/schema.rs
 - Contract policy and semantics: docs/schema-contract.md
 - Plain-English field guide: [docs/rpf-field-guide.md](docs/rpf-field-guide.md)
@@ -159,9 +159,9 @@ RPF standardization here is intentional: it enables direct CIM-to-powerflow inte
 
 ### Versioning Policy
 
-Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is at schema **`v0.12.5`** and the converter crate release is **`0.5.7`**.
+Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is at schema **`v0.13.0`** and the converter crate release is **`0.6.0`**.
 
-Readers in this repository accept `v0.12.5` / `0.12.5` and retain `v0.12.4` / `0.12.4` through `v0.12.1` / `0.12.1`. Prior contract versions must be re-emitted.
+Readers in this repository accept **only** `v0.13.0` / `0.13.0`. Prior contract versions must be re-emitted through a v0.13.0-capable writer (no dual-read).
 
 **v0.12.5**: Adds nullable trailing `buses.latitude` / `buses.longitude` (WGS84 degrees) populated from CIM GL `Location`/`PositionPoint` when a GL profile is supplied. Line-route Locations resolve to from/to buses via Terminal endpoints. v0.12.4 files remain readable without re-export (readers null-pad missing geo columns).
 

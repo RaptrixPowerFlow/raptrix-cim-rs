@@ -5,9 +5,9 @@ Copyright (c) 2026 Raptrix Power
 
 # RPF Field Guide — Plain-English Reference
 
-**Schema contract: v0.12.3 | Format: Apache Arrow IPC**
+**Schema contract: v0.13.0 | Format: Apache Arrow IPC**
 
-This guide explains every table and field in an `.rpf` file in plain English. It is written for engineers who need to read, validate, or build tools against RPF files without digging into Arrow source code. For the normative type-level contract see [schema-contract.md](schema-contract.md).
+This guide explains every table and field in an `.rpf` file in plain English. It is written for engineers who need to read, validate, or build tools against RPF files without digging into Arrow source code. For the normative type-level contract see [schema-contract.md](schema-contract.md). Migration notes for the v0.13.0 clean cut are in [MIGRATION.md](../MIGRATION.md).
 
 This repository targets IEC 61970 CIM 17+ exchange for North American and European integrations. Public regression coverage is anchored on ENTSO-E CGMES v3.0.3 datasets.
 
@@ -47,7 +47,8 @@ These are key-value strings in the Arrow file header. Every RPF reader should ch
 
 | Key | Example value | What it means |
 |---|---|---|
-| `raptrix.version` | `v0.11.0` | The schema contract version this file was written to. Readers accept v0.11.0 and still read v0.10.0 files (the v0.11.0 changes are additive optional tables). |
+| `raptrix.version` | `v0.13.0` | The schema contract version this file was written to. **v0.13.0 is a clean cut** — readers accept only `v0.13.0` / `0.13.0`. Prior files must be re-exported. |
+| `rpf.identity.model` | `hybrid_solver_flat_v1` | **(v0.13.0+, optional)** Declares the hybrid identity model: dense `bus_id` foreign keys for solvers, plus optional equipment `mrid` where available. |
 | `raptrix.branding` | *(long string)* | Human-readable provenance string identifying the writing tool and copyright. |
 | `rpf.case_fingerprint` | `abc123...` | A deterministic hash of the case identity. Useful for de-duplication and reproducibility checks. |
 | `rpf.validation_mode` | `topology_only` or `solved_ready` | `topology_only` means the file has enough topology to run but may be missing some steady-state parameters. `solved_ready` means all parameters needed for full Newton-Raphson are present. |
@@ -114,13 +115,15 @@ This table always has exactly one row and summarizes the case.
 |---|---|---|
 | `base_mva` | number | The system MVA base for per-unit conversion. Almost always 100.0. Divide MVA values by this number to get per-unit. |
 | `frequency_hz` | number | System frequency. 60.0 for North America, 50.0 for most of Europe and Asia. |
-| `psse_version` | integer | PSS/E version compatibility flag. Carry-over field for cross-format compatibility; typically 0 for CIM-sourced files. |
+| `source_format` | text | **(v0.13.0+)** Optional closed set: `psse_raw` \| `pslf_epc` \| `cgmes` \| `powerworld` \| `rpf` \| `other`. Replaces the old required `psse_version` field. Null when unspecified. |
+| `source_format_version` | text | **(v0.13.0+)** Optional version string for the source format (e.g. `"3.0"` for CGMES). |
+| `source_identity_scheme` | text | **(v0.13.0+)** Optional closed set: `dense_bus_id` \| `mrid` \| `mixed` \| `synthetic_mrid`. How equipment identity was assigned. |
 | `study_name` | text | Human-readable name for this case, if provided at export time. |
-| `timestamp_utc` | text | RFC 3339 timestamp of when this file was created. |
+| `timestamp_utc` | timestamp (UTC) | **(v0.13.0+)** Native Arrow UTC timestamp of when this file was created (microsecond precision). |
 | `raptrix_version` | text | Same as the `raptrix.version` metadata key. |
 | `is_planning_case` | true/false | Legacy boolean. True when `case_mode` is any planning variant. Prefer checking `case_mode` directly. |
 | `source_case_id` | text | Identifier of the source CIM dataset (typically the CGMES case name). |
-| `snapshot_timestamp_utc` | text | Timestamp of the original CIM dataset, distinct from the export timestamp. |
+| `snapshot_timestamp_utc` | timestamp (UTC) | **(v0.13.0+)** Native Arrow UTC timestamp of the original dataset, distinct from the export timestamp. |
 | `case_fingerprint` | text | Same as `rpf.case_fingerprint` metadata key. |
 | `validation_mode` | text | Same as `rpf.validation_mode` metadata key. |
 | `custom_metadata` | key-value pairs | Arbitrary additional metadata attached at export time. |
@@ -135,11 +138,11 @@ This table always has exactly one row and summarizes the case.
 | `solved_shunt_state_presence` | text | `actual_solved` when the `switched_shunts_solved` table is present and authoritative; `not_available` when the solver did not track discrete shunt steps. Null for planning cases. (v0.8.5+) |
 | `default_shunt_control_mode` | text | **(v0.9.5+)** Optional. When present, downstream solvers will default to this shunt mode (`planning_full` \| `real_time_hot_start` \| `real_time_frozen`). Enables fully declarative planning ↔ real-time handoff. Null when unspecified. |
 | `computational_load_mode` | boolean | **(v0.10.0+)** Optional. When `true`, consumers enforce the computational-load validation contract (for example non-empty `computational_load_profiles`). Null or absent means standard interchange without that contract. |
-| `original_sentinel_case_id` | text | **(v0.12.3+)** Optional. Original source case identifier when this file is a baseline upgrade. Null in standard CIM exports. |
+| `baseline_source_case_id` | text | **(v0.13.0+; renamed from `original_sentinel_case_id`)** Optional. Original source case identifier when this file is a baseline upgrade. Null in standard CIM exports. |
 | `original_model_version` | text | **(v0.12.3+)** Optional. Model version of the source case, e.g. `"2026-01"`. |
 | `target_baseline_version` | text | **(v0.12.3+)** Optional. Target baseline model version, e.g. `"2026-06"`. |
 | `is_sal_enhanced` | true/false | **(v0.12.3+)** Optional. `true` when SAL enhancement was applied to produce this file. |
-| `sal_enhancement_timestamp` | text | **(v0.12.3+)** Optional. RFC 3339 UTC timestamp of SAL enhancement (same format as `timestamp_utc`). |
+| `sal_enhancement_timestamp` | timestamp (UTC) | **(v0.13.0+)** Optional. Native Arrow UTC timestamp of SAL enhancement. |
 | `cim_model_version_used` | text | **(v0.12.3+)** Optional. CIM model version used during the upgrade. |
 | `planning_ready` | true/false | **(v0.12.3+)** Optional. Indicates the case is ready for planning studies after upgrade. |
 | `upgrade_summary` | text | **(v0.12.3+)** Optional. Human-readable summary of model upgrades applied. |
@@ -156,7 +159,7 @@ Buses are the nodes of the network. Every generator, load, and branch connects t
 |---|---|---|
 | `bus_id` | integer | Dense sequential integer ID assigned by the exporter. Starts at 1. This is the key used by all other tables. |
 | `name` | text | Human-readable bus name from the CIM dataset. |
-| `type` | integer | Bus type code. 1 = load bus (PQ), 2 = voltage-controlled bus (PV), 3 = slack/reference bus. |
+| `type` | text | **(v0.13.0+)** Bus type token: `PQ` (load), `PV` (voltage-controlled), or `Slack` (angle reference). Replaces the old Int8 codes 1/2/3. |
 | `p_sched` | number | Scheduled net active power injection in per-unit. Positive = generation, negative = load. |
 | `q_sched` | number | Scheduled net reactive power injection in per-unit. |
 | `v_mag_set` | number | Voltage magnitude setpoint in per-unit. For a flat-start planning case this is 1.0. |
@@ -221,7 +224,8 @@ Branches are the transmission lines between buses.
 | `xd_prime` | number | Transient direct-axis reactance in per-unit. Key parameter for dynamic simulation. |
 | `D` | number | Damping coefficient. |
 | `name` | text | Human-readable generator name. |
-| `controlled_bus_id` | integer | **(v0.9.5+, trailing column)** Dense `bus_id` of the bus whose voltage is regulated when the setpoint applies to a **remote** bus (PSS/E **IREG**; CIM **RegulatingControl** target resolved to the same bus numbering as `bus_id`). **`0` or the same value as `bus_id`** means **local** regulation at the generator’s terminal bus. *Backward compatibility:* v0.9.4 files had 24 columns ending at `params`; compliant readers synthesize **`0`** (local) for every row — **zero-copy, zero allocation** when padding short structs to the canonical width. **Example:** generator on `bus_id=12` regulating remote bus `904` → `controlled_bus_id=904`. |
+| `controlled_bus_id` | integer or null | **(v0.13.0+)** Dense `bus_id` of the bus whose voltage is regulated when the setpoint applies to a **remote** bus (PSS/E **IREG**; CIM **RegulatingControl**). **`null` = local** regulation at the generator’s terminal bus; a non-null value is the remote target. **Example:** generator on `bus_id=12` regulating remote bus `904` → `controlled_bus_id=904`. |
+| `mrid` | text or null | **(v0.12.2+)** Optional stable CIM mRID for the machine. Distinct from market resource IDs. |
 
 ---
 
@@ -235,6 +239,7 @@ Branches are the transmission lines between buses.
 | `p_pu` | number | Active power demand in per-unit. |
 | `q_pu` | number | Reactive power demand in per-unit. |
 | `name` | text | Human-readable load name. |
+| `mrid` | text or null | **(v0.13.0+)** Optional stable equipment identity. Null when unavailable. |
 
 ---
 
@@ -249,6 +254,7 @@ Fixed shunts are permanently connected capacitor or reactor banks. They cannot b
 | `status` | true/false | True = in service. |
 | `g_pu` | number | Shunt conductance in per-unit. Positive = consumes reactive power (reactor). |
 | `b_pu` | number | Shunt susceptance in per-unit. Positive = produces reactive power (capacitor). |
+| `mrid` | text or null | **(v0.13.0+)** Optional stable equipment identity. Null when unavailable. |
 
 ---
 
@@ -266,6 +272,7 @@ Switched shunts are reactor or capacitor banks that can be switched in discrete 
 | `current_step` | integer | Which step is currently in service. 1-indexed. |
 | `b_init_pu` | number | Authoritative initial susceptance in per-unit. Always use this field — it is more reliable than reconstructing from `b_steps[current_step - 1]`. Populated from CGMES `ShuntCompensator.sections` or equivalent. |
 | `shunt_id` | text | Stable per-bank identity to disambiguate multiple switched-shunt banks at the same bus. CIM path: the `ShuntCompensator` mRID. PSS/E path: synthesized as `"{bus_id}_shunt_{n}"` (1-indexed bank within the bus). Null when source data lacks a stable bank mRID. Use this field — not `bus_id` alone — to cross-reference into `switched_shunts_solved`. (v0.8.5+) |
+| `mrid` | text or null | **(v0.13.0+)** Optional stable equipment identity (may equal `shunt_id` when mRID-backed). Null when unavailable. |
 
 ---
 
@@ -374,6 +381,24 @@ One row per generator-linked dynamic model. Used by dynamic (time-domain) simula
 | `gen_id` | The generator identifier (links back to `generators.id`). |
 | `model_type` | String name of the dynamic model, e.g. `GENROU`, `GENCLS`, `SYNC_MACHINE_EQ`, or a custom namespaced type like `raptrix.smart_valve.v1`. |
 | `params` | A map of parameter name → numeric value. Normalized lowercase keys derived from CIM field names (e.g. `h`, `xd_prime`, `d`, `ra`, `xl`). Also includes provenance keys: `source_dy = 1.0` if parameters came from the CGMES DY profile, `source_eq_fallback = 1.0` if derived from EQ data only, `source_stub = 1.0` if this is a placeholder row. |
+| `classical_params` | **(v0.13.0+)** Optional struct `{H, D, xd_prime, mbase_mva}` for classical first-swing machines. Prefer these fields over the same keys in `params` when both are present. |
+
+---
+
+### Optional: `computational_load_profiles` — large-load interchange (v0.10.0+; extended in v0.13.0)
+
+One row per computational / large-load bus or load. Present when `metadata.computational_load_mode` is used and the writer includes the table. Power fields are **physical MW** (not PU). Exactly one of `bus_id` or `load_id` should be set per row.
+
+| Field | What it means |
+|---|---|
+| `bus_id` / `load_id` | Anchor to a bus or load row (exactly one non-null when the mode contract is on). |
+| `seasonal_envelope`, `buildout_schedule` | Optional seasonal MW envelopes and year/MW buildout steps. |
+| `priority` | **(v0.13.0+)** Ranking 1–5 for candidate selection (1 = highest). Null = lowest priority. |
+| `max_step_drop_mw` | **(v0.13.0+)** Maximum single-step MW drop considered for studies. |
+| `trip_study_percentiles` | **(v0.13.0+)** List of **0–100 percentage points** (e.g. 60, 100) — not 0–1 fractions. Null/empty means the case file did not auto-generate percentiles; consumers may apply their own study defaults. |
+| `facility_class` | **(v0.13.0+)** Closed set: `cloud_storage` \| `ai_hpc` \| `crypto` \| `mixed` \| `other`. |
+| `common_mode_group`, `poi_name`, `mrid` | Grouping / labeling / optional identity. |
+| `voltage_sensitivity_hint`, transfer / reconnection / ride-through maps | Optional screening and ride-through hints for large-load studies. |
 
 ---
 
@@ -502,7 +527,7 @@ Post-converged bus voltages and net injections from the solver.
 | `v_ang_deg` | Solved voltage angle in degrees. |
 | `p_inj_pu` | Net active power injection at this bus in per-unit (generation minus load). |
 | `q_inj_pu` | Net reactive power injection at this bus in per-unit. |
-| `bus_type_solved` | Bus type at convergence: `PQ`, `PV`, or `slack`. May differ from the planning type if voltage limits were hit. |
+| `bus_type_solved` | **(v0.13.0+)** Bus type at convergence: `PQ`, `PV`, or `Slack` (dictionary tokens, same vocabulary as `buses.type`). May differ from the planning type if voltage limits were hit. |
 | `provenance` | Short string identifying the solver or data source that produced this row. |
 
 #### `generators_solved`

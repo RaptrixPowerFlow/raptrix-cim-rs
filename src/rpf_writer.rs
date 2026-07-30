@@ -25,9 +25,9 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use arrow::array::{
-    ArrayBuilder, ArrayRef, BooleanBuilder, Float32Builder, Float64Builder, Int8Builder,
-    Int32Builder, ListBuilder, MapBuilder, MapFieldNames, StringBuilder, StringDictionaryBuilder,
-    StructBuilder, new_null_array,
+    ArrayBuilder, ArrayRef, BooleanBuilder, Float32Builder, Float64Builder, Int32Builder,
+    ListBuilder, MapBuilder, MapFieldNames, StringBuilder, StringDictionaryBuilder, StructBuilder,
+    TimestampMicrosecondBuilder, new_null_array,
 };
 use arrow::datatypes::{DataType, Field, Int32Type, UInt32Type};
 use arrow::record_batch::RecordBatch;
@@ -39,13 +39,14 @@ pub use raptrix_cim_arrow::{
 use sha2::{Digest, Sha256};
 
 use crate::arrow_schema::{
-    METADATA_KEY_CASE_FINGERPRINT, METADATA_KEY_CASE_MODE, METADATA_KEY_DEFAULT_SHUNT_CONTROL_MODE,
+    BUS_TYPE_PQ, IDENTITY_MODEL_HYBRID_SOLVER_FLAT_V1, METADATA_KEY_CASE_FINGERPRINT,
+    METADATA_KEY_CASE_MODE, METADATA_KEY_DEFAULT_SHUNT_CONTROL_MODE,
     METADATA_KEY_FEATURE_TOPOLOGY_ONLY, METADATA_KEY_FEATURE_ZERO_INJECTION_STUB,
-    METADATA_KEY_LOADS_ZIP_FIDELITY_PRESENCE, METADATA_KEY_SOLVED_SHUNT_STATE_PRESENCE,
-    METADATA_KEY_SOLVED_STATE_PRESENCE, METADATA_KEY_SOLVER_ACCURACY,
-    METADATA_KEY_SOLVER_ANGLE_REFERENCE_DEG, METADATA_KEY_SOLVER_ITERATIONS,
-    METADATA_KEY_SOLVER_MODE, METADATA_KEY_SOLVER_SLACK_BUS_ID, METADATA_KEY_SOLVER_VERSION,
-    METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_GENERATION_ISLAND_COUNT,
+    METADATA_KEY_IDENTITY_MODEL, METADATA_KEY_LOADS_ZIP_FIDELITY_PRESENCE,
+    METADATA_KEY_SOLVED_SHUNT_STATE_PRESENCE, METADATA_KEY_SOLVED_STATE_PRESENCE,
+    METADATA_KEY_SOLVER_ACCURACY, METADATA_KEY_SOLVER_ANGLE_REFERENCE_DEG,
+    METADATA_KEY_SOLVER_ITERATIONS, METADATA_KEY_SOLVER_MODE, METADATA_KEY_SOLVER_SLACK_BUS_ID,
+    METADATA_KEY_SOLVER_VERSION, METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_GENERATION_ISLAND_COUNT,
     METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_LOAD_ISLAND_COUNT,
     METADATA_KEY_TOPOLOGY_DETACHED_ACTIVE_NETWORK_ISLAND_COUNT,
     METADATA_KEY_TOPOLOGY_DETACHED_ISLANDS_PRESENT, METADATA_KEY_TOPOLOGY_ISLAND_COUNT,
@@ -57,13 +58,13 @@ use crate::arrow_schema::{
     TABLE_MULTI_SECTION_LINES, TABLE_NODE_BREAKER_DETAIL, TABLE_OWNERS, TABLE_SWITCH_DETAIL,
     TABLE_SWITCHED_SHUNT_BANKS, TABLE_SWITCHED_SHUNTS, TABLE_TRANSFORMERS_2W,
     TABLE_TRANSFORMERS_3W, TABLE_ZONES, areas_schema, branches_schema, buses_schema,
-    computational_load_profiles_schema, connectivity_groups_schema, connectivity_nodes_schema,
-    contingencies_schema, dc_lines_2w_schema, diagram_objects_schema, diagram_points_schema,
-    dynamics_models_schema, fixed_shunts_schema, generators_schema, interfaces_schema,
-    loads_schema, metadata_schema, multi_section_lines_schema, node_breaker_detail_schema,
-    owners_schema, perc1_params_struct_type, switch_detail_schema, switched_shunt_banks_schema,
-    switched_shunts_schema, transformers_2w_schema, transformers_3w_schema, validate_nominal_kv,
-    zones_schema,
+    classical_params_struct_type, computational_load_profiles_schema, connectivity_groups_schema,
+    connectivity_nodes_schema, contingencies_schema, dc_lines_2w_schema, diagram_objects_schema,
+    diagram_points_schema, dynamics_models_schema, fixed_shunts_schema, generators_schema,
+    interfaces_schema, loads_schema, metadata_schema, multi_section_lines_schema,
+    node_breaker_detail_schema, owners_schema, perc1_params_struct_type, switch_detail_schema,
+    switched_shunt_banks_schema, switched_shunts_schema, transformers_2w_schema,
+    transformers_3w_schema, validate_nominal_kv, zones_schema,
 };
 use crate::parser;
 
@@ -393,8 +394,12 @@ pub struct WriteSummary {
 struct MetadataRow<'a> {
     base_mva: f64,
     frequency_hz: f64,
-    psse_version: i32,
+    /// v0.13.0 optional source provenance (closed set: psse_raw | pslf_epc | cgmes | …).
+    source_format: Option<Cow<'a, str>>,
+    source_format_version: Option<Cow<'a, str>>,
+    source_identity_scheme: Option<Cow<'a, str>>,
     study_name: Cow<'a, str>,
+    /// RFC3339 string input; written as Arrow Timestamp(us, UTC).
     timestamp_utc: Cow<'a, str>,
     raptrix_version: Cow<'a, str>,
     is_planning_case: bool,
@@ -431,7 +436,8 @@ struct MetadataRow<'a> {
 struct BusRow<'a> {
     bus_id: i32,
     name: Cow<'a, str>,
-    bus_type: i8,
+    /// v0.13.0 dictionary token: PQ | PV | Slack
+    bus_type: Cow<'a, str>,
     p_sched: f64,
     q_sched: f64,
     v_mag_set: f64,
@@ -514,8 +520,8 @@ struct GenRow<'a> {
     h: f64,
     xd_prime: f64,
     d: f64,
-    /// v0.9.5: PSS/E IREG / CIM RegulatingControl target as dense `bus_id`; `0` or `bus_id` = local.
-    controlled_bus_id: i32,
+    /// v0.13.0: remote regulation target dense `bus_id`; `None` = local regulation.
+    controlled_bus_id: Option<i32>,
     /// v0.12.2: stable CIM mRID (SynchronousMachine.base.m_rid); distinct from `market_resource_id`.
     mrid: Option<Cow<'a, str>>,
 }
@@ -950,6 +956,12 @@ fn infer_study_name(cgmes_paths: &[&str]) -> String {
         .map(|value| value.to_string())
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| "cgmes_import".to_string())
+}
+
+fn timestamp_micros_from_rfc3339(value: &str) -> i64 {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .map(|dt| dt.with_timezone(&Utc).timestamp_micros())
+        .unwrap_or_else(|_| Utc::now().timestamp_micros())
 }
 
 fn current_timestamp_utc() -> String {
@@ -1866,7 +1878,9 @@ pub fn write_complete_rpf_with_options(
     let metadata_row = MetadataRow {
         base_mva: options.base_mva,
         frequency_hz: options.frequency_hz,
-        psse_version: 35,
+        source_format: Some(Cow::Borrowed("cgmes")),
+        source_format_version: Some(Cow::Borrowed("3.0")),
+        source_identity_scheme: Some(Cow::Borrowed("mixed")),
         study_name: Cow::Owned(study_name.clone()),
         timestamp_utc: Cow::Owned(snapshot_timestamp_utc.clone()),
         raptrix_version: Cow::Borrowed(SCHEMA_VERSION),
@@ -1990,6 +2004,10 @@ pub fn write_complete_rpf_with_options(
         &gen_rows,
     );
     let mut additional_root_metadata: HashMap<String, String> = HashMap::new();
+    additional_root_metadata.insert(
+        METADATA_KEY_IDENTITY_MODEL.to_string(),
+        IDENTITY_MODEL_HYBRID_SOLVER_FLAT_V1.to_string(),
+    );
     additional_root_metadata.insert(
         METADATA_KEY_TOPOLOGY_ISLAND_COUNT.to_string(),
         topology_diagnostics.island_count.to_string(),
@@ -3135,7 +3153,7 @@ fn parse_eq_topology_rows(
                         bus_voltage_label_by_key.get(*bus_key).map(String::as_str),
                     )
                 })),
-                bus_type: 1,
+                bus_type: Cow::Borrowed(BUS_TYPE_PQ),
                 p_sched: 0.0,
                 q_sched: 0.0,
                 v_mag_set: 1.0,
@@ -3414,7 +3432,8 @@ fn parse_eq_topology_rows(
             h: machine.h.unwrap_or(0.0),
             xd_prime: machine.xd_prime.unwrap_or(0.0),
             d: machine.d.unwrap_or(0.0),
-            controlled_bus_id: bus_id,
+            // Local regulation: null controlled_bus_id (v0.13.0). Remote IREG would be Some(remote_id).
+            controlled_bus_id: None,
             mrid: Some(Cow::Owned(machine_id_text.clone())),
         });
     }
@@ -4236,19 +4255,24 @@ fn parse_eq_topology_rows(
     ))
 }
 
-/// Builds the one-row `metadata` table batch using the locked v0.5 schema.
+/// Builds the one-row `metadata` table batch using the locked v0.13.0 schema.
 fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
     let schema = Arc::new(metadata_schema());
+    let utc_tz: Arc<str> = Arc::from("UTC");
 
     let mut base_mva_b = Float64Builder::new();
     let mut frequency_b = Float64Builder::new();
-    let mut psse_b = Int32Builder::new();
+    let mut source_format_b = StringDictionaryBuilder::<Int32Type>::new();
+    let mut source_format_version_b = StringBuilder::new();
+    let mut source_identity_scheme_b = StringDictionaryBuilder::<Int32Type>::new();
     let mut study_name_b = StringDictionaryBuilder::<Int32Type>::new();
-    let mut timestamp_b = StringBuilder::new();
+    let mut timestamp_b =
+        TimestampMicrosecondBuilder::with_capacity(1).with_timezone(utc_tz.clone());
     let mut raptrix_version_b = StringBuilder::new();
     let mut planning_b = BooleanBuilder::new();
     let mut source_case_id_b = StringDictionaryBuilder::<Int32Type>::new();
-    let mut snapshot_timestamp_utc_b = StringBuilder::new();
+    let mut snapshot_timestamp_utc_b =
+        TimestampMicrosecondBuilder::with_capacity(1).with_timezone(utc_tz.clone());
     let mut case_fingerprint_b = StringBuilder::new();
     let mut validation_mode_b = StringDictionaryBuilder::<Int32Type>::new();
     // v0.8.4 builders
@@ -4269,7 +4293,11 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
     let mut has_smart_valve_b = BooleanBuilder::new();
     let mut has_multi_terminal_dc_b = BooleanBuilder::new();
     let mut study_purpose_b = StringBuilder::new();
-    let list_field = schema.field(27).data_type().clone();
+    let list_field = schema
+        .field_with_name("scenario_tags")
+        .context("metadata.scenario_tags missing")?
+        .data_type()
+        .clone();
     let mut scenario_tags_b = ListBuilder::new(StringBuilder::new()).with_field(match list_field {
         DataType::List(field) => field,
         _ => Arc::new(Field::new("item", DataType::Utf8, false)),
@@ -4282,12 +4310,13 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
     let mut real_time_discovery_b = BooleanBuilder::new();
     let mut default_shunt_control_mode_b = StringDictionaryBuilder::<Int32Type>::new();
     let mut computational_load_mode_b = BooleanBuilder::new();
-    // v0.12.3 baseline provenance builders (nullable; null in standard CIM exports)
-    let mut original_sentinel_case_id_b = StringBuilder::new();
+    // v0.13.0 baseline provenance builders (nullable; null in standard CIM exports)
+    let mut baseline_source_case_id_b = StringBuilder::new();
     let mut original_model_version_b = StringBuilder::new();
     let mut target_baseline_version_b = StringBuilder::new();
     let mut is_sal_enhanced_b = BooleanBuilder::new();
-    let mut sal_enhancement_timestamp_b = StringBuilder::new();
+    let mut sal_enhancement_timestamp_b =
+        TimestampMicrosecondBuilder::with_capacity(1).with_timezone(utc_tz);
     let mut cim_model_version_used_b = StringBuilder::new();
     let mut planning_ready_b = BooleanBuilder::new();
     let mut upgrade_summary_b = StringBuilder::new();
@@ -4296,13 +4325,30 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
 
     base_mva_b.append_value(row.base_mva);
     frequency_b.append_value(row.frequency_hz);
-    psse_b.append_value(row.psse_version);
+    match &row.source_format {
+        Some(v) => {
+            source_format_b.append(v.as_ref())?;
+        }
+        None => source_format_b.append_null(),
+    }
+    match &row.source_format_version {
+        Some(v) => source_format_version_b.append_value(v.as_ref()),
+        None => source_format_version_b.append_null(),
+    }
+    match &row.source_identity_scheme {
+        Some(v) => {
+            source_identity_scheme_b.append(v.as_ref())?;
+        }
+        None => source_identity_scheme_b.append_null(),
+    }
     study_name_b.append(row.study_name.as_ref())?;
-    timestamp_b.append_value(row.timestamp_utc.as_ref());
+    timestamp_b.append_value(timestamp_micros_from_rfc3339(row.timestamp_utc.as_ref()));
     raptrix_version_b.append_value(row.raptrix_version.as_ref());
     planning_b.append_value(row.is_planning_case);
     source_case_id_b.append(row.source_case_id.as_ref())?;
-    snapshot_timestamp_utc_b.append_value(row.snapshot_timestamp_utc.as_ref());
+    snapshot_timestamp_utc_b.append_value(timestamp_micros_from_rfc3339(
+        row.snapshot_timestamp_utc.as_ref(),
+    ));
     case_fingerprint_b.append_value(row.case_fingerprint.as_ref());
     validation_mode_b.append(row.validation_mode.as_ref())?;
     // v0.8.4
@@ -4378,8 +4424,8 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
         Some(v) => computational_load_mode_b.append_value(v),
         None => computational_load_mode_b.append_null(),
     }
-    // v0.12.3 baseline provenance — null in standard CIM exports
-    original_sentinel_case_id_b.append_null();
+    // v0.13.0 baseline provenance — null in standard CIM exports
+    baseline_source_case_id_b.append_null();
     original_model_version_b.append_null();
     target_baseline_version_b.append_null();
     is_sal_enhanced_b.append_null();
@@ -4390,13 +4436,19 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
     convergence_time_ms_b.append_null();
     convergence_iterations_b.append_null();
 
-    let custom_metadata_type = schema.field(11).data_type().clone();
+    let custom_metadata_type = schema
+        .field_with_name("custom_metadata")
+        .context("metadata.custom_metadata missing")?
+        .data_type()
+        .clone();
     let custom_metadata_array = new_null_array(&custom_metadata_type, 1);
 
     let arrays: Vec<ArrayRef> = vec![
         Arc::new(base_mva_b.finish()) as ArrayRef,
         Arc::new(frequency_b.finish()) as ArrayRef,
-        Arc::new(psse_b.finish()) as ArrayRef,
+        Arc::new(source_format_b.finish()) as ArrayRef,
+        Arc::new(source_format_version_b.finish()) as ArrayRef,
+        Arc::new(source_identity_scheme_b.finish()) as ArrayRef,
         Arc::new(study_name_b.finish()) as ArrayRef,
         Arc::new(timestamp_b.finish()) as ArrayRef,
         Arc::new(raptrix_version_b.finish()) as ArrayRef,
@@ -4432,8 +4484,8 @@ fn build_metadata_batch(row: &MetadataRow<'_>) -> Result<RecordBatch> {
         Arc::new(real_time_discovery_b.finish()) as ArrayRef,
         Arc::new(default_shunt_control_mode_b.finish()) as ArrayRef,
         Arc::new(computational_load_mode_b.finish()) as ArrayRef,
-        // v0.12.3 baseline provenance
-        Arc::new(original_sentinel_case_id_b.finish()) as ArrayRef,
+        // v0.13.0 baseline provenance
+        Arc::new(baseline_source_case_id_b.finish()) as ArrayRef,
         Arc::new(original_model_version_b.finish()) as ArrayRef,
         Arc::new(target_baseline_version_b.finish()) as ArrayRef,
         Arc::new(is_sal_enhanced_b.finish()) as ArrayRef,
@@ -4455,7 +4507,7 @@ fn build_buses_batch(rows: &[BusRow<'_>]) -> Result<RecordBatch> {
 
     let mut bus_id_b = Int32Builder::new();
     let mut name_b = StringDictionaryBuilder::<Int32Type>::new();
-    let mut type_b = Int8Builder::new();
+    let mut type_b = StringDictionaryBuilder::<Int32Type>::new();
     let mut p_sched_b = Float64Builder::new();
     let mut q_sched_b = Float64Builder::new();
     let mut v_mag_set_b = Float64Builder::new();
@@ -4481,7 +4533,7 @@ fn build_buses_batch(rows: &[BusRow<'_>]) -> Result<RecordBatch> {
     for row in rows {
         bus_id_b.append_value(row.bus_id);
         name_b.append(row.name.as_ref())?;
-        type_b.append_value(row.bus_type);
+        type_b.append(row.bus_type.as_ref())?;
         p_sched_b.append_value(row.p_sched);
         q_sched_b.append_value(row.q_sched);
         v_mag_set_b.append_value(row.v_mag_set);
@@ -4750,7 +4802,10 @@ fn build_generators_batch(rows: &[GenRow<'_>], _base_mva: f64) -> Result<RecordB
         params_b
             .append(true)
             .context("failed to append generators.params map row")?;
-        controlled_bus_id_b.append_value(row.controlled_bus_id);
+        match row.controlled_bus_id {
+            Some(v) => controlled_bus_id_b.append_value(v),
+            None => controlled_bus_id_b.append_null(),
+        }
         if let Some(mrid) = row.mrid.as_deref() {
             mrid_b.append_value(mrid);
         } else {
@@ -4821,6 +4876,8 @@ fn build_loads_batch(rows: &[LoadRow<'_>], base_mva: f64) -> Result<RecordBatch>
         name_b.append(row.name.as_ref())?;
     }
 
+    let mrid_arr = new_null_array(&DataType::Utf8, rows.len());
+
     let arrays: Vec<ArrayRef> = vec![
         Arc::new(bus_id_b.finish()) as ArrayRef,
         Arc::new(id_b.finish()) as ArrayRef,
@@ -4832,6 +4889,7 @@ fn build_loads_batch(rows: &[LoadRow<'_>], base_mva: f64) -> Result<RecordBatch>
         Arc::new(p_y_pu_b.finish()) as ArrayRef,
         Arc::new(q_y_pu_b.finish()) as ArrayRef,
         Arc::new(name_b.finish()) as ArrayRef,
+        mrid_arr,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build loads record batch")
@@ -5117,12 +5175,15 @@ fn build_fixed_shunts_batch(rows: &[FixedShuntRow<'_>], base_mva: f64) -> Result
         b_pu_b.append_value(row.b_mvar / base_mva);
     }
 
+    let mrid_arr = new_null_array(&DataType::Utf8, rows.len());
+
     let arrays: Vec<ArrayRef> = vec![
         Arc::new(bus_id_b.finish()) as ArrayRef,
         Arc::new(id_b.finish()) as ArrayRef,
         Arc::new(status_b.finish()) as ArrayRef,
         Arc::new(g_pu_b.finish()) as ArrayRef,
         Arc::new(b_pu_b.finish()) as ArrayRef,
+        mrid_arr,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build fixed_shunts record batch")
@@ -5169,6 +5230,8 @@ fn build_switched_shunts_batch(rows: &[SwitchedShuntRow]) -> Result<RecordBatch>
         }
     }
 
+    let mrid_arr = new_null_array(&DataType::Utf8, rows.len());
+
     let arrays: Vec<ArrayRef> = vec![
         Arc::new(bus_id_b.finish()) as ArrayRef,
         Arc::new(status_b.finish()) as ArrayRef,
@@ -5178,6 +5241,7 @@ fn build_switched_shunts_batch(rows: &[SwitchedShuntRow]) -> Result<RecordBatch>
         Arc::new(current_step_b.finish()) as ArrayRef,
         Arc::new(b_init_pu_b.finish()) as ArrayRef,
         Arc::new(shunt_id_b.finish()) as ArrayRef,
+        mrid_arr,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build switched_shunts record batch")
@@ -5674,6 +5738,7 @@ fn build_dynamics_models_batch(rows: &[DynamicsModelRow<'_>]) -> Result<RecordBa
     }
 
     let perc1_col = new_null_array(&perc1_params_struct_type(), rows.len());
+    let classical_col = new_null_array(&classical_params_struct_type(), rows.len());
 
     let arrays: Vec<ArrayRef> = vec![
         Arc::new(bus_id_b.finish()) as ArrayRef,
@@ -5681,6 +5746,7 @@ fn build_dynamics_models_batch(rows: &[DynamicsModelRow<'_>]) -> Result<RecordBa
         Arc::new(model_type_b.finish()) as ArrayRef,
         Arc::new(params_b.finish()) as ArrayRef,
         perc1_col,
+        classical_col,
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build dynamics_models record batch")
@@ -6406,7 +6472,7 @@ mod tests {
             h: 4.0,
             xd_prime: 0.2,
             d: 0.5,
-            controlled_bus_id: 1,
+            controlled_bus_id: None,
             mrid: Some(Cow::Borrowed("G1")),
         };
         assert_eq!(infer_dynamics_model_type(&full), "GENROU");
