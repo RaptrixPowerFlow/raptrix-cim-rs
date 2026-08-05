@@ -90,15 +90,31 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / Raptrix Power Interchange v0.13.0 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow / Raptrix Power Interchange v0.13.1 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.";
 
 /// Canonical RPF format version tag embedded as file-level metadata.
-pub const RPF_VERSION: &str = "v0.13.0";
+pub const RPF_VERSION: &str = "v0.13.1";
 
 /// Supported RPF versions accepted by generic Arrow IPC readers.
 ///
-/// v0.13.0 is a clean-cut breaking release. Prior contract files are rejected.
-pub const SUPPORTED_RPF_VERSIONS: &[&str] = &["v0.13.0", "0.13.0"];
+/// v0.13.1 is an additive compatibility extension of the v0.13.0 clean cut.
+/// Readers accept both `v0.13.0` and `v0.13.1`. Pre-0.13 files remain rejected.
+pub const SUPPORTED_RPF_VERSIONS: &[&str] = &["v0.13.1", "0.13.1", "v0.13.0", "0.13.0"];
+
+/// Closed vocabulary for `voltage_transfer_curve.polarity`.
+pub const VOLTAGE_TRANSFER_POLARITIES: &[&str] = &["under", "over"];
+/// Closed vocabulary for `voltage_transfer_curve.action`.
+pub const VOLTAGE_TRANSFER_ACTIONS: &[&str] = &["transfer", "trip", "partial_transfer"];
+/// Closed vocabulary for `voltage_transfer_curve.load_class`.
+pub const VOLTAGE_TRANSFER_LOAD_CLASSES: &[&str] = &["it", "mechanical", "all"];
+/// Closed vocabulary for `voltage_measurement.basis`.
+pub const VOLTAGE_MEASUREMENT_BASES: &[&str] =
+    &["positive_sequence_rms", "minimum_phase_rms"];
+/// Closed vocabulary for `voltage_measurement.location`.
+pub const VOLTAGE_MEASUREMENT_LOCATIONS: &[&str] = &["poi", "facility_lv"];
+/// Closed vocabulary for `protection_settings_provenance.source`.
+pub const PROTECTION_SETTINGS_SOURCES: &[&str] =
+    &["site_verified", "oem_default", "study_assumption"];
 
 /// Native UTC timestamp type used for case provenance timestamps (v0.13.0+).
 pub fn utc_timestamp_type() -> DataType {
@@ -1408,7 +1424,95 @@ pub fn dynamics_models_schema() -> Schema {
     )
 }
 
-/// Optional `computational_load_profiles` table (v0.10.0+; extended in v0.13.0).
+/// Named fields for one `voltage_transfer_curve` stage (v0.13.1+).
+pub fn voltage_transfer_curve_element_fields() -> Vec<Field> {
+    vec![
+        Field::new("v_pu", DataType::Float32, false),
+        Field::new("t_ms", DataType::Float32, false),
+        // Closed: under | over
+        Field::new("polarity", dict_utf8(), false),
+        // Closed: transfer | trip | partial_transfer
+        Field::new("action", dict_utf8(), false),
+        // Cumulative fraction of eligible grid demand; null = 1.0
+        Field::new("mw_fraction", DataType::Float32, true),
+        // Closed: it | mechanical | all; null = all
+        Field::new("load_class", dict_utf8(), true),
+    ]
+}
+
+/// `List<Struct{...}>` for multi-stage voltage-time transfer / ride-through curves.
+pub fn voltage_transfer_curve_list_type() -> DataType {
+    DataType::List(Arc::new(Field::new(
+        "item",
+        DataType::Struct(voltage_transfer_curve_element_fields().into()),
+        false,
+    )))
+}
+
+/// Named fields for nullable `disturbance_counter` (v0.13.1+).
+pub fn disturbance_counter_struct_fields() -> Vec<Field> {
+    vec![
+        Field::new("strike_limit", DataType::Int32, true),
+        Field::new("window_sec", DataType::Float32, true),
+        Field::new("qualifying_v_pu", DataType::Float32, true),
+        Field::new("qualifying_duration_ms", DataType::Float32, true),
+        Field::new("latch_permanent", DataType::Boolean, true),
+    ]
+}
+
+/// Nullable struct type for `disturbance_counter`.
+pub fn disturbance_counter_struct_type() -> DataType {
+    DataType::Struct(disturbance_counter_struct_fields().into())
+}
+
+/// Named fields for nullable typed `reconnection_params` (v0.13.1+).
+pub fn reconnection_params_struct_fields() -> Vec<Field> {
+    vec![
+        Field::new("v_recover_pu", DataType::Float32, true),
+        Field::new("delay_ms", DataType::Float32, true),
+        Field::new("ramp_mw_per_min", DataType::Float32, true),
+        Field::new("manual_reset_required", DataType::Boolean, true),
+    ]
+}
+
+/// Nullable struct type for `reconnection_params`.
+pub fn reconnection_params_struct_type() -> DataType {
+    DataType::Struct(reconnection_params_struct_fields().into())
+}
+
+/// Named fields for nullable `voltage_measurement` (v0.13.1+).
+pub fn voltage_measurement_struct_fields() -> Vec<Field> {
+    vec![
+        // Closed: positive_sequence_rms | minimum_phase_rms
+        Field::new("basis", dict_utf8(), true),
+        Field::new("filter_time_constant_ms", DataType::Float32, true),
+        // Closed: poi | facility_lv
+        Field::new("location", dict_utf8(), true),
+        Field::new("reset_hysteresis_pu", DataType::Float32, true),
+    ]
+}
+
+/// Nullable struct type for `voltage_measurement`.
+pub fn voltage_measurement_struct_type() -> DataType {
+    DataType::Struct(voltage_measurement_struct_fields().into())
+}
+
+/// Named fields for nullable `protection_settings_provenance` (v0.13.1+).
+pub fn protection_settings_provenance_struct_fields() -> Vec<Field> {
+    vec![
+        // Closed: site_verified | oem_default | study_assumption
+        Field::new("source", dict_utf8(), true),
+        Field::new("profile_id", DataType::Utf8, true),
+        Field::new("effective_date", utc_timestamp_type(), true),
+    ]
+}
+
+/// Nullable struct type for `protection_settings_provenance`.
+pub fn protection_settings_provenance_struct_type() -> DataType {
+    DataType::Struct(protection_settings_provenance_struct_fields().into())
+}
+
+/// Optional `computational_load_profiles` table (v0.10.0+; extended in v0.13.0 / v0.13.1).
 ///
 /// One row per computational-load bus or load. Exactly one of `bus_id` or `load_id` should be
 /// non-null for a valid interchange row; enforcement is a **runtime** contract when
@@ -1417,6 +1521,9 @@ pub fn dynamics_models_schema() -> Schema {
 /// All MW fields are **physical MW**. `trip_study_percentiles` values are **0–100 percentage
 /// points** (e.g. 60, 100), not 0–1 fractions. Null/empty percentiles mean no auto-generated
 /// percentiles from the case file — consumers may apply their own configurable defaults.
+///
+/// v0.13.1 appends trailing optional typed protection fields after `ride_through_capability`.
+/// Empty `voltage_transfer_curve` list is treated as null (no curve) by consumers.
 pub fn computational_load_profiles_schema() -> Schema {
     Schema::new_with_metadata(
         vec![
@@ -1454,6 +1561,16 @@ pub fn computational_load_profiles_schema() -> Schema {
             Field::new("transfer_delay_ms", DataType::Float32, true),
             Field::new("reconnection_criteria", map_string_f64(), true),
             Field::new("ride_through_capability", map_string_f64(), true),
+            // v0.13.1 Ashburn-class typed protection extensions (trailing only)
+            Field::new("voltage_transfer_curve", voltage_transfer_curve_list_type(), true),
+            Field::new("disturbance_counter", disturbance_counter_struct_type(), true),
+            Field::new("reconnection_params", reconnection_params_struct_type(), true),
+            Field::new("voltage_measurement", voltage_measurement_struct_type(), true),
+            Field::new(
+                "protection_settings_provenance",
+                protection_settings_provenance_struct_type(),
+                true,
+            ),
         ],
         schema_metadata(),
     )
@@ -2038,12 +2155,14 @@ mod tests {
             "optional RAS/protection/island tables must NOT appear in all_table_schemas()"
         );
 
-        // version gate: v0.13.0 clean cut only
+        // version gate: v0.13.1 additive extension dual-reads v0.13.0; pre-0.13 rejected
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.13.1"));
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.13.1"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.13.0"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.13.0"));
         assert!(!SUPPORTED_RPF_VERSIONS.contains(&"v0.12.5"));
-        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 2);
-        assert_eq!(RPF_VERSION, "v0.13.0");
+        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 4);
+        assert_eq!(RPF_VERSION, "v0.13.1");
         assert_eq!(SCHEMA_VERSION, RPF_VERSION);
     }
 
@@ -2372,6 +2491,34 @@ mod tests {
                 .unwrap()
                 .is_nullable()
         );
+    }
+
+    #[test]
+    fn computational_load_profiles_v0131_trailing_columns() {
+        let cl = super::computational_load_profiles_schema();
+        let names: Vec<_> = cl.fields().iter().map(|f| f.name().as_str()).collect();
+        let ride_idx = names
+            .iter()
+            .position(|n| *n == "ride_through_capability")
+            .expect("ride_through_capability");
+        assert_eq!(names[ride_idx + 1], "voltage_transfer_curve");
+        assert_eq!(names[ride_idx + 2], "disturbance_counter");
+        assert_eq!(names[ride_idx + 3], "reconnection_params");
+        assert_eq!(names[ride_idx + 4], "voltage_measurement");
+        assert_eq!(names[ride_idx + 5], "protection_settings_provenance");
+        assert_eq!(cl.fields().len(), ride_idx + 6);
+        assert!(matches!(
+            cl.field_with_name("voltage_transfer_curve")
+                .unwrap()
+                .data_type(),
+            DataType::List(_)
+        ));
+        assert!(matches!(
+            cl.field_with_name("disturbance_counter")
+                .unwrap()
+                .data_type(),
+            DataType::Struct(_)
+        ));
     }
 
     #[test]

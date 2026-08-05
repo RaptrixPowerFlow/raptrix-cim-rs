@@ -35,6 +35,11 @@ INTERNAL-MARKETING-GUIDE-Raptrix-Suite-v*.md
 docs/roadmap.internal*
 docs/node-breaker-fixture-feedback.md
 
+# Local secrets (never commit)
+.env
+.env.local
+.env.*.local
+
 # Local Python virtual environment
 .venv/
 __pycache__/

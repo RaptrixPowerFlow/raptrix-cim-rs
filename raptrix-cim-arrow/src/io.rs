@@ -21,7 +21,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result, bail};
 use arrow::array::{Array, ArrayRef, Int32Array, StructArray, new_null_array};
 use arrow::buffer::NullBuffer;
-use arrow::compute::concat;
+use arrow::compute::{cast, concat};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::ipc::reader::FileReader;
 use arrow::ipc::writer::FileWriter;
@@ -386,6 +386,20 @@ pub fn read_rpf_tables(path: impl AsRef<Path>) -> Result<Vec<(String, RecordBatc
         Err(error) if format!("{error:#}").contains("Found unmasked nulls for non-nullable") => {
             read_rpf_tables_impl(path.as_ref(), true)
         }
+        // v0.13.1 CLP/VRT exporters can emit an all-null dictionary-encoded
+        // column (e.g. an unset categorical field) with a zero-length values
+        // array and keys left at their default 0 in the null-masked slots,
+        // per the Arrow columnar spec's "undefined content for null slots".
+        // arrow-rs's strict `DictionaryArray` bounds check rejects this even
+        // though every referencing slot is null and the value is never read.
+        // The `[0, -1]` upper bound is diagnostic: it can only occur when the
+        // dictionary values array itself is empty, so this can never mask a
+        // real out-of-range key into a populated dictionary. Retry with
+        // buffer validation skipped; all schema/contract validation still
+        // runs afterward.
+        Err(error) if format!("{error:#}").contains("should be in [0, -1])") => {
+            read_rpf_tables_impl(path.as_ref(), true)
+        }
         Err(error) => Err(error),
     }
 }
@@ -594,6 +608,209 @@ pub fn rpf_file_metadata(path: impl AsRef<Path>) -> Result<HashMap<String, Strin
     Ok(reader.schema().metadata().clone())
 }
 
+fn schema_drift_diffs(got: &Schema, want: &Schema) -> Vec<String> {
+    let mut diffs: Vec<String> = Vec::new();
+    if got.fields().len() != want.fields().len() {
+        diffs.push(format!(
+            "field_count got={} want={}",
+            got.fields().len(),
+            want.fields().len()
+        ));
+    }
+    let n = got.fields().len().min(want.fields().len());
+    for i in 0..n {
+        let g = got.field(i);
+        let w = want.field(i);
+        if g != w {
+            diffs.push(format!(
+                "[{i}] name={}/{} type={:?}/{:?} null={}/{}",
+                g.name(),
+                w.name(),
+                g.data_type(),
+                w.data_type(),
+                g.is_nullable(),
+                w.is_nullable()
+            ));
+        }
+    }
+    diffs
+}
+
+/// Align a table batch to the canonical expected schema.
+///
+/// Round-tripped Arrow IPC files often re-materialize nested List/Map value
+/// fields as nullable even when the canonical schema declares them non-null.
+/// Cast each column to the expected `DataType` so writers can accept those
+/// batches without inventing new columns or changing semantics.
+fn align_batch_to_expected_schema(
+    batch: &RecordBatch,
+    expected: &Schema,
+    table_name: &str,
+) -> Result<RecordBatch> {
+    if batch.schema().fields() == expected.fields() {
+        return Ok(batch.clone());
+    }
+
+    let got = batch.schema();
+    let diffs = schema_drift_diffs(&got, expected);
+
+    if got.fields().len() != expected.fields().len() {
+        bail!(
+            "schema drift in table '{table_name}' while assembling root IPC file: {}",
+            diffs.join("; ")
+        );
+    }
+
+    let mut columns: Vec<ArrayRef> = Vec::with_capacity(expected.fields().len());
+    for (i, field) in expected.fields().iter().enumerate() {
+        let col = batch.column(i);
+        if col.data_type() == field.data_type() {
+            columns.push(col.clone());
+            continue;
+        }
+        let casted = cast(col.as_ref(), field.data_type()).with_context(|| {
+            format!(
+                "schema drift in table '{table_name}' while assembling root IPC file: \
+                 failed to cast column '{}' ({:?} → {:?}); diffs: {}",
+                field.name(),
+                col.data_type(),
+                field.data_type(),
+                diffs.join("; ")
+            )
+        })?;
+        columns.push(casted);
+    }
+
+    RecordBatch::try_new(Arc::new(expected.clone()), columns).with_context(|| {
+        format!(
+            "schema drift in table '{table_name}' while assembling root IPC file: \
+             cast columns did not satisfy canonical schema; diffs: {}",
+            diffs.join("; ")
+        )
+    })
+}
+
+fn column_by_name(batch: &RecordBatch, name: &str) -> Result<ArrayRef> {
+    let idx = batch
+        .schema()
+        .index_of(name)
+        .with_context(|| format!("missing column '{name}' in snapshot-dialect batch"))?;
+    Ok(batch.column(idx).clone())
+}
+
+fn cast_named_column(batch: &RecordBatch, name: &str, to: &DataType) -> Result<ArrayRef> {
+    let col = column_by_name(batch, name)?;
+    if col.data_type() == to {
+        return Ok(col);
+    }
+    cast(col.as_ref(), to).with_context(|| {
+        format!(
+            "failed to cast snapshot-dialect column '{name}' from {:?} to {:?}",
+            col.data_type(),
+            to
+        )
+    })
+}
+
+/// Convert a read-compatible solved-snapshot dialect batch into the canonical
+/// writer layout. Empty dialect tables become empty canonical tables. Populated
+/// `generators_solved` dialect rows keep MW/MVAR/status and leave pu/provenance
+/// columns null (recoverable from `metadata.base_mva` by consumers).
+fn convert_snapshot_dialect_to_canonical(
+    table_name: &str,
+    batch: &RecordBatch,
+    expected: &Schema,
+) -> Result<RecordBatch> {
+    if batch.num_rows() == 0 {
+        return Ok(RecordBatch::new_empty(Arc::new(expected.clone())));
+    }
+
+    match table_name {
+        TABLE_GENERATORS_SOLVED => {
+            let n = batch.num_rows();
+            let mut columns: Vec<ArrayRef> = Vec::with_capacity(expected.fields().len());
+            for field in expected.fields() {
+                let col = match field.name().as_str() {
+                    "bus_id" | "id" | "p_mw" | "q_mvar" | "status" => {
+                        cast_named_column(batch, field.name(), field.data_type())?
+                    }
+                    _ => new_null_array(field.data_type(), n),
+                };
+                columns.push(col);
+            }
+            RecordBatch::try_new(Arc::new(expected.clone()), columns).with_context(|| {
+                format!(
+                    "failed to convert snapshot-dialect '{table_name}' to canonical write schema"
+                )
+            })
+        }
+        TABLE_MULTI_SECTION_LINES | TABLE_DC_LINES_2W | TABLE_SWITCHED_SHUNT_BANKS => {
+            bail!(
+                "schema drift in table '{table_name}' while assembling root IPC file: \
+                 populated solved-snapshot dialect cannot be auto-converted to canonical layout \
+                 ({} rows); re-export with a canonical writer or clear the table first",
+                batch.num_rows()
+            )
+        }
+        _ => bail!(
+            "schema drift in table '{table_name}' while assembling root IPC file: {}",
+            schema_drift_diffs(batch.schema().as_ref(), expected).join("; ")
+        ),
+    }
+}
+
+/// Prepare a table batch for canonical root write: cast nested nullability when
+/// field layout matches, otherwise convert a known snapshot dialect.
+fn prepare_table_batch_for_write(
+    table_name: &str,
+    batch: &RecordBatch,
+    expected: &Schema,
+) -> Result<RecordBatch> {
+    let batch_schema = batch.schema();
+    let actual_fields = batch_schema.fields();
+    if match_schema_variant(table_name, expected, actual_fields).is_ok()
+        || batch_schema.fields() == expected.fields()
+    {
+        // Same column layout (possibly with nested nullability drift).
+        if batch.num_columns() == expected.fields().len() {
+            return align_batch_to_expected_schema(batch, expected, table_name);
+        }
+        // Prefix-compatible empty/partial canonical layout: pad missing trailing
+        // columns with nulls so the writer always emits the full contract.
+        let mut columns: Vec<ArrayRef> = Vec::with_capacity(expected.fields().len());
+        for (i, field) in expected.fields().iter().enumerate() {
+            if i < batch.num_columns() {
+                let col = batch.column(i);
+                if col.data_type() == field.data_type() {
+                    columns.push(col.clone());
+                } else {
+                    columns.push(cast(col.as_ref(), field.data_type()).with_context(|| {
+                        format!(
+                            "failed to cast column '{}' of table '{table_name}' to {:?}",
+                            field.name(),
+                            field.data_type()
+                        )
+                    })?);
+                }
+            } else {
+                columns.push(new_null_array(field.data_type(), batch.num_rows()));
+            }
+        }
+        return RecordBatch::try_new(Arc::new(expected.clone()), columns).with_context(|| {
+            format!("failed to pad table '{table_name}' to canonical write schema")
+        });
+    }
+
+    let variants = table_schema_variants(table_name);
+    for dialect in variants.iter().skip(1) {
+        if match_schema_variant(table_name, dialect, actual_fields).is_ok() {
+            return convert_snapshot_dialect_to_canonical(table_name, batch, expected);
+        }
+    }
+
+    align_batch_to_expected_schema(batch, expected, table_name)
+}
+
 /// Writes a canonical root `.rpf` Arrow IPC file from prepared table batches.
 pub fn write_root_rpf(
     output_path: impl AsRef<Path>,
@@ -736,13 +953,10 @@ pub fn write_root_rpf_with_metadata(
     let mut root_columns: Vec<ArrayRef> = Vec::with_capacity(table_specs.len());
 
     for (table_name, expected_schema) in table_specs {
-        let table_batch = table_batches
+        let raw_batch = table_batches
             .get(table_name)
             .with_context(|| format!("missing required table batch '{table_name}'"))?;
-
-        if table_batch.schema().fields() != expected_schema.fields() {
-            bail!("schema drift in table '{table_name}' while assembling root IPC file");
-        }
+        let table_batch = prepare_table_batch_for_write(table_name, raw_batch, &expected_schema)?;
 
         let mut padded_columns: Vec<ArrayRef> = Vec::with_capacity(table_batch.num_columns());
         for column in table_batch.columns() {
@@ -1220,6 +1434,42 @@ mod tests {
         validate_rpf_file, write_root_rpf, write_root_rpf_with_metadata,
     };
 
+    /// Real-world v0.13.1 Texas7k exports with an all-null categorical field nested inside
+    /// `computational_load_profiles.voltage_transfer_curve` elements. Regression coverage for
+    /// the `[0, -1]` dictionary bounds retry above; skips gracefully off the authoring machine.
+    #[test]
+    fn reads_texas7k_hungerford_v0131_dvt_twins_despite_empty_dictionary_values() {
+        let candidates = [
+            r"C:\Users\matth\OneDrive - Raptrix PowerFlow\External_Share\rpf\Texas7k_20210804_hungerford_dc_1p8gw.rpf",
+            r"C:\Users\matth\OneDrive - Raptrix PowerFlow\External_Share\rpf\Texas7k_20210804_hungerford_dc_1p8gw_dyn.rpf",
+            r"C:\Users\matth\OneDrive - Raptrix PowerFlow\External_Share\rpf\Texas7k_20210804_hungerford_dc_1p8gw_v0131_vrt.rpf",
+        ];
+        let mut checked_any = false;
+        for candidate in candidates {
+            let path = std::path::PathBuf::from(candidate);
+            if !path.exists() {
+                eprintln!("skip: missing {path:?}");
+                continue;
+            }
+            checked_any = true;
+            let tables = read_rpf_tables(&path)
+                .unwrap_or_else(|e| panic!("failed reading {path:?}: {e:#}"));
+            let dynamics = tables
+                .iter()
+                .find(|(name, _)| name == "dynamics_models")
+                .map(|(_, batch)| batch.num_rows());
+            let clp = tables
+                .iter()
+                .find(|(name, _)| name == TABLE_COMPUTATIONAL_LOAD_PROFILES)
+                .map(|(_, batch)| batch.num_rows());
+            assert_eq!(dynamics, Some(2705), "unexpected dynamics_models row count in {path:?}");
+            assert_eq!(clp, Some(9), "unexpected computational_load_profiles row count in {path:?}");
+        }
+        if !checked_any {
+            eprintln!("skip: no Hungerford v0.13.1 fixtures found on this machine");
+        }
+    }
+
     #[test]
     fn round_trip_preserves_diagram_layout_optional_tables() -> Result<()> {
         let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_diagram_round_trip");
@@ -1533,7 +1783,7 @@ mod tests {
             .expect_err("v0.9.3 reader should reject missing required nominal_kv fields");
         let message = format!("{err:#}");
         assert!(message.contains("missing non-nullable field 'to_nominal_kv'"));
-        assert_eq!(SCHEMA_VERSION, "v0.13.0");
+        assert_eq!(SCHEMA_VERSION, "v0.13.1");
         Ok(())
     }
 

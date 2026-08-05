@@ -25,9 +25,9 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use arrow::array::{
-    ArrayBuilder, ArrayRef, BooleanBuilder, Float32Builder, Float64Builder, Int32Builder,
-    ListBuilder, MapBuilder, MapFieldNames, StringBuilder, StringDictionaryBuilder, StructBuilder,
-    TimestampMicrosecondBuilder, new_null_array,
+    ArrayRef, BooleanBuilder, Float32Builder, Float64Builder, Int32Builder, ListBuilder,
+    MapBuilder, MapFieldNames, StringBuilder, StringDictionaryBuilder, TimestampMicrosecondBuilder,
+    new_null_array,
 };
 use arrow::datatypes::{DataType, Field, Int32Type, UInt32Type};
 use arrow::record_batch::RecordBatch;
@@ -58,11 +58,10 @@ use crate::arrow_schema::{
     TABLE_MULTI_SECTION_LINES, TABLE_NODE_BREAKER_DETAIL, TABLE_OWNERS, TABLE_SWITCH_DETAIL,
     TABLE_SWITCHED_SHUNT_BANKS, TABLE_SWITCHED_SHUNTS, TABLE_TRANSFORMERS_2W,
     TABLE_TRANSFORMERS_3W, TABLE_ZONES, areas_schema, branches_schema, buses_schema,
-    classical_params_struct_type, computational_load_profiles_schema, connectivity_groups_schema,
-    connectivity_nodes_schema, contingencies_schema, dc_lines_2w_schema, diagram_objects_schema,
-    diagram_points_schema, dynamics_models_schema, fixed_shunts_schema, generators_schema,
-    interfaces_schema, loads_schema, metadata_schema, multi_section_lines_schema,
-    node_breaker_detail_schema, owners_schema, perc1_params_struct_type, switch_detail_schema,
+    computational_load_profiles_schema, connectivity_groups_schema, connectivity_nodes_schema,
+    dc_lines_2w_schema, diagram_objects_schema, diagram_points_schema, fixed_shunts_schema,
+    generators_schema, interfaces_schema, loads_schema, metadata_schema,
+    multi_section_lines_schema, node_breaker_detail_schema, owners_schema, switch_detail_schema,
     switched_shunt_banks_schema, switched_shunts_schema, transformers_2w_schema,
     transformers_3w_schema, validate_nominal_kv, zones_schema,
 };
@@ -5540,216 +5539,65 @@ fn build_diagram_points_batch(rows: &[DiagramPointRow<'_>]) -> Result<RecordBatc
 ///
 /// Tenet 2: this uses the exact locked `contingencies_schema()` ordering and
 /// nested field layout.
+/// Delegates to the shared authoring builder in `raptrix-cim-arrow::contingencies` (the same
+/// path Studio's Dynamics editor uses to author compound contingencies) so the PSS/E-converter
+/// N-1 stub path and Studio authoring never drift on `contingencies` wire encoding. Stub rows
+/// only ever populate `branch_id` / `bus_id` / `status_change`; `gen_id`, `load_id`, and
+/// `amount_mw` remain null here, matching legacy stub-generation behavior.
 fn build_contingencies_batch(rows: &[ContingencyRow<'_>]) -> Result<RecordBatch> {
-    let schema = Arc::new(contingencies_schema());
-
-    let mut contingency_id_b = StringDictionaryBuilder::<Int32Type>::new();
-
-    let element_fields = vec![
-        Field::new(
-            "element_type",
-            DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8)),
-            false,
-        ),
-        Field::new("branch_id", DataType::Int32, true),
-        Field::new("bus_id", DataType::Int32, true),
-        Field::new(
-            "gen_id",
-            DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8)),
-            true,
-        ),
-        Field::new(
-            "load_id",
-            DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8)),
-            true,
-        ),
-        Field::new("amount_mw", DataType::Float64, true),
-        Field::new("status_change", DataType::Boolean, false),
-        Field::new(
-            "equipment_kind",
-            DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8)),
-            true,
-        ),
-        Field::new(
-            "equipment_id",
-            DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8)),
-            true,
-        ),
-    ];
-    let element_field_builders: Vec<Box<dyn ArrayBuilder>> = vec![
-        Box::new(StringDictionaryBuilder::<Int32Type>::new()),
-        Box::new(Int32Builder::new()),
-        Box::new(Int32Builder::new()),
-        Box::new(StringDictionaryBuilder::<Int32Type>::new()),
-        Box::new(StringDictionaryBuilder::<Int32Type>::new()),
-        Box::new(Float64Builder::new()),
-        Box::new(BooleanBuilder::new()),
-        Box::new(StringDictionaryBuilder::<Int32Type>::new()),
-        Box::new(StringDictionaryBuilder::<Int32Type>::new()),
-    ];
-    let element_struct_b = StructBuilder::new(element_fields, element_field_builders);
-    let elements_field = match schema.field(1).data_type() {
-        DataType::List(field) => field.clone(),
-        other => {
-            bail!("contingencies.elements field must be List<Struct>, found {other:?}")
-        }
-    };
-    let mut elements_b = ListBuilder::new(element_struct_b).with_field(elements_field);
-
-    for row in rows {
-        contingency_id_b.append(row.contingency_id.as_ref())?;
-
-        for element in &row.elements {
-            let struct_b = elements_b.values();
-
-            struct_b
-                .field_builder::<StringDictionaryBuilder<Int32Type>>(0)
-                .context("missing element_type builder")?
-                .append(element.element_type.as_ref())?;
-
-            if let Some(branch_id) = element.branch_id {
-                struct_b
-                    .field_builder::<Int32Builder>(1)
-                    .context("missing branch_id builder")?
-                    .append_value(branch_id);
-            } else {
-                struct_b
-                    .field_builder::<Int32Builder>(1)
-                    .context("missing branch_id builder")?
-                    .append_null();
-            }
-
-            if let Some(bus_id) = element.bus_id {
-                struct_b
-                    .field_builder::<Int32Builder>(2)
-                    .context("missing bus_id builder")?
-                    .append_value(bus_id);
-            } else {
-                struct_b
-                    .field_builder::<Int32Builder>(2)
-                    .context("missing bus_id builder")?
-                    .append_null();
-            }
-
-            struct_b
-                .field_builder::<StringDictionaryBuilder<Int32Type>>(3)
-                .context("missing gen_id builder")?
-                .append_null();
-            struct_b
-                .field_builder::<StringDictionaryBuilder<Int32Type>>(4)
-                .context("missing load_id builder")?
-                .append_null();
-            struct_b
-                .field_builder::<Float64Builder>(5)
-                .context("missing amount_mw builder")?
-                .append_null();
-            struct_b
-                .field_builder::<BooleanBuilder>(6)
-                .context("missing status_change builder")?
-                .append_value(element.status_change);
-
-            if let Some(equipment_kind) = &element.equipment_kind {
-                struct_b
-                    .field_builder::<StringDictionaryBuilder<Int32Type>>(7)
-                    .context("missing equipment_kind builder")?
-                    .append(equipment_kind.as_ref())?;
-            } else {
-                struct_b
-                    .field_builder::<StringDictionaryBuilder<Int32Type>>(7)
-                    .context("missing equipment_kind builder")?
-                    .append_null();
-            }
-
-            if let Some(equipment_id) = &element.equipment_id {
-                struct_b
-                    .field_builder::<StringDictionaryBuilder<Int32Type>>(8)
-                    .context("missing equipment_id builder")?
-                    .append(equipment_id.as_ref())?;
-            } else {
-                struct_b
-                    .field_builder::<StringDictionaryBuilder<Int32Type>>(8)
-                    .context("missing equipment_id builder")?
-                    .append_null();
-            }
-            struct_b.append(true);
-        }
-
-        elements_b.append(true);
-    }
-
-    let n = rows.len();
-
-    // v0.9.0: 6 nullable operational-outcome columns — null in planning/stub files.
-    let risk_score_arr = new_null_array(&DataType::Float64, n);
-    let cleared_by_reserves_arr = new_null_array(&DataType::Boolean, n);
-    let voltage_collapse_flag_arr = new_null_array(&DataType::Boolean, n);
-    let recovery_possible_arr = new_null_array(&DataType::Boolean, n);
-    let recovery_time_min_arr = new_null_array(&DataType::Float64, n);
-    let greedy_reserve_summary_arr = new_null_array(&DataType::Utf8, n);
-
-    let arrays: Vec<ArrayRef> = vec![
-        Arc::new(contingency_id_b.finish()) as ArrayRef,
-        Arc::new(elements_b.finish()) as ArrayRef,
-        risk_score_arr,
-        cleared_by_reserves_arr,
-        voltage_collapse_flag_arr,
-        recovery_possible_arr,
-        recovery_time_min_arr,
-        greedy_reserve_summary_arr,
-    ];
-
-    RecordBatch::try_new(schema, arrays).context("failed to build contingencies record batch")
+    let full_rows: Vec<raptrix_cim_arrow::contingencies::ContingencyRow> = rows
+        .iter()
+        .map(|row| raptrix_cim_arrow::contingencies::ContingencyRow {
+            contingency_id: row.contingency_id.to_string(),
+            elements: row
+                .elements
+                .iter()
+                .map(|el| raptrix_cim_arrow::contingencies::ContingencyElementRow {
+                    element_type: el.element_type.to_string(),
+                    branch_id: el.branch_id,
+                    bus_id: el.bus_id,
+                    gen_id: None,
+                    load_id: None,
+                    amount_mw: None,
+                    status_change: el.status_change,
+                    equipment_kind: el.equipment_kind.as_ref().map(|s| s.to_string()),
+                    equipment_id: el.equipment_id.as_ref().map(|s| s.to_string()),
+                })
+                .collect(),
+            ..Default::default()
+        })
+        .collect();
+    raptrix_cim_arrow::contingencies::build_contingencies_batch(&full_rows)
+        .context("failed to build contingencies record batch")
 }
 
 /// Builds the `dynamics_models` table batch with map-typed parameter payloads.
 ///
 /// Tenet 3: this is currently stubbed ingestion data only; no dynamic model
 /// solving behavior exists here.
+/// Delegates to the shared authoring builder in `raptrix-cim-arrow::dynamics` (the same path
+/// Studio's Dynamics editor uses) so the PSS/E-converter stub path and Studio authoring never
+/// drift on `dynamics_models` wire encoding. `perc1_params` is always null here (stub-generation
+/// never derives PERC1 data); `classical_params` is populated when the caller's row snapshot has
+/// one (see `dynamics_rows_from_generators_and_dy`).
 fn build_dynamics_models_batch(rows: &[DynamicsModelRow<'_>]) -> Result<RecordBatch> {
-    let schema = Arc::new(dynamics_models_schema());
-
-    let mut bus_id_b = Int32Builder::new();
-    let mut gen_id_b = StringDictionaryBuilder::<Int32Type>::new();
-    let mut model_type_b = StringDictionaryBuilder::<Int32Type>::new();
-    let mut params_b = MapBuilder::new(
-        Some(MapFieldNames {
-            entry: "entries".to_string(),
-            key: "key".to_string(),
-            value: "value".to_string(),
-        }),
-        StringBuilder::new(),
-        Float64Builder::new(),
-    )
-    .with_keys_field(Arc::new(Field::new("key", DataType::Utf8, false)))
-    .with_values_field(Arc::new(Field::new("value", DataType::Float64, false)));
-
-    for row in rows {
-        bus_id_b.append_value(row.bus_id);
-        gen_id_b.append(row.gen_id.as_ref())?;
-        model_type_b.append(row.model_type.as_ref())?;
-
-        for (key, value) in &row.params {
-            params_b.keys().append_value(key.as_ref());
-            params_b.values().append_value(*value);
-        }
-        params_b
-            .append(true)
-            .context("failed to append params map row")?;
-    }
-
-    let perc1_col = new_null_array(&perc1_params_struct_type(), rows.len());
-    let classical_col = new_null_array(&classical_params_struct_type(), rows.len());
-
-    let arrays: Vec<ArrayRef> = vec![
-        Arc::new(bus_id_b.finish()) as ArrayRef,
-        Arc::new(gen_id_b.finish()) as ArrayRef,
-        Arc::new(model_type_b.finish()) as ArrayRef,
-        Arc::new(params_b.finish()) as ArrayRef,
-        perc1_col,
-        classical_col,
-    ];
-
-    RecordBatch::try_new(schema, arrays).context("failed to build dynamics_models record batch")
+    let full_rows: Vec<raptrix_cim_arrow::dynamics::DynamicsModelRow> = rows
+        .iter()
+        .map(|row| raptrix_cim_arrow::dynamics::DynamicsModelRow {
+            bus_id: row.bus_id,
+            gen_id: row.gen_id.to_string(),
+            model_type: row.model_type.to_string(),
+            params: row
+                .params
+                .iter()
+                .map(|(k, v)| (k.to_string(), *v))
+                .collect(),
+            perc1_params: None,
+            classical_params: None,
+        })
+        .collect();
+    raptrix_cim_arrow::dynamics::build_dynamics_models_batch(&full_rows)
+        .context("failed to build dynamics_models record batch")
 }
 
 #[cfg(test)]

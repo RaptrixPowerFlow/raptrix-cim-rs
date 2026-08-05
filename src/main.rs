@@ -33,6 +33,33 @@ use raptrix_cim_rs::rpf_writer::{
     write_complete_rpf_with_options,
 };
 
+const ENHANCE_LONG_ABOUT: &str = "Read an existing v0.13.0/v0.13.1 .rpf, apply a JSON enhancement spec, and \
+write a new .rpf. Pure authoring: no schema is invented, and every table other than the ones the \
+spec touches is preserved unchanged.\n\n\
+Spec JSON shape:\n\
+{\n  \
+  \"computational_load_profiles\": [ { \"bus_id\": 110013, \"facility_class\": \"ai_hpc\",\n    \
+    \"common_mode_group\": \"ashburn_campus_a\", \"priority\": 1, \"max_step_drop_mw\": 800.0,\n    \
+    \"trip_study_percentiles\": [60.0, 100.0], \"transfer_to_backup_threshold_pu\": 0.90,\n    \
+    \"transfer_delay_ms\": 50.0, \"poi_name\": \"Campus A POI 1\" } ],\n  \
+  \"dynamics_models\": [ { \"bus_id\": 1, \"gen_id\": \"1\", \"model_type\": \"GENCLS\",\n    \
+    \"params\": {}, \"classical_params\": { \"H\": 5.0, \"D\": 0.0, \"xd_prime\": 0.25, \"mbase_mva\": 100.0 } } ],\n  \
+  \"load_overrides\": [ { \"bus_id\": 110013, \"p_mw\": 800.0, \"q_mw\": 200.0 },\n    \
+    { \"bus_id\": 110123, \"scale_p\": 10.0 } ],\n  \
+  \"computational_load_mode\": true\n\
+}\n\n\
+Rules: any field on computational_load_profiles rows may be set by name (bus_id XOR load_id \
+required when mode ends up true). Omitting \"computational_load_profiles\" preserves the input's \
+existing table unchanged; including it (even as []) fully replaces it. Omitting \"dynamics_models\" \
+preserves the input's existing table unchanged; including it fully replaces it (each row needs \
+bus_id, gen_id, model_type; params/classical_params default to empty/absent). \
+Optional \"load_overrides\" scale and/or set absolute load MW on the loads table: p_mw/q_mw \
+convert via metadata.base_mva (default 100); scale_p/scale_q multiply existing p_pu/q_pu (and \
+ZIP I/Y proportionally when present) on all load rows at that bus_id; scale first, then absolute \
+wins for that quantity; absolute clears ZIP I/Y; a missing load row is created (id=DC1) only when \
+p_mw is set. \"computational_load_mode\" defaults to true once the resolved \
+computational_load_profiles table is non-empty, unless set explicitly.";
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum DetachedIslandPolicyArg {
     Permissive,
@@ -76,6 +103,9 @@ enum Commands {
     Migrate092To093(ConvertArgs),
     /// View summary stats from an existing `.rpf` Arrow IPC artifact.
     View(ViewArgs),
+    /// Patch an existing `.rpf` with a JSON computational-load / dynamics / load-override spec.
+    #[command(long_about = ENHANCE_LONG_ABOUT)]
+    Enhance(EnhanceArgs),
 }
 
 /// Conversion arguments for explicit profile paths or auto-detection.
@@ -167,6 +197,26 @@ struct ConvertArgs {
     timestamp_utc: Option<String>,
 }
 
+/// Arguments for the `enhance` subcommand.
+#[derive(Debug, clap::Args)]
+struct EnhanceArgs {
+    /// Input v0.13.0 / v0.13.1 `.rpf` file to enhance.
+    #[arg(long)]
+    input: PathBuf,
+
+    /// JSON enhancement spec path. See `--help` for the accepted shape.
+    #[arg(long)]
+    spec: PathBuf,
+
+    /// Output `.rpf` path.
+    #[arg(long)]
+    output: PathBuf,
+
+    /// Print resolved input/spec/output paths.
+    #[arg(long)]
+    verbose: bool,
+}
+
 #[derive(Debug, clap::Args)]
 struct ViewArgs {
     /// Input `.rpf` file to inspect.
@@ -202,7 +252,90 @@ fn run() -> Result<()> {
         Commands::Convert(args) => run_convert(args),
         Commands::Migrate092To093(args) => run_convert(args),
         Commands::View(args) => run_view(args),
+        Commands::Enhance(args) => run_enhance_cmd(args),
     }
+}
+
+fn run_enhance_cmd(args: EnhanceArgs) -> Result<()> {
+    let cwd = std::env::current_dir().context("failed to resolve current working directory")?;
+    let input_path = normalize_existing_path(&args.input, &cwd)?;
+    validate_rpf_input_path(&input_path)?;
+    let spec_path = normalize_existing_path(&args.spec, &cwd)?;
+    let output_path = normalize_output_path(&args.output, &cwd);
+    validate_output_path(&output_path)?;
+
+    if args.verbose {
+        println!("{BRANDING}");
+        println!("Resolved input path: {}", input_path.display());
+        println!("Resolved spec path: {}", spec_path.display());
+        println!("Resolved output path: {}", output_path.display());
+    }
+
+    let summary = raptrix_cim_rs::enhance::run_enhance(&input_path, &spec_path, &output_path)
+        .with_context(|| {
+            format!(
+                "failed to enhance {} with spec {} into {}",
+                input_path.display(),
+                spec_path.display(),
+                output_path.display()
+            )
+        })?;
+
+    let file_size = fs::metadata(&output_path)
+        .with_context(|| {
+            format!(
+                "failed to read output metadata for {}",
+                output_path.display()
+            )
+        })?
+        .len();
+
+    println!("{BRANDING}");
+    println!("Input: {}", input_path.display());
+    println!("Spec: {}", spec_path.display());
+    println!("Output: {}", output_path.display());
+    println!("File size: {} bytes", file_size);
+    println!("Tables written: {}", summary.tables_written);
+    println!(
+        "dynamics_models: {} row(s){}",
+        summary.dynamics_models_rows,
+        if summary.dynamics_models_replaced {
+            " (replaced by spec)"
+        } else {
+            " (preserved from input)"
+        }
+    );
+    if summary.computational_load_profiles_included {
+        println!(
+            "computational_load_profiles: {} row(s){}",
+            summary.computational_load_profiles_rows,
+            if summary.computational_load_profiles_replaced {
+                " (replaced by spec)"
+            } else {
+                " (preserved from input)"
+            }
+        );
+    } else {
+        println!("computational_load_profiles: absent");
+    }
+    println!(
+        "metadata.computational_load_mode: {}",
+        match summary.computational_load_mode {
+            Some(true) => "true",
+            Some(false) => "false",
+            None => "null",
+        }
+    );
+    if summary.load_overrides_applied > 0 {
+        println!(
+            "load_overrides: {} applied ({} load row(s) created)",
+            summary.load_overrides_applied, summary.load_rows_created
+        );
+    } else {
+        println!("load_overrides: none");
+    }
+
+    Ok(())
 }
 
 fn run_view(args: ViewArgs) -> Result<()> {

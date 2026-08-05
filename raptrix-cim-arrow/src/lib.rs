@@ -30,6 +30,8 @@
 //!    validation, inspection, and regression tests.
 
 pub mod computational_load;
+pub mod contingencies;
+pub mod dynamics;
 pub mod ffi;
 mod health;
 mod io;
@@ -37,9 +39,21 @@ mod patch;
 mod schema;
 
 pub use computational_load::{
-    BuildoutEntry, ComputationalLoadProfileRow, FACILITY_CLASSES, SeasonalEnvelopeEntry,
-    build_computational_load_profiles_batch, patch_metadata_computational_load_mode,
+    BuildoutEntry, ComputationalLoadProfileRow, DisturbanceCounter, FACILITY_CLASSES,
+    ProtectionSettingsProvenance, ReconnectionParams, SeasonalEnvelopeEntry,
+    VoltageMeasurement, VoltageTransferCurveStage, build_computational_load_profiles_batch,
+    canonicalize_voltage_transfer_curve, patch_metadata_computational_load_mode,
     validate_computational_load_profiles_batch,
+};
+pub use contingencies::{
+    ContingencyElementRow, ContingencyFkContext, ContingencyRow, KNOWN_ELEMENT_TYPES,
+    build_contingencies_batch as build_contingencies_batch_full,
+    read_contingencies_batch, validate_contingencies_batch as validate_contingencies_batch_full,
+};
+pub use dynamics::{
+    ClassicalParams, DynamicsModelRow as DynamicsModelRowFull, Perc1Params,
+    build_dynamics_models_batch as build_dynamics_models_batch_full, read_dynamics_models_batch,
+    validate_dynamics_models_batch,
 };
 pub use health::{
     RpfCaseAggregates, RpfCaseCounts, RpfCaseHealth, RpfConvergenceHints, RpfHealthGrade,

@@ -5,9 +5,9 @@ Copyright (c) 2026 Raptrix Power
 
 # RPF Field Guide — Plain-English Reference
 
-**Schema contract: v0.13.0 | Format: Apache Arrow IPC**
+**Schema contract: v0.13.1 (dual-read v0.13.0) | Format: Apache Arrow IPC**
 
-This guide explains every table and field in an `.rpf` file in plain English. It is written for engineers who need to read, validate, or build tools against RPF files without digging into Arrow source code. For the normative type-level contract see [schema-contract.md](schema-contract.md). Migration notes for the v0.13.0 clean cut are in [MIGRATION.md](../MIGRATION.md).
+This guide explains every table and field in an `.rpf` file in plain English. It is written for engineers who need to read, validate, or build tools against RPF files without digging into Arrow source code. For the normative type-level contract see [schema-contract.md](schema-contract.md). Migration notes for the v0.13.0 clean cut and v0.13.1 additive extension are in [MIGRATION.md](../MIGRATION.md).
 
 This repository targets IEC 61970 CIM 17+ exchange for North American and European integrations. Public regression coverage is anchored on ENTSO-E CGMES v3.0.3 datasets.
 
@@ -47,7 +47,7 @@ These are key-value strings in the Arrow file header. Every RPF reader should ch
 
 | Key | Example value | What it means |
 |---|---|---|
-| `raptrix.version` | `v0.13.0` | The schema contract version this file was written to. **v0.13.0 is a clean cut** — readers accept only `v0.13.0` / `0.13.0`. Prior files must be re-exported. |
+| `raptrix.version` | `v0.13.1` | The schema contract version this file was written to. Writers emit `v0.13.1`; readers accept `v0.13.1` / `0.13.1` and `v0.13.0` / `0.13.0`. Pre-0.13 files must be re-exported. |
 | `rpf.identity.model` | `hybrid_solver_flat_v1` | **(v0.13.0+, optional)** Declares the hybrid identity model: dense `bus_id` foreign keys for solvers, plus optional equipment `mrid` where available. |
 | `raptrix.branding` | *(long string)* | Human-readable provenance string identifying the writing tool and copyright. |
 | `rpf.case_fingerprint` | `abc123...` | A deterministic hash of the case identity. Useful for de-duplication and reproducibility checks. |
@@ -385,7 +385,7 @@ One row per generator-linked dynamic model. Used by dynamic (time-domain) simula
 
 ---
 
-### Optional: `computational_load_profiles` — large-load interchange (v0.10.0+; extended in v0.13.0)
+### Optional: `computational_load_profiles` — large-load interchange (v0.10.0+; extended in v0.13.0 / v0.13.1)
 
 One row per computational / large-load bus or load. Present when `metadata.computational_load_mode` is used and the writer includes the table. Power fields are **physical MW** (not PU). Exactly one of `bus_id` or `load_id` should be set per row.
 
@@ -397,8 +397,15 @@ One row per computational / large-load bus or load. Present when `metadata.compu
 | `max_step_drop_mw` | **(v0.13.0+)** Maximum single-step MW drop considered for studies. |
 | `trip_study_percentiles` | **(v0.13.0+)** List of **0–100 percentage points** (e.g. 60, 100) — not 0–1 fractions. Null/empty means the case file did not auto-generate percentiles; consumers may apply their own study defaults. |
 | `facility_class` | **(v0.13.0+)** Closed set: `cloud_storage` \| `ai_hpc` \| `crypto` \| `mixed` \| `other`. |
-| `common_mode_group`, `poi_name`, `mrid` | Grouping / labeling / optional identity. |
+| `common_mode_group`, `poi_name`, `mrid` | Grouping / labeling / optional identity. Common-mode groups are the primary ranking dimension for correlated multi-facility transfer risk. |
 | `voltage_sensitivity_hint`, transfer / reconnection / ride-through maps | Optional screening and ride-through hints for large-load studies. |
+| `voltage_transfer_curve` | **(v0.13.1+)** Typed multi-stage `(V,t)` transfer envelope: list of `{v_pu, t_ms, polarity, action, mw_fraction?, load_class?}`. Null/empty → legacy scalar threshold. |
+| `disturbance_counter` | **(v0.13.1+)** Optional 3-strike / rolling-window latch struct. |
+| `reconnection_params` | **(v0.13.1+)** Typed reconnection (`v_recover_pu`, `delay_ms`, `ramp_mw_per_min`, `manual_reset_required`). Opaque `reconnection_criteria` map retained. |
+| `voltage_measurement` | **(v0.13.1+)** Measurement basis, filter `Tv` (ms), location, hysteresis. Default research filter ≈ 20 ms. |
+| `protection_settings_provenance` | **(v0.13.1+)** `site_verified` \| `oem_default` \| `study_assumption` plus optional `profile_id` / `effective_date`. |
+
+See [`V0131_VOLTAGE_TRANSFER_CURVE_RESEARCH.md`](V0131_VOLTAGE_TRANSFER_CURVE_RESEARCH.md) for the field validation matrix and PERC1 cross-walk.
 
 ---
 

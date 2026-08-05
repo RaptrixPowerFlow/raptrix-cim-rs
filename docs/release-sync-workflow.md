@@ -54,6 +54,7 @@ Run this workflow on any of the following changes:
 - PATCH: non-structural fixes (bug fixes, docs, metadata text fixes)
 - MINOR: additive format changes (new optional fields/tables/metadata keys)
 - MAJOR: breaking wire-shape changes (required field or table rename/removal/reorder/type change)
+- **Exception — v0.13.1:** Ashburn-class trailing optional CLP columns use a compatibility-extension stamp (`0.13.1`) with dual-read of `0.13.0` instead of jumping to `0.14.0`. Do not repeat without updating `schema-contract.md`.
 
 ## Canonical Release Steps
 

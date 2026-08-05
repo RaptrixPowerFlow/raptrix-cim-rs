@@ -362,6 +362,58 @@ The `view` command prints table-by-table row counts for quick import checks in `
 
 Use `--verbose` when validating interoperability because it also prints the root Arrow IPC metadata entries, including `raptrix.version`, `raptrix.features.node_breaker`, `raptrix.features.contingencies_stub`, `raptrix.features.dynamics_stub`, and `rpf.rows.*` logical row counts used by compliant external parsers.
 
+## `enhance` — patch a `.rpf` with a JSON spec (v0.6.1+)
+
+Pure-authoring patch of an existing v0.13.0 `.rpf`: apply a small JSON spec that adds/replaces
+`computational_load_profiles` rows and, optionally, `dynamics_models` rows, then write a new
+`.rpf`. Every other table (buses, branches, generators, contingencies, node-breaker/diagram/FACTS/
+RAS extensions, etc.) is preserved unchanged. No schema is invented — it's built entirely on the
+locked `raptrix-cim-arrow` contract (`read_rpf_tables`, `build_computational_load_profiles_batch`,
+`patch_metadata_computational_load_mode`, `write_root_rpf_with_metadata`).
+
+- `cargo run --release -- enhance --input case.rpf --spec enhance.json --output case_enhanced.rpf`
+
+Spec shape (see `enhance --help` for the full rule set):
+
+```json
+{
+  "computational_load_profiles": [
+    {
+      "bus_id": 110013,
+      "facility_class": "ai_hpc",
+      "common_mode_group": "ashburn_campus_a",
+      "priority": 1,
+      "max_step_drop_mw": 800.0,
+      "trip_study_percentiles": [60.0, 100.0],
+      "transfer_to_backup_threshold_pu": 0.90,
+      "transfer_delay_ms": 50.0,
+      "poi_name": "Campus A POI 1"
+    }
+  ],
+  "dynamics_models": [
+    {
+      "bus_id": 1,
+      "gen_id": "1",
+      "model_type": "GENCLS",
+      "params": {},
+      "classical_params": { "H": 5.0, "D": 0.0, "xd_prime": 0.25, "mbase_mva": 100.0 }
+    }
+  ],
+  "computational_load_mode": true
+}
+```
+
+- Any field on `ComputationalLoadProfileRow` may be set by name on a `computational_load_profiles`
+  row (`bus_id` **xor** `load_id` is required once `computational_load_mode` resolves `true`).
+- Omitting `computational_load_profiles` preserves the input's existing table unchanged; including
+  it — even as `[]` — fully replaces it (an empty array clears it).
+- Omitting `dynamics_models` preserves the input's existing table unchanged; including it fully
+  replaces it. Each row needs `bus_id`, `gen_id`, `model_type`; `params` and `classical_params`
+  default to empty/absent.
+- `metadata.computational_load_mode` is set to `true` automatically once the resolved
+  `computational_load_profiles` table is non-empty, unless the spec's top-level
+  `computational_load_mode` explicitly overrides it.
+
 ## Library Usage
 
 Use the CIM converter directly from Rust:

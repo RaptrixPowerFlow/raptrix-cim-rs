@@ -15,6 +15,7 @@
 //! [`models`] | CIM data-model types and base traits |
 //! [`parser`] | RDF/XML parsing helpers built on `quick-xml` |
 
+pub mod enhance;
 pub mod models;
 pub mod parser;
 pub mod rpf_writer;
@@ -26,6 +27,7 @@ pub use raptrix_cim_arrow::{
     inspect_rpf_case, inspect_rpf_file, read_rpf_tables, rpf_file_metadata, summarize_rpf,
 };
 
+pub use enhance::{EnhanceSummary, run_enhance};
 pub use rpf_writer::{
     BusResolutionMode, LoadZipComponentsPu, TransformerRepresentationMode, WriteOptions,
     WriteSummary, map_psse_zip_terms_to_rpf_pu, write_complete_rpf,

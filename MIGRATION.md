@@ -4,6 +4,28 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 
 Copyright (c) 2026 Raptrix Power
 
+## v0.13.1 (additive — dual-read of v0.13.0; no re-export required)
+
+**Compatibility-extension exception:** new trailing optional columns on `computational_load_profiles` are stamped as `v0.13.1` (not `v0.14.0`) because readers ignore unknown trailing columns and `0.13.0` files remain valid without rewrite. Documented in `docs/schema-contract.md`.
+
+### What changed
+
+| Area | Action |
+| --- | --- |
+| Version gate | Accept `v0.13.1` / `0.13.1` **and** `v0.13.0` / `0.13.0` |
+| Writers | Emit `v0.13.1` when producing enriched files |
+| `computational_load_profiles` | Trailing optional: `voltage_transfer_curve`, `disturbance_counter`, `reconnection_params`, `voltage_measurement`, `protection_settings_provenance` |
+| Existing CLP / `perc1_params` | Unchanged |
+
+### Consumer checklist
+
+1. Accept both `0.13.0` and `0.13.1` at the version gate.
+2. Ignore unknown trailing CLP columns if not yet upgraded.
+3. When reading v0.13.1 curves: null/empty curve → legacy scalar Phase D behavior.
+4. Do not invent site settings; stamp illustrative curves as `study_assumption`.
+
+Research freeze: `docs/V0131_VOLTAGE_TRANSFER_CURVE_RESEARCH.md`.
+
 ## v0.13.0 (breaking clean cut — re-export required)
 
 **Product constraint:** no pre-0.13 compatibility path. Regenerate all goldens and case libraries through a v0.13.0-capable writer.

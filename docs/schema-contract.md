@@ -3,11 +3,11 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 Copyright (c) 2026 Raptrix Power
 -->
 
-# Schema Contract (Locked contract: v0.13.0 — CGMES 3.0+ Only)
+# Schema Contract (Locked contract: v0.13.1 — CGMES 3.0+ Only; dual-read v0.13.0)
 
 This repository is the authoritative source of truth for the Raptrix Power Interchange (`.rpf`) wire contract used by CIM-first conversion pipelines.
 
-**v0.13.0** is the current contract release. `SUPPORTED_RPF_VERSIONS` accepts **only** **`v0.13.0`** / **`0.13.0`** (clean cut — no pre-0.13 dual-read).
+**v0.13.1** is the current contract release (additive Ashburn-class CLP extensions on the v0.13.0 clean cut). `SUPPORTED_RPF_VERSIONS` accepts **`v0.13.1` / `0.13.1` and `v0.13.0` / `0.13.0`**. Pre-0.13 files remain rejected.
 
 ## Identity model (hybrid solver flat-profile)
 
@@ -259,6 +259,7 @@ The solver (`raptrix-core`) holds a **projection** of an `.rpf` — only the ele
 - Breaking file-format changes (required column rename/removal/reorder, required table rename/removal/reorder, type change for required fields) require a MAJOR contract bump.
 - Additive changes (new optional columns, new optional tables, new optional metadata keys) require at least a MINOR bump.
 - PATCH bumps are reserved for non-structural fixes: bug fixes, metadata text fixes, and documentation clarifications without wire-shape changes.
+- **Compatibility-extension exception (v0.13.1):** trailing nullable columns on `computational_load_profiles` for Ashburn-class voltage-transfer curves are stamped as `v0.13.1` while dual-reading `v0.13.0`. This is an explicit exception to the MINOR-bump rule above, documented because conforming readers already ignore unknown trailing columns and a clean-cut `0.14.0` would force unnecessary case re-exports. Future additive work should prefer a true MINOR (`0.14.0+`) unless the same dual-read exception is re-approved.
 
 ## 0.9.3 Nominal-kV Guidance
 
@@ -275,8 +276,8 @@ Every `.rpf` file must include:
 
 Current locked values:
 
-- `raptrix.version = 0.13.0` (also accepted as `v0.13.0` only)
-- `raptrix.branding = Raptrix CIM-Arrow / Raptrix Power Interchange v0.13.0 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.`
+- `raptrix.version = 0.13.1` (writers); readers also accept `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`
+- `raptrix.branding = Raptrix CIM-Arrow / Raptrix Power Interchange v0.13.1 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.`
 - `rpf.case_fingerprint = <required deterministic case identity fingerprint>`
 - `rpf.validation_mode = topology_only | solved_ready`
 - `rpf.case_mode = flat_start_planning | warm_start_planning | solved_snapshot | hour_ahead_advisory` (v0.8.4+, required; `hour_ahead_advisory` added in v0.9.0)

@@ -13,7 +13,83 @@ Copyright (c) 2026 Raptrix Power
 
 ### Added
 
+- `raptrix-cim-arrow::dynamics` — full authoring builder/validator for `dynamics_models`
+  (`build_dynamics_models_batch`, `validate_dynamics_models_batch`) supporting real
+  `classical_params`/`perc1_params` structs and an open `params` map, not only the
+  PSS/E-converter stub path. Stable identity is `(bus_id, gen_id)`.
+- `raptrix-cim-arrow::contingencies` — full authoring builder/validator for `contingencies`
+  (`build_contingencies_batch`, `validate_contingencies_batch`) supporting compound elements
+  (`branch_outage`, `generator_trip`, `load_shed`, and an open vocabulary for
+  `shunt_switch`/`split_bus`/`protection_event`/producer-specific tokens) with FK-aware,
+  non-fatal validation warnings via `ContingencyFkContext`.
+- Re-exported at the crate root as `build_dynamics_models_batch_full` /
+  `build_contingencies_batch_full` / `validate_contingencies_batch_full` to avoid ambiguity
+  with the pre-existing `raptrix-cim-rs` PSS/E-converter stub builders of the same short name.
+- `read_dynamics_models_batch` and `read_contingencies_batch` — decode a `RecordBatch` back
+  into `DynamicsModelRow`/`ContingencyRow` domain values (inverse of the builders above), so
+  authoring tools can merge keyed add/update/delete patches into an existing large table
+  (e.g. Texas7k's 2705 `dynamics_models` rows) instead of resending every row on every edit.
+  Both are re-exported at the crate root.
+
+### Changed
+
+- `raptrix-cim-rs::enhance` (`build_dynamics_models_batch_from_spec`) and
+  `raptrix-cim-rs::rpf_writer` (`build_contingencies_batch`, `build_dynamics_models_batch`)
+  now delegate to the shared `raptrix-cim-arrow` authoring builders instead of maintaining
+  private duplicate Arrow-builder logic. No wire-format or behavior change; covered by the
+  existing `enhance::tests` and `rpf_writer::tests` suites plus 11 new unit tests.
+
+### Fixed
+
+- `read_rpf_tables` no longer rejects real-world v0.13.1 exports whose nested
+  `computational_load_profiles` list/struct columns (e.g. an unset categorical field inside
+  `voltage_transfer_curve` elements) contain an all-null, zero-length dictionary values array.
+  `arrow-rs`'s strict `DictionaryArray` bounds check flags this as `Value at position N out of
+  bounds: 0 (should be in [0, -1])`, even though every referencing slot is null-masked and the
+  Arrow columnar spec explicitly leaves null-slot content undefined. The existing
+  `skip_buffer_validation` retry (previously scoped only to the "Found unmasked nulls for
+  non-nullable" padded-row case) now also covers this `[0, -1]` signature — which can only occur
+  for a genuinely empty dictionary, so it can never mask a real out-of-range key into a populated
+  dictionary. Verified against Texas7k Hungerford v0.13.1 twins (2705 `dynamics_models` rows, 9
+  `computational_load_profiles` rows) that previously failed to read at all.
+- Added `raptrix-cim-arrow/examples/read_rpf.rs`, a small diagnostic CLI
+  (`cargo run -p raptrix-cim-arrow --example read_rpf -- <path.rpf>`) that reports per-table row/
+  column counts or a full error chain, for triaging exactly this class of real-world file issue.
+
+## Converter 0.6.2 — RPF v0.13.1 Ashburn-class transfer curves (2026-08-03)
+
+### Converter release: Crate version 0.6.2 (raptrix-cim-arrow) / 0.6.2 (raptrix-cim-rs) | Arrow schema v0.13.1
+
+**Additive compatibility extension** of the v0.13.0 clean cut. Writers emit **v0.13.1**. Readers accept **`v0.13.1` / `0.13.1` and `v0.13.0` / `0.13.0`**. Pre-0.13 files remain rejected.
+
+This is an explicit **compatibility-extension exception** to the usual rule that additive optional columns require a MINOR (`0.14.0`) bump: the wire change is trailing-nullable only, and dual-read of `0.13.0` is retained. See `docs/schema-contract.md` and `docs/V0131_VOLTAGE_TRANSFER_CURVE_RESEARCH.md`.
+
+### Added (trailing on `computational_load_profiles`)
+
+- `voltage_transfer_curve` — `List<Struct{v_pu, t_ms, polarity, action, mw_fraction?, load_class?}>`
+- `disturbance_counter` — nullable struct (3-strike / rolling window)
+- `reconnection_params` — typed reconnection (opaque `reconnection_criteria` retained)
+- `voltage_measurement` — basis / `Tv` filter / location / hysteresis
+- `protection_settings_provenance` — `site_verified` | `oem_default` | `study_assumption`
+
+### Docs
+
+- `docs/V0131_VOLTAGE_TRANSFER_CURVE_RESEARCH.md` — field validation matrix and full PERC1 cross-walk.
+
+### Notes
+
+- Existing scalar `transfer_to_backup_threshold_pu` / `transfer_delay_ms` and opaque maps are **not** removed.
+- `perc1_params` children are **not** mutated (future full PERC1 uses a sibling field/model).
+
+## Converter 0.6.1 — `enhance` CLI subcommand (2026-07-30)
+
+### Converter release: Crate version 0.6.1 (raptrix-cim-arrow) / 0.6.1 (raptrix-cim-rs) | Arrow schema v0.13.0
+
+### Added
+
 - **`raptrix-cim-arrow::computational_load`**: typed profile rows, `build_computational_load_profiles_batch`, `patch_metadata_computational_load_mode`, and `validate_computational_load_profiles_batch` (exactly one of bus/load id, priority 1–5, percentiles 0–100, closed facility_class). Used by Raptrix Studio desktop authoring.
+- **`raptrix-cim-rs enhance --input CASE.rpf --spec enhance.json --output CASE_enhanced.rpf`** (new `raptrix_cim_rs::enhance` module): pure-authoring patch of an existing v0.13.0 `.rpf`. Applies a small JSON spec that can add/replace `computational_load_profiles` rows and optionally `dynamics_models` rows (including `classical_params`); sets `metadata.computational_load_mode = true` automatically once resolved CLP rows are non-empty (spec may override); preserves every other table (buses, branches, generators, contingencies, node-breaker/diagram/FACTS/RAS extensions, etc.) byte-for-byte. Invents no schema — built entirely on `read_rpf_tables`, `build_computational_load_profiles_batch`, `patch_metadata_computational_load_mode`, and `write_root_rpf_with_metadata`.
+- **`enhance` `load_overrides`**: optional top-level JSON array to scale (`scale_p`/`scale_q`) and/or set absolute (`p_mw`/`q_mw`) load at campus buses for data-center demo authoring. Converts MW via `metadata.base_mva` (default 100); scale applies first then absolute wins; ZIP I/Y scaled proportionally or cleared on absolute set; creates a minimal `loads` row (`id=DC1`) when the bus has none and `p_mw` is provided. Patches the `loads` table only (core derives bus `p_sched` from loads on parse).
 
 ## Converter 0.6.0 — RPF v0.13.0 clean-cut contract (2026-07-29)
 
