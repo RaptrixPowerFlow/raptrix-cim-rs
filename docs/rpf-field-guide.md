@@ -5,13 +5,13 @@ Copyright (c) 2026 Raptrix Power
 
 # RPF Field Guide — Plain-English Reference
 
-**Schema contract: v0.13.1 (dual-read v0.13.0) | Format: Apache Arrow IPC**
+**Schema contract: v0.14.0 (dual-read v0.13.1 / v0.13.0) | Format: Apache Arrow IPC**
 
-This guide explains every table and field in an `.rpf` file in plain English. It is written for engineers who need to read, validate, or build tools against RPF files without digging into Arrow source code. For the normative type-level contract see [schema-contract.md](schema-contract.md). Migration notes for the v0.13.0 clean cut and v0.13.1 additive extension are in [MIGRATION.md](../MIGRATION.md).
+This guide explains every table and field in an `.rpf` file in plain English. It is written for engineers who need to read, validate, or build tools against RPF files without digging into Arrow source code. For the normative type-level contract see [schema-contract.md](schema-contract.md). Migration notes for the v0.14.0 additive MINOR are in [MIGRATION.md](../MIGRATION.md).
 
 This repository targets IEC 61970 CIM 17+ exchange for North American and European integrations. Public regression coverage is anchored on ENTSO-E CGMES v3.0.3 datasets.
 
-This repo is also the source of truth for the RPF contract. Use `docs/schema-contract.md` for normative reader/writer requirements and this guide for plain-English implementation guidance.
+This repo is also the source of truth for the RPF contract. Use `docs/schema-contract.md` for normative reader/writer requirements and this guide for plain-English implementation guidance. A synthetic dummy with every v0.14 column populated (plus protection / topology / sequence examples) is `tests/data/fixtures/v014_funnel_demo.rpf`.
 
 ---
 
@@ -47,7 +47,7 @@ These are key-value strings in the Arrow file header. Every RPF reader should ch
 
 | Key | Example value | What it means |
 |---|---|---|
-| `raptrix.version` | `v0.13.1` | The schema contract version this file was written to. Writers emit `v0.13.1`; readers accept `v0.13.1` / `0.13.1` and `v0.13.0` / `0.13.0`. Pre-0.13 files must be re-exported. |
+| `raptrix.version` | `v0.14.0` | The schema contract version this file was written to. Writers emit `v0.14.0`; readers accept `v0.14.0` / `0.14.0` and `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`. Pre-0.13 files must be re-exported. |
 | `rpf.identity.model` | `hybrid_solver_flat_v1` | **(v0.13.0+, optional)** Declares the hybrid identity model: dense `bus_id` foreign keys for solvers, plus optional equipment `mrid` where available. |
 | `raptrix.branding` | *(long string)* | Human-readable provenance string identifying the writing tool and copyright. |
 | `rpf.case_fingerprint` | `abc123...` | A deterministic hash of the case identity. Useful for de-duplication and reproducibility checks. |
@@ -93,6 +93,7 @@ These are key-value strings in the Arrow file header. Every RPF reader should ch
 | `raptrix.features.facts_solved` | `true` if optional solved FACTS replay table is present. (v0.8.6+) |
 | `raptrix.features.protection_contingencies` | `true` if the optional `protection_contingencies` table is present. (v0.11.0+) |
 | `raptrix.features.topology_changes` | `true` if the optional `topology_changes` table is present. (v0.11.0+) |
+| `raptrix.features.contingency_sequences` | `true` if the optional `contingency_sequences` table is present. (v0.14.0+) |
 | `rpf.protection.fidelity` | `logical`, `breaker_level`, or `mixed`: how protection rows are resolved. Defaults to `logical`. (v0.11.0+) |
 
 Additional v0.8.6 solved FACTS metadata:
@@ -173,8 +174,8 @@ Buses are the nodes of the network. Every generator, load, and branch connects t
 | `owner` | integer | Foreign key into the `owners` table. |
 | `v_min` | number | Voltage lower operating limit in per-unit. Typically 0.95. |
 | `v_max` | number | Voltage upper operating limit in per-unit. Typically 1.05. |
-| `p_min_agg` | number | Aggregate minimum generation in per-unit across all generators at this bus. |
-| `p_max_agg` | number | Aggregate maximum generation in per-unit across all generators at this bus. |
+| `p_min_agg` | number | Aggregate minimum generation in per-unit across all generators at this bus. Write `0` when unknown or the bus is not aggregated. |
+| `p_max_agg` | number | Aggregate maximum generation in per-unit across all generators at this bus. Write `0` when unknown or the bus is not aggregated. |
 | `nominal_kv` | number | Required nominal voltage level in kilovolts from the CIM `BaseVoltage`. Must be finite and strictly greater than 0. |
 | `bus_uuid` | text | The CIM mRID (UUID) of the `TopologicalNode` this bus was collapsed from. Unique and stable across exports of the same case. |
 | `latitude` | number or null | **(v0.12.5+)** Optional WGS84 latitude in degrees. Sourced from CIM GL `Location` + `PositionPoint` (yPosition). When GL attaches to an `ACLineSegment`, the line’s first/last vertices are applied to the from/to buses. Used by viewers for relative north→south ordering — not a GIS map projection. Null when unavailable. |
@@ -211,8 +212,9 @@ Branches are the transmission lines between buses.
 
 | Field | Type | What it means |
 |---|---|---|
+| `generator_id` | integer | Dense Int32 primary key for the machine. There is no `generators.id` column. |
 | `bus_id` | integer | The bus this generator connects to. |
-| `id` | text | Generator identifier, unique per bus. |
+| `hierarchy_level` | text | Aggregation level. Leaf units use the default token `unit`. |
 | `p_sched_pu` | number | Active power dispatch setpoint in per-unit. This is the planned output — not a solved result. |
 | `p_min_pu` | number | Minimum stable generation in per-unit. |
 | `p_max_pu` | number | Maximum generation capacity in per-unit. |
@@ -336,21 +338,24 @@ These three small tables provide the names and IDs for the classification codes 
 
 ### `contingencies` — N-1 and N-2 outage definitions
 
-Each row defines one contingency event. The `elements` column is a list of one or more outages that happen simultaneously.
+Each row defines one contingency event. The `elements` column is a list of one or more outages that happen **simultaneously**. One element is an N-1 parent. Two or more elements are a simultaneous / common-mode set (tower, P7-shaped). Sequential N-1-1 is **not** encoded by stuffing two elements in one row — use `contingency_sequences` or study JSON.
 
 | Field | Type | What it means |
 |---|---|---|
 | `contingency_id` | text | Unique name for this contingency, e.g. `BRANCH_L123`. |
-| `elements` | list of outage records | The set of equipment taken out of service. |
+| `elements` | list of outage records | The set of equipment taken out of service **at once**. |
+| `risk_score` … `greedy_reserve_summary` | analysis-only | **Always null** in planning / interchange files. May be populated in analysis exports. `scenario_context` is the structured ops→planning path. |
+| `tpl_category` | text or null | **(v0.14.0+)** Optional NERC-oriented annotation: `P1`…`P7` / `unspecified`. Null = untagged, not invalid. Structural meaning stays element count / protection / sequences. |
+| `reserved` | true/false or null | **(v0.14.0+)** `true` = never-trim; `false` = not reserved; **null** = infer from `protection_contingencies` / study list. |
 
 Each outage record inside `elements` has:
 
 | Field | What it means |
 |---|---|
-| `element_type` | What kind of outage: `branch_outage`, `gen_trip`, `load_shed`, `shunt_switch`, `split_bus`, or `protection_event` (v0.11.0+, protection detail lives in the matching `protection_contingencies` row). |
+| `element_type` | What kind of outage: `branch_outage`, `gen_trip` (canonical; `generator_trip` is a reader alias normalized on write), `load_shed`, `shunt_switch`, `split_bus`, or `protection_event` (v0.11.0+, protection detail lives in the matching `protection_contingencies` row). |
 | `branch_id` | For branch outages: which branch. |
 | `bus_id` | For bus outages or generation trips: which bus. |
-| `gen_id` | For generation trips: the specific generator ID. |
+| `gen_id` | String label for a generation trip. Prefer `generators.mrid` when present; else a deterministic synthetic such as `{bus_id}:{name}`. There is no `generators.id`. For an unambiguous apply path also set `equipment_kind=generator` and `equipment_id` to the decimal `generators.generator_id`. |
 | `load_id` | For load shed: the specific load ID. |
 | `amount_mw` | For load shed: how many MW are shed. |
 | `status_change` | True = the equipment changes from in-service to out-of-service. |
@@ -378,7 +383,7 @@ One row per generator-linked dynamic model. Used by dynamic (time-domain) simula
 | Field | What it means |
 |---|---|
 | `bus_id` | The bus the generator is connected to. |
-| `gen_id` | The generator identifier (links back to `generators.id`). |
+| `gen_id` | String label for the machine. Prefer `generators.mrid` when present; else a deterministic synthetic such as `{bus_id}:{name}`. Does **not** join to a `generators.id` column (there is none). |
 | `model_type` | String name of the dynamic model, e.g. `GENROU`, `GENCLS`, `SYNC_MACHINE_EQ`, or a custom namespaced type like `raptrix.smart_valve.v1`. |
 | `params` | A map of parameter name → numeric value. Normalized lowercase keys derived from CIM field names (e.g. `h`, `xd_prime`, `d`, `ra`, `xl`). Also includes provenance keys: `source_dy = 1.0` if parameters came from the CGMES DY profile, `source_eq_fallback = 1.0` if derived from EQ data only, `source_stub = 1.0` if this is a placeholder row. |
 | `classical_params` | **(v0.13.0+)** Optional struct `{H, D, xd_prime, mbase_mva}` for classical first-swing machines. Prefer these fields over the same keys in `params` when both are present. |
@@ -451,6 +456,21 @@ contract are in [adr/0001-protection-informed-contingencies.md](adr/0001-protect
 | `change_source` | **(v0.12.3+)** Optional. Why the topology change was made, e.g. `SAL_CIM_Upgrade`, `Model_Alignment`. Dictionary-encoded. |
 | `applied_phase` | **(v0.12.3+)** Optional. Which upgrade phase applied the change, e.g. `Jan_to_June_Baseline`, `Planning_Study_Prep`. Dictionary-encoded. |
 
+#### Worked example 0 — a tower (simultaneous two-circuit) outage
+
+Two circuits on one structure are **one** multi-element row, applied simultaneously. This is not sequential N-1-1.
+
+```text
+contingencies:
+  contingency_id="TOWER_L1_L2"
+  elements=[
+    {element_type="branch_outage", branch_id=1, status_change=true},
+    {element_type="branch_outage", branch_id=2, status_change=true}
+  ]
+  tpl_category="P7"
+  reserved=true
+```
+
 #### Worked example 1 — a plain single-branch outage (no protection context)
 
 A single line trip needs only the existing `contingencies` table; neither new table is emitted:
@@ -482,6 +502,27 @@ topology_changes:
 When the same case is later exported with node-breaker detail, `breaker_ids` is populated and
 `rpf.protection.fidelity` becomes `mixed` or `breaker_level`, letting a topology processor
 recompute the split from switch states instead of trusting the declared islands.
+
+`protection_contingencies.sequence` (`delay_ms`) is millisecond-scale protection clearing.
+It is **not** a TPL P3/P6 intervening window.
+
+#### Worked example 3 — sequential N-1-1 (P3-shaped) in `contingency_sequences`
+
+```text
+contingencies:
+  GEN_1  = one gen_trip element
+  LINE_2 = one branch_outage element
+
+contingency_sequences:
+  sequence_id="SEQ_P3_1"
+  primary_contingency_id="GEN_1"
+  secondary_contingency_id="LINE_2"
+  intervening_window_min=30
+  tpl_category="P3"
+  provenance="planner_file"
+```
+
+Endpoints should be single-element rows. A multi-element endpoint is simultaneous physics and is rare; writers do not hard-fail it. v0.14 writers may omit this table entirely.
 
 ---
 
@@ -544,7 +585,7 @@ Post-converged generator dispatch from the solver. Reflects the actual operating
 | Field | What it means |
 |---|---|
 | `bus_id` | Foreign key into `buses`. |
-| `id` | Generator identifier, links to `generators.id`. |
+| `id` | String label for the machine. Prefer `generators.mrid` when present; else `{bus_id}:{name}`. Join with `generators` on `(bus_id, label)`, not a `generators.id` column (there is none). |
 | `p_actual_pu` | Actual active power output at convergence in per-unit. |
 | `q_actual_pu` | Actual reactive power output at convergence in per-unit. |
 | `p_mw` | number | Actual active power output at convergence in MW (`= p_actual_pu × base_mva`). Provided for solver-native unit convenience. (v0.8.5+) |

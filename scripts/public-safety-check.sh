@@ -25,6 +25,9 @@ fi
 
 for file in "${files[@]}"; do
   case "$file" in
+    tests/data/fixtures/*.rpf|tests/data/fixtures/*.RPF)
+      # Synthetic public fixtures only. All other .rpf stay blocked.
+      ;;
     INTERNAL-MARKETING-GUIDE.md|*.raw|*.RAW|*.dyr|*.DYR|*.sav|*.SAV|*.epc|*.EPC|*.pss|*.PSS|*.pdf|*.rpf|*.RPF)
       echo "[public-safety] blocked filename: $file"
       bad=1

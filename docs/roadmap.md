@@ -75,6 +75,14 @@ Public positioning (sanitized):
 - Keep all public fixtures and examples synthetic/mock only; no CEII, utility IDs, or protected topology payloads.
 - Centralize validation artifacts on one golden regression path: `tests/data/external/results/release` from `cargo rpf-regression -- --profiles release --clean`.
 
+## 0.14 Funnel Portability (Delivered, Additive)
+
+- Added trailing nullable `contingencies.tpl_category` (`P1`…`P7` / `unspecified`) and `contingencies.reserved`.
+- Added optional `contingency_sequences` for portable sequential N-1-1 pairs.
+- Published generator identity mapping (`generators.generator_id` PK; `gen_trip` canonical token).
+- Documented analysis-only ownership of contingency outcome columns.
+- Dual-read of v0.13.1 / v0.13.0 retained; no re-export required.
+
 ## Ongoing Focus Areas
 
 - Broaden multi-file CGMES ingest coverage for assembled network cases.

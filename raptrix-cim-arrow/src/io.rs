@@ -19,10 +19,12 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
-use arrow::array::{Array, ArrayRef, Int32Array, StructArray, new_null_array};
+use arrow::array::{
+    Array, ArrayRef, DictionaryArray, Int32Array, StringArray, StructArray, new_null_array,
+};
 use arrow::buffer::NullBuffer;
 use arrow::compute::{cast, concat};
-use arrow::datatypes::{DataType, Field, Schema};
+use arrow::datatypes::{DataType, Field, Int32Type, Schema};
 use arrow::ipc::reader::FileReader;
 use arrow::ipc::writer::FileWriter;
 use arrow::record_batch::RecordBatch;
@@ -31,22 +33,23 @@ use memmap2::MmapOptions;
 use crate::schema::{
     BRANDING, METADATA_KEY_BRANDING, METADATA_KEY_FACTS_SOLVED_STATE_PRESENCE,
     METADATA_KEY_FEATURE_COMPUTATIONAL_LOAD_PROFILES, METADATA_KEY_FEATURE_CONTINGENCIES_STUB,
-    METADATA_KEY_FEATURE_CONTINGENCY_ISLAND_ANALYSIS, METADATA_KEY_FEATURE_DIAGRAM_LAYOUT,
-    METADATA_KEY_FEATURE_DYNAMICS_STUB, METADATA_KEY_FEATURE_FACTS,
-    METADATA_KEY_FEATURE_FACTS_SOLVED, METADATA_KEY_FEATURE_NODE_BREAKER,
-    METADATA_KEY_FEATURE_PROTECTION_CONTINGENCIES, METADATA_KEY_FEATURE_REMEDIAL_ACTION_SCHEMES,
-    METADATA_KEY_FEATURE_TOPOLOGY_CHANGES, METADATA_KEY_PROTECTION_FIDELITY,
-    METADATA_KEY_RAS_SCHEMA_MODE, METADATA_KEY_RPF_VERSION, METADATA_KEY_VERSION, SCHEMA_VERSION,
-    SUPPORTED_RPF_VERSIONS, TABLE_BRANCHES, TABLE_BUSES, TABLE_BUSES_SOLVED,
-    TABLE_COMPUTATIONAL_LOAD_PROFILES, TABLE_CONTINGENCY_ISLAND_ANALYSIS, TABLE_DC_LINES_2W,
+    METADATA_KEY_FEATURE_CONTINGENCY_ISLAND_ANALYSIS, METADATA_KEY_FEATURE_CONTINGENCY_SEQUENCES,
+    METADATA_KEY_FEATURE_DIAGRAM_LAYOUT, METADATA_KEY_FEATURE_DYNAMICS_STUB,
+    METADATA_KEY_FEATURE_FACTS, METADATA_KEY_FEATURE_FACTS_SOLVED,
+    METADATA_KEY_FEATURE_NODE_BREAKER, METADATA_KEY_FEATURE_PROTECTION_CONTINGENCIES,
+    METADATA_KEY_FEATURE_REMEDIAL_ACTION_SCHEMES, METADATA_KEY_FEATURE_TOPOLOGY_CHANGES,
+    METADATA_KEY_PROTECTION_FIDELITY, METADATA_KEY_RAS_SCHEMA_MODE, METADATA_KEY_RPF_VERSION,
+    METADATA_KEY_VERSION, SCHEMA_VERSION, SUPPORTED_RPF_VERSIONS, TABLE_BRANCHES, TABLE_BUSES,
+    TABLE_BUSES_SOLVED, TABLE_COMPUTATIONAL_LOAD_PROFILES, TABLE_CONTINGENCIES,
+    TABLE_CONTINGENCY_ISLAND_ANALYSIS, TABLE_CONTINGENCY_SEQUENCES, TABLE_DC_LINES_2W,
     TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED,
     TABLE_GENERATORS, TABLE_GENERATORS_SOLVED, TABLE_LOADS, TABLE_MULTI_SECTION_LINES,
     TABLE_PROTECTION_CONTINGENCIES, TABLE_REMEDIAL_ACTION_SCHEMES, TABLE_SWITCHED_SHUNT_BANKS,
     TABLE_TOPOLOGY_CHANGES, TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, all_table_schemas,
     computational_load_table_schemas, contingency_island_table_schemas,
-    diagram_layout_table_schemas, facts_table_schemas, node_breaker_table_schemas,
-    protection_table_schemas, remedial_action_table_schemas, schema_metadata,
-    solved_state_table_schemas, table_schema_variants,
+    contingency_sequence_table_schemas, diagram_layout_table_schemas, facts_table_schemas,
+    node_breaker_table_schemas, protection_table_schemas, remedial_action_table_schemas,
+    schema_metadata, solved_state_table_schemas, table_schema_variants,
 };
 
 /// Summary stats for a single logical table found in an `.rpf` file.
@@ -124,6 +127,8 @@ pub struct RootWriteOptions {
     pub include_remedial_action_schemes: bool,
     /// When true, append optional `contingency_island_analysis` table (v0.12.1+).
     pub include_contingency_island_analysis: bool,
+    /// When true, append optional `contingency_sequences` table (v0.14.0+).
+    pub include_contingency_sequences: bool,
 }
 
 /// Returns the metadata key used to store the logical row count for a table.
@@ -156,6 +161,9 @@ fn enabled_optional_table_schemas(options: &RootWriteOptions) -> Vec<(&'static s
     }
     if options.include_computational_load_profiles {
         optional.extend(computational_load_table_schemas());
+    }
+    if options.include_contingency_sequences {
+        optional.extend(contingency_sequence_table_schemas());
     }
     optional
 }
@@ -245,6 +253,9 @@ pub fn root_rpf_schema_with_options(options: &RootWriteOptions) -> Schema {
     }
     if options.include_computational_load_profiles {
         table_schemas.extend(computational_load_table_schemas());
+    }
+    if options.include_contingency_sequences {
+        table_schemas.extend(contingency_sequence_table_schemas());
     }
 
     let fields = table_schemas
@@ -944,6 +955,12 @@ pub fn write_root_rpf_with_metadata(
             "true".to_string(),
         );
     }
+    if options.include_contingency_sequences {
+        root_metadata.insert(
+            METADATA_KEY_FEATURE_CONTINGENCY_SEQUENCES.to_string(),
+            "true".to_string(),
+        );
+    }
     for (key, value) in additional_root_metadata {
         root_metadata.insert(key.clone(), value.clone());
     }
@@ -1349,6 +1366,44 @@ pub fn validate_rpf_file(path: impl AsRef<Path>, options: &RootWriteOptions) -> 
         )?;
     }
 
+    if options.include_contingency_sequences {
+        let feature = metadata
+            .get(METADATA_KEY_FEATURE_CONTINGENCY_SEQUENCES)
+            .with_context(|| {
+                format!(
+                    "post-write contract violation: missing metadata key '{}'",
+                    METADATA_KEY_FEATURE_CONTINGENCY_SEQUENCES
+                )
+            })?;
+        if feature != "true" {
+            bail!(
+                "post-write contract violation: '{}' expected 'true', found '{}'",
+                METADATA_KEY_FEATURE_CONTINGENCY_SEQUENCES,
+                feature
+            );
+        }
+
+        let sequences = by_name
+            .get(TABLE_CONTINGENCY_SEQUENCES)
+            .context("post-write contract violation: missing contingency_sequences table")?;
+        require_non_null_count_equals_len(TABLE_CONTINGENCY_SEQUENCES, sequences, "sequence_id")?;
+        require_non_null_count_equals_len(
+            TABLE_CONTINGENCY_SEQUENCES,
+            sequences,
+            "primary_contingency_id",
+        )?;
+        require_non_null_count_equals_len(
+            TABLE_CONTINGENCY_SEQUENCES,
+            sequences,
+            "secondary_contingency_id",
+        )?;
+
+        let contingencies = by_name
+            .get(TABLE_CONTINGENCIES)
+            .context("post-write contract violation: missing contingencies table")?;
+        validate_contingency_sequence_fks(sequences, contingencies)?;
+    }
+
     Ok(())
 }
 
@@ -1395,6 +1450,75 @@ fn validate_topology_change_fk(protection: &RecordBatch, topology: &RecordBatch)
     Ok(())
 }
 
+fn dict_utf8_value(col: &ArrayRef, row: usize) -> Option<String> {
+    if col.is_null(row) {
+        return None;
+    }
+    match col.data_type() {
+        DataType::Dictionary(_, _) => {
+            let dict = col.as_any().downcast_ref::<DictionaryArray<Int32Type>>()?;
+            let values = dict.values().as_any().downcast_ref::<StringArray>()?;
+            let key = dict.key(row)?;
+            Some(values.value(key).to_string())
+        }
+        DataType::Utf8 => col
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .map(|a| a.value(row).to_string()),
+        _ => None,
+    }
+}
+
+/// Verifies sequence primary/secondary FKs resolve and differ.
+fn validate_contingency_sequence_fks(
+    sequences: &RecordBatch,
+    contingencies: &RecordBatch,
+) -> Result<()> {
+    use std::collections::HashSet;
+
+    let cid_col = contingencies
+        .column_by_name("contingency_id")
+        .context("contingencies missing contingency_id")?;
+    let known: HashSet<String> = (0..contingencies.num_rows())
+        .filter_map(|i| dict_utf8_value(cid_col, i))
+        .collect();
+
+    let primary = sequences
+        .column_by_name("primary_contingency_id")
+        .context("contingency_sequences missing primary_contingency_id")?;
+    let secondary = sequences
+        .column_by_name("secondary_contingency_id")
+        .context("contingency_sequences missing secondary_contingency_id")?;
+
+    for row in 0..sequences.num_rows() {
+        let Some(p) = dict_utf8_value(primary, row) else {
+            continue;
+        };
+        let Some(s) = dict_utf8_value(secondary, row) else {
+            continue;
+        };
+        if p == s {
+            bail!(
+                "post-write contract violation: contingency_sequences row {row} has identical \
+                 primary and secondary contingency_id '{p}'"
+            );
+        }
+        if !known.contains(&p) {
+            bail!(
+                "post-write contract violation: contingency_sequences.primary_contingency_id='{p}' \
+                 has no matching contingencies.contingency_id"
+            );
+        }
+        if !known.contains(&s) {
+            bail!(
+                "post-write contract violation: contingency_sequences.secondary_contingency_id='{s}' \
+                 has no matching contingencies.contingency_id"
+            );
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -1415,14 +1539,15 @@ mod tests {
     use crate::schema::{
         METADATA_KEY_FEATURE_COMPUTATIONAL_LOAD_PROFILES,
         METADATA_KEY_FEATURE_CONTINGENCY_ISLAND_ANALYSIS,
-        METADATA_KEY_FEATURE_PROTECTION_CONTINGENCIES,
+        METADATA_KEY_FEATURE_CONTINGENCY_SEQUENCES, METADATA_KEY_FEATURE_PROTECTION_CONTINGENCIES,
         METADATA_KEY_FEATURE_REMEDIAL_ACTION_SCHEMES, METADATA_KEY_FEATURE_TOPOLOGY_CHANGES,
         METADATA_KEY_PROTECTION_FIDELITY, METADATA_KEY_RAS_SCHEMA_MODE, METADATA_KEY_RPF_VERSION,
         METADATA_KEY_VERSION, SCHEMA_VERSION, TABLE_BRANCHES, TABLE_COMPUTATIONAL_LOAD_PROFILES,
-        TABLE_CONTINGENCY_ISLAND_ANALYSIS, TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS,
-        TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED, TABLE_GENERATORS, TABLE_LOADS,
-        TABLE_PROTECTION_CONTINGENCIES, TABLE_REMEDIAL_ACTION_SCHEMES, TABLE_TOPOLOGY_CHANGES,
-        all_table_schemas, branches_schema, computational_load_profiles_schema,
+        TABLE_CONTINGENCIES, TABLE_CONTINGENCY_ISLAND_ANALYSIS, TABLE_CONTINGENCY_SEQUENCES,
+        TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED,
+        TABLE_GENERATORS, TABLE_LOADS, TABLE_PROTECTION_CONTINGENCIES,
+        TABLE_REMEDIAL_ACTION_SCHEMES, TABLE_TOPOLOGY_CHANGES, all_table_schemas, branches_schema,
+        computational_load_profiles_schema, contingencies_schema,
         contingency_island_analysis_schema, diagram_objects_schema, diagram_points_schema,
         facts_devices_schema, facts_solved_schema, generators_schema, loads_schema,
         protection_contingencies_schema, remedial_action_schemes_schema, schema_metadata,
@@ -1434,39 +1559,37 @@ mod tests {
         validate_rpf_file, write_root_rpf, write_root_rpf_with_metadata,
     };
 
-    /// Real-world v0.13.1 Texas7k exports with an all-null categorical field nested inside
-    /// `computational_load_profiles.voltage_transfer_curve` elements. Regression coverage for
-    /// the `[0, -1]` dictionary bounds retry above; skips gracefully off the authoring machine.
+    /// Optional local regression for empty nested dictionaries in CLP curve columns.
+    /// Reads `*.rpf` from `RAPTRIX_EXTERNAL_RPF_DIR` only — no machine-local paths in source.
     #[test]
-    fn reads_texas7k_hungerford_v0131_dvt_twins_despite_empty_dictionary_values() {
-        let candidates = [
-            r"C:\Users\matth\OneDrive - Raptrix PowerFlow\External_Share\rpf\Texas7k_20210804_hungerford_dc_1p8gw.rpf",
-            r"C:\Users\matth\OneDrive - Raptrix PowerFlow\External_Share\rpf\Texas7k_20210804_hungerford_dc_1p8gw_dyn.rpf",
-            r"C:\Users\matth\OneDrive - Raptrix PowerFlow\External_Share\rpf\Texas7k_20210804_hungerford_dc_1p8gw_v0131_vrt.rpf",
-        ];
-        let mut checked_any = false;
-        for candidate in candidates {
-            let path = std::path::PathBuf::from(candidate);
-            if !path.exists() {
-                eprintln!("skip: missing {path:?}");
-                continue;
+    fn reads_external_v0131_clp_empty_dictionary_when_available() {
+        let Ok(root) = std::env::var("RAPTRIX_EXTERNAL_RPF_DIR") else {
+            eprintln!("skip: RAPTRIX_EXTERNAL_RPF_DIR unset");
+            return;
+        };
+        let root = std::path::PathBuf::from(root);
+        let mut candidates = Vec::new();
+        if root.is_file() {
+            candidates.push(root);
+        } else if let Ok(entries) = std::fs::read_dir(&root) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let is_rpf = path
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("rpf"));
+                if is_rpf {
+                    candidates.push(path);
+                }
             }
-            checked_any = true;
-            let tables = read_rpf_tables(&path)
-                .unwrap_or_else(|e| panic!("failed reading {path:?}: {e:#}"));
-            let dynamics = tables
-                .iter()
-                .find(|(name, _)| name == "dynamics_models")
-                .map(|(_, batch)| batch.num_rows());
-            let clp = tables
-                .iter()
-                .find(|(name, _)| name == TABLE_COMPUTATIONAL_LOAD_PROFILES)
-                .map(|(_, batch)| batch.num_rows());
-            assert_eq!(dynamics, Some(2705), "unexpected dynamics_models row count in {path:?}");
-            assert_eq!(clp, Some(9), "unexpected computational_load_profiles row count in {path:?}");
         }
-        if !checked_any {
-            eprintln!("skip: no Hungerford v0.13.1 fixtures found on this machine");
+        if candidates.is_empty() {
+            eprintln!("skip: no .rpf files under RAPTRIX_EXTERNAL_RPF_DIR");
+            return;
+        }
+        for path in candidates {
+            read_rpf_tables(&path)
+                .unwrap_or_else(|e| panic!("failed reading {}: {e:#}", path.display()));
         }
     }
 
@@ -1783,7 +1906,7 @@ mod tests {
             .expect_err("v0.9.3 reader should reject missing required nominal_kv fields");
         let message = format!("{err:#}");
         assert!(message.contains("missing non-nullable field 'to_nominal_kv'"));
-        assert_eq!(SCHEMA_VERSION, "v0.13.1");
+        assert_eq!(SCHEMA_VERSION, "v0.14.0");
         Ok(())
     }
 
@@ -2374,6 +2497,181 @@ mod tests {
         assert_eq!(
             metadata.get(METADATA_KEY_FEATURE_CONTINGENCY_ISLAND_ANALYSIS),
             Some(&"true".to_string())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn read_pads_v013_contingencies_tpl_and_reserved() -> Result<()> {
+        let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_contingencies_v013_pad");
+        std::fs::create_dir_all(&tmp_dir)?;
+        let output_path = tmp_dir.join("contingencies_8col.rpf");
+
+        let mut table_batches: HashMap<&'static str, RecordBatch> = all_table_schemas()
+            .into_iter()
+            .map(|(name, schema)| (name, RecordBatch::new_empty(Arc::new(schema))))
+            .collect();
+
+        let full = contingencies_schema();
+        let short_fields: Vec<Field> = full.fields()[0..8]
+            .iter()
+            .map(|field| field.as_ref().clone())
+            .collect();
+        let short_schema = Schema::new_with_metadata(short_fields, schema_metadata());
+        table_batches.insert(
+            TABLE_CONTINGENCIES,
+            RecordBatch::new_empty(Arc::new(short_schema)),
+        );
+
+        let mut root_fields = Vec::new();
+        let mut root_columns: Vec<ArrayRef> = Vec::new();
+        for (name, _) in all_table_schemas() {
+            let table_batch = table_batches
+                .get(name)
+                .expect("table batch should exist for each required table");
+            let table_schema = table_batch.schema();
+            root_fields.push(Field::new(
+                name,
+                DataType::Struct(table_schema.fields().clone()),
+                true,
+            ));
+            root_columns.push(Arc::new(StructArray::new(
+                table_schema.fields().clone(),
+                table_batch.columns().to_vec(),
+                None,
+            )) as ArrayRef);
+        }
+
+        let mut root_meta = schema_metadata();
+        root_meta.insert(METADATA_KEY_VERSION.to_string(), "v0.13.1".to_string());
+        root_meta.insert(METADATA_KEY_RPF_VERSION.to_string(), "v0.13.1".to_string());
+        for (name, _) in all_table_schemas() {
+            root_meta.insert(row_count_metadata_key(name), "0".to_string());
+        }
+        let root_schema = Arc::new(Schema::new_with_metadata(root_fields, root_meta));
+        let root_batch = RecordBatch::try_new(root_schema.clone(), root_columns)?;
+
+        let mut out = File::create(&output_path)?;
+        let mut writer = FileWriter::try_new(&mut out, &root_schema)?;
+        writer.write_metadata(METADATA_KEY_VERSION, "v0.13.1");
+        writer.write_metadata(METADATA_KEY_RPF_VERSION, "v0.13.1");
+        writer.write(&root_batch)?;
+        writer.finish()?;
+
+        let tables = read_rpf_tables(&output_path)?;
+        let (_, contingencies) = tables
+            .iter()
+            .find(|(name, _)| name == TABLE_CONTINGENCIES)
+            .context("missing contingencies table")?;
+        assert_eq!(contingencies.schema().fields().len(), 10);
+        assert_eq!(contingencies.schema().field(8).name(), "tpl_category");
+        assert_eq!(contingencies.schema().field(9).name(), "reserved");
+        Ok(())
+    }
+
+    #[test]
+    fn contingency_sequences_round_trip_when_enabled() -> Result<()> {
+        let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_sequences_present");
+        std::fs::create_dir_all(&tmp_dir)?;
+        let output_path = tmp_dir.join("sequences_present.rpf");
+
+        let mut table_batches: HashMap<&'static str, RecordBatch> = all_table_schemas()
+            .into_iter()
+            .map(|(name, schema)| (name, RecordBatch::new_empty(Arc::new(schema))))
+            .collect();
+
+        let conting = crate::build_contingencies_batch_full(&[
+            crate::ContingencyRow {
+                contingency_id: "GEN_1".into(),
+                elements: vec![crate::ContingencyElementRow {
+                    element_type: "gen_trip".into(),
+                    bus_id: Some(1),
+                    gen_id: Some("SM_1".into()),
+                    status_change: true,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            crate::ContingencyRow {
+                contingency_id: "LINE_2".into(),
+                elements: vec![crate::ContingencyElementRow {
+                    element_type: "branch_outage".into(),
+                    branch_id: Some(2),
+                    status_change: true,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        ])?;
+        table_batches.insert(TABLE_CONTINGENCIES, conting);
+
+        let sequences =
+            crate::build_contingency_sequences_batch(&[crate::ContingencySequenceRow {
+                sequence_id: "SEQ_P3_1".into(),
+                primary_contingency_id: "GEN_1".into(),
+                secondary_contingency_id: "LINE_2".into(),
+                intervening_window_min: Some(30),
+                tpl_category: Some("P3".into()),
+                provenance: Some("planner_file".into()),
+            }])?;
+        table_batches.insert(TABLE_CONTINGENCY_SEQUENCES, sequences);
+
+        write_root_rpf(
+            &output_path,
+            &table_batches,
+            &RootWriteOptions {
+                include_contingency_sequences: true,
+                ..Default::default()
+            },
+        )?;
+
+        let tables = read_rpf_tables(&output_path)?;
+        let seq = tables
+            .iter()
+            .find(|(name, _)| name == TABLE_CONTINGENCY_SEQUENCES)
+            .map(|(_, batch)| batch)
+            .context("expected contingency_sequences table")?;
+        assert_eq!(seq.num_rows(), 1);
+        let metadata = rpf_file_metadata(&output_path)?;
+        assert_eq!(
+            metadata.get(METADATA_KEY_FEATURE_CONTINGENCY_SEQUENCES),
+            Some(&"true".to_string())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn contingency_sequences_fk_miss_fails_write() -> Result<()> {
+        let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_sequences_fk");
+        std::fs::create_dir_all(&tmp_dir)?;
+        let output_path = tmp_dir.join("sequences_fk.rpf");
+
+        let mut table_batches: HashMap<&'static str, RecordBatch> = all_table_schemas()
+            .into_iter()
+            .map(|(name, schema)| (name, RecordBatch::new_empty(Arc::new(schema))))
+            .collect();
+
+        let sequences =
+            crate::build_contingency_sequences_batch(&[crate::ContingencySequenceRow {
+                sequence_id: "SEQ_BAD".into(),
+                primary_contingency_id: "MISSING_A".into(),
+                secondary_contingency_id: "MISSING_B".into(),
+                ..Default::default()
+            }])?;
+        table_batches.insert(TABLE_CONTINGENCY_SEQUENCES, sequences);
+
+        let err = write_root_rpf(
+            &output_path,
+            &table_batches,
+            &RootWriteOptions {
+                include_contingency_sequences: true,
+                ..Default::default()
+            },
+        )
+        .expect_err("missing FK must fail");
+        assert!(
+            format!("{err:#}").contains("MISSING_A") || format!("{err:#}").contains("primary"),
+            "unexpected error: {err:#}"
         );
         Ok(())
     }

@@ -120,27 +120,39 @@ pub fn build_dynamics_models_batch(rows: &[DynamicsModelRow]) -> Result<RecordBa
         match &row.perc1_params {
             Some(p) => {
                 append_optional_f64(
-                    perc1_b.field_builder::<Float64Builder>(0).expect("perc1[0]"),
+                    perc1_b
+                        .field_builder::<Float64Builder>(0)
+                        .expect("perc1[0]"),
                     p.voltage_ride_through_pu,
                 );
                 append_optional_f64(
-                    perc1_b.field_builder::<Float64Builder>(1).expect("perc1[1]"),
+                    perc1_b
+                        .field_builder::<Float64Builder>(1)
+                        .expect("perc1[1]"),
                     p.frequency_ride_through_hz,
                 );
                 append_optional_f64(
-                    perc1_b.field_builder::<Float64Builder>(2).expect("perc1[2]"),
+                    perc1_b
+                        .field_builder::<Float64Builder>(2)
+                        .expect("perc1[2]"),
                     p.reactive_power_ceiling_pu,
                 );
                 append_optional_f64(
-                    perc1_b.field_builder::<Float64Builder>(3).expect("perc1[3]"),
+                    perc1_b
+                        .field_builder::<Float64Builder>(3)
+                        .expect("perc1[3]"),
                     p.active_power_recovery_rate_pu_per_s,
                 );
                 append_optional_f64(
-                    perc1_b.field_builder::<Float64Builder>(4).expect("perc1[4]"),
+                    perc1_b
+                        .field_builder::<Float64Builder>(4)
+                        .expect("perc1[4]"),
                     p.voltage_support_time_sec,
                 );
                 append_optional_f64(
-                    perc1_b.field_builder::<Float64Builder>(5).expect("perc1[5]"),
+                    perc1_b
+                        .field_builder::<Float64Builder>(5)
+                        .expect("perc1[5]"),
                     p.frequency_support_time_sec,
                 );
                 perc1_b.append(true);
@@ -233,7 +245,9 @@ fn f64_at(col: &ArrayRef, row: usize) -> Option<f64> {
     if col.is_null(row) {
         return None;
     }
-    col.as_any().downcast_ref::<Float64Array>().map(|a| a.value(row))
+    col.as_any()
+        .downcast_ref::<Float64Array>()
+        .map(|a| a.value(row))
 }
 
 /// Decode a `dynamics_models` RecordBatch back into domain rows.

@@ -392,8 +392,7 @@ pub fn build_computational_load_profiles_batch(
         n,
     ))
     .with_field(Arc::new(curve_item));
-    let mut disturbance =
-        StructBuilder::from_fields(disturbance_counter_struct_fields(), n);
+    let mut disturbance = StructBuilder::from_fields(disturbance_counter_struct_fields(), n);
     let mut reconnection_params =
         StructBuilder::from_fields(reconnection_params_struct_fields(), n);
     let mut voltage_measurement =
@@ -536,37 +535,33 @@ pub fn build_computational_load_profiles_batch(
             }
         }
 
-        append_optional_struct_fields(
-            &mut disturbance,
-            row.disturbance_counter.is_some(),
-            |b| {
-                let dc = row.disturbance_counter.as_ref().unwrap();
-                append_optional_i32(
-                    b.field_builder::<Int32Builder>(0).expect("strike_limit"),
-                    dc.strike_limit,
-                );
-                append_optional_f32(
-                    b.field_builder::<Float32Builder>(1).expect("window_sec"),
-                    dc.window_sec,
-                );
-                append_optional_f32(
-                    b.field_builder::<Float32Builder>(2)
-                        .expect("qualifying_v_pu"),
-                    dc.qualifying_v_pu,
-                );
-                append_optional_f32(
-                    b.field_builder::<Float32Builder>(3)
-                        .expect("qualifying_duration_ms"),
-                    dc.qualifying_duration_ms,
-                );
-                append_optional_bool(
-                    b.field_builder::<BooleanBuilder>(4)
-                        .expect("latch_permanent"),
-                    dc.latch_permanent,
-                );
-                Ok(())
-            },
-        )?;
+        append_optional_struct_fields(&mut disturbance, row.disturbance_counter.is_some(), |b| {
+            let dc = row.disturbance_counter.as_ref().unwrap();
+            append_optional_i32(
+                b.field_builder::<Int32Builder>(0).expect("strike_limit"),
+                dc.strike_limit,
+            );
+            append_optional_f32(
+                b.field_builder::<Float32Builder>(1).expect("window_sec"),
+                dc.window_sec,
+            );
+            append_optional_f32(
+                b.field_builder::<Float32Builder>(2)
+                    .expect("qualifying_v_pu"),
+                dc.qualifying_v_pu,
+            );
+            append_optional_f32(
+                b.field_builder::<Float32Builder>(3)
+                    .expect("qualifying_duration_ms"),
+                dc.qualifying_duration_ms,
+            );
+            append_optional_bool(
+                b.field_builder::<BooleanBuilder>(4)
+                    .expect("latch_permanent"),
+                dc.latch_permanent,
+            );
+            Ok(())
+        })?;
 
         append_optional_struct_fields(
             &mut reconnection_params,
@@ -624,30 +619,34 @@ pub fn build_computational_load_profiles_batch(
             },
         )?;
 
-        append_optional_struct_fields(&mut provenance, row.protection_settings_provenance.is_some(), |b| {
-            let ps = row.protection_settings_provenance.as_ref().unwrap();
-            append_optional_dict(
-                b.field_builder::<StringDictionaryBuilder<Int32Type>>(0)
-                    .expect("source"),
-                ps.source.as_deref(),
-            )?;
-            append_optional_utf8(
-                b.field_builder::<StringBuilder>(1).expect("profile_id"),
-                ps.profile_id.as_deref(),
-            );
-            {
-                let ts = b
-                    .field_builder::<TimestampMicrosecondBuilder>(2)
-                    .expect("effective_date");
-                // Ensure timezone metadata matches schema (UTC).
-                let _ = utc_tz.clone();
-                match ps.effective_date_us {
-                    Some(us) => ts.append_value(us),
-                    None => ts.append_null(),
+        append_optional_struct_fields(
+            &mut provenance,
+            row.protection_settings_provenance.is_some(),
+            |b| {
+                let ps = row.protection_settings_provenance.as_ref().unwrap();
+                append_optional_dict(
+                    b.field_builder::<StringDictionaryBuilder<Int32Type>>(0)
+                        .expect("source"),
+                    ps.source.as_deref(),
+                )?;
+                append_optional_utf8(
+                    b.field_builder::<StringBuilder>(1).expect("profile_id"),
+                    ps.profile_id.as_deref(),
+                );
+                {
+                    let ts = b
+                        .field_builder::<TimestampMicrosecondBuilder>(2)
+                        .expect("effective_date");
+                    // Ensure timezone metadata matches schema (UTC).
+                    let _ = utc_tz.clone();
+                    match ps.effective_date_us {
+                        Some(us) => ts.append_value(us),
+                        None => ts.append_null(),
+                    }
                 }
-            }
-            Ok(())
-        })?;
+                Ok(())
+            },
+        )?;
     }
 
     // Rebuild timestamp column with timezone if StructBuilder did not attach it.
@@ -940,8 +939,16 @@ fn validate_voltage_transfer_curve_column(batch: &RecordBatch, row: usize) -> Re
         .as_any()
         .downcast_ref::<arrow::array::StructArray>()
         .context("voltage_transfer_curve struct")?;
-    let v_pu = st.column(0).as_any().downcast_ref::<Float32Array>().unwrap();
-    let t_ms = st.column(1).as_any().downcast_ref::<Float32Array>().unwrap();
+    let v_pu = st
+        .column(0)
+        .as_any()
+        .downcast_ref::<Float32Array>()
+        .unwrap();
+    let t_ms = st
+        .column(1)
+        .as_any()
+        .downcast_ref::<Float32Array>()
+        .unwrap();
     let mut under_frac_by_class: HashMap<String, Vec<(f32, f32)>> = HashMap::new();
     let mut over_frac_by_class: HashMap<String, Vec<(f32, f32)>> = HashMap::new();
     let mut seen = std::collections::HashSet::new();
@@ -950,10 +957,14 @@ fn validate_voltage_transfer_curve_column(batch: &RecordBatch, row: usize) -> Re
         let v = v_pu.value(i);
         let t = t_ms.value(i);
         if !v.is_finite() || v <= 0.0 {
-            bail!("computational_load_profiles row {row}: voltage_transfer_curve.v_pu must be finite and > 0");
+            bail!(
+                "computational_load_profiles row {row}: voltage_transfer_curve.v_pu must be finite and > 0"
+            );
         }
         if !t.is_finite() || t < 0.0 {
-            bail!("computational_load_profiles row {row}: voltage_transfer_curve.t_ms must be finite and >= 0");
+            bail!(
+                "computational_load_profiles row {row}: voltage_transfer_curve.t_ms must be finite and >= 0"
+            );
         }
         let polarity = dict_value_at(st.column(2), i).unwrap_or_default();
         let action = dict_value_at(st.column(3), i).unwrap_or_default();
@@ -966,10 +977,17 @@ fn validate_voltage_transfer_curve_column(batch: &RecordBatch, row: usize) -> Re
             }
         }
         let load_class = dict_value_at(st.column(5), i).unwrap_or_else(|| "all".into());
-        validate_closed(&load_class, VOLTAGE_TRANSFER_LOAD_CLASSES, row, "load_class")?;
+        validate_closed(
+            &load_class,
+            VOLTAGE_TRANSFER_LOAD_CLASSES,
+            row,
+            "load_class",
+        )?;
         let key = (polarity.clone(), load_class.clone(), v.to_bits());
         if !seen.insert(key) {
-            bail!("computational_load_profiles row {row}: duplicate voltage_transfer_curve threshold for polarity/load_class");
+            bail!(
+                "computational_load_profiles row {row}: duplicate voltage_transfer_curve threshold for polarity/load_class"
+            );
         }
         let frac = mw_fraction.unwrap_or(1.0);
         if polarity == "under" {
@@ -1049,11 +1067,7 @@ fn validate_reconnection_params_column(batch: &RecordBatch, row: usize) -> Resul
         .as_any()
         .downcast_ref::<arrow::array::StructArray>()
         .context("reconnection_params struct")?;
-    for (idx, name) in [
-        (0, "v_recover_pu"),
-        (1, "delay_ms"),
-        (2, "ramp_mw_per_min"),
-    ] {
+    for (idx, name) in [(0, "v_recover_pu"), (1, "delay_ms"), (2, "ramp_mw_per_min")] {
         if let Some(v) = f32_at(st.column(idx), row) {
             if !v.is_finite() || v < 0.0 {
                 bail!("computational_load_profiles row {row}: {name} must be finite and >= 0");
@@ -1075,11 +1089,18 @@ fn validate_voltage_measurement_column(batch: &RecordBatch, row: usize) -> Resul
         .downcast_ref::<arrow::array::StructArray>()
         .context("voltage_measurement struct")?;
     if let Some(b) = dict_value_at(st.column(0), row) {
-        validate_closed(&b, VOLTAGE_MEASUREMENT_BASES, row, "voltage_measurement.basis")?;
+        validate_closed(
+            &b,
+            VOLTAGE_MEASUREMENT_BASES,
+            row,
+            "voltage_measurement.basis",
+        )?;
     }
     if let Some(tv) = f32_at(st.column(1), row) {
         if !tv.is_finite() || tv <= 0.0 {
-            bail!("computational_load_profiles row {row}: filter_time_constant_ms must be finite and > 0");
+            bail!(
+                "computational_load_profiles row {row}: filter_time_constant_ms must be finite and > 0"
+            );
         }
     }
     if let Some(loc) = dict_value_at(st.column(2), row) {
@@ -1092,7 +1113,9 @@ fn validate_voltage_measurement_column(batch: &RecordBatch, row: usize) -> Resul
     }
     if let Some(h) = f32_at(st.column(3), row) {
         if !h.is_finite() || h < 0.0 {
-            bail!("computational_load_profiles row {row}: reset_hysteresis_pu must be finite and >= 0");
+            bail!(
+                "computational_load_profiles row {row}: reset_hysteresis_pu must be finite and >= 0"
+            );
         }
     }
     Ok(())

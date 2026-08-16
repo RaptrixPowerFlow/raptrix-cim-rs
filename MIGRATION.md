@@ -4,6 +4,30 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 
 Copyright (c) 2026 Raptrix Power
 
+## v0.14.0 (additive MINOR — dual-read of v0.13.1 / v0.13.0; no re-export required)
+
+True MINOR after the v0.13.1 compatibility-extension exception. Writers emit `v0.14.0`. Readers accept `v0.14.0` / `0.14.0` and retain `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`.
+
+### What changed
+
+| Area | Action |
+| --- | --- |
+| Version gate | Accept `v0.14.0` / `0.14.0` **and** 0.13.x |
+| Writers | Emit `v0.14.0`; CIM converters leave new contingency columns null and omit sequences |
+| `contingencies` | Trailing nullable `tpl_category`, `reserved` |
+| `contingency_sequences` | Optional table; may be absent |
+| Element token | Canonical `gen_trip`; `generator_trip` is a reader alias |
+
+### Consumer checklist
+
+1. Accept `0.14.0` and 0.13.x at the version gate.
+2. Treat missing `tpl_category` / `reserved` as null (untagged / infer).
+3. Treat a missing `contingency_sequences` table as “no in-file sequential pairs.”
+4. Infer application: 1 element → N-1; 2+ → simultaneous; protection row → reserved simultaneous; sequence row / study pair → sequential.
+5. Join machines on `generators.generator_id` (Int32) plus the documented string-label rule. There is no `generators.id`.
+
+Downstream bump order: core PR-D on protection + study pairs first (works on 0.13.1); `reserved` / sequences additive after 0.14; Studio / psse-rs to crate 0.7.0 when they write the new fields.
+
 ## v0.13.1 (additive — dual-read of v0.13.0; no re-export required)
 
 **Compatibility-extension exception:** new trailing optional columns on `computational_load_profiles` are stamped as `v0.13.1` (not `v0.14.0`) because readers ignore unknown trailing columns and `0.13.0` files remain valid without rewrite. Documented in `docs/schema-contract.md`.

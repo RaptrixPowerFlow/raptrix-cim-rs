@@ -75,23 +75,41 @@ Run this workflow on any of the following changes:
 
 ## Downstream Sync Checklist
 
-### raptrix-psse-rs
-
-1. Update dependency to latest `raptrix-cim-arrow` source (path or registry).
-2. Re-run parser and output tests.
-3. Confirm no local schema fork or duplicate contract files remain.
-
 ### raptrix-core
 
-1. Update embedded or vendored schema references to current contract.
-2. Re-run CMake configure/build and import validation for `.rpf` samples.
-3. Verify metadata keys and optional table behavior still parse correctly.
+1. PR-D first on existing `protection_contingencies.tripped_elements` + study-JSON pairs (works on v0.13.1).
+2. After this 0.14.0 crate: honor `reserved=true` and ingest `contingency_sequences` when the feature flag is on.
+3. Update embedded or vendored schema references to current contract.
+4. Re-run CMake configure/build and import validation for `.rpf` samples (including `tests/data/fixtures/v014_funnel_demo.rpf`).
 
 ### raptrix-studio
 
-1. Validate `.rpf` loading against current release artifact.
-2. Confirm optional table handling remains non-breaking.
-3. Re-run typecheck/test/build validation.
+1. Bump to crate 0.7.0 when writing `tpl_category`, `reserved`, or `contingency_sequences`.
+2. Validate `.rpf` loading against current release artifact (dual-read of 0.13.x does not require a writer bump).
+3. Confirm optional table handling remains non-breaking.
+4. Re-run typecheck/test/build validation.
+
+### raptrix-psse-rs (writer bump)
+
+1. Update dependency to latest `raptrix-cim-arrow` 0.7.0 when emitting the new fields.
+2. Re-run parser and output tests.
+3. Confirm no local schema fork or duplicate contract files remain.
+
+## CI crash notes (keep this current)
+
+These are the failure modes that have burned time on `main`. Fix the gate here before the next crate bump.
+
+| Gate | Typical crash | What to do first |
+| --- | --- | --- |
+| **Public Safety** | `*.rpf` is blocked except `tests/data/fixtures/*.rpf` | Keep new interchange files under that fixtures path and synthetic-only. Do not commit partner/external `.rpf`. |
+| **Public Safety** | `*.xml` / `*.rdf` outside `tests/data/fixtures/` | Put CIM exchange snippets only in fixtures. |
+| **Master Contract** | `cargo fmt --all -- --check` | Run `cargo fmt --all` before push. Clippy is **not** a Master Contract gate. |
+| **Markdown Lint** | blanks-around-lists (`MD032`) | Blank line before/after lists in `CHANGELOG.md` and ADRs. |
+| **Version Consistency** | root crate version ≠ `raptrix-cim-arrow` dep / crate | `./scripts/sync-versions.ps1 -Check` |
+| **Auto release tag** | 403 / tag exists / `GITHUB_TOKEN` does not chain workflows | PAT needs Contents + Actions; this workflow dispatches **Release** after tagging. |
+| **Release** | `scripts/pre-release-check.ps1` (fmt / check / test) on Linux | Same commands as Master Contract; matrix is Windows / Linux / macOS. |
+
+Do **not** hard-code machine-local paths (OneDrive, usernames, `External_Share`) in tests. Optional local datasets belong behind `RAPTRIX_TEST_DATA_ROOT` or `RAPTRIX_EXTERNAL_RPF_DIR`.
 
 ## Compatibility Guardrails
 

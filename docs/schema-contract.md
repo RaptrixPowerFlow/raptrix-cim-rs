@@ -3,11 +3,11 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 Copyright (c) 2026 Raptrix Power
 -->
 
-# Schema Contract (Locked contract: v0.13.1 — CGMES 3.0+ Only; dual-read v0.13.0)
+# Schema Contract (Locked contract: v0.14.0 — CGMES 3.0+ Only; dual-read v0.13.x)
 
 This repository is the authoritative source of truth for the Raptrix Power Interchange (`.rpf`) wire contract used by CIM-first conversion pipelines.
 
-**v0.13.1** is the current contract release (additive Ashburn-class CLP extensions on the v0.13.0 clean cut). `SUPPORTED_RPF_VERSIONS` accepts **`v0.13.1` / `0.13.1` and `v0.13.0` / `0.13.0`**. Pre-0.13 files remain rejected.
+**v0.14.0** is the current contract release (additive funnel portability on the v0.13.0 clean cut). `SUPPORTED_RPF_VERSIONS` accepts **`v0.14.0` / `0.14.0` and retains `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`**. Pre-0.13 files remain rejected. 0.13.x files load with `contingencies.tpl_category` / `reserved` null; the `contingency_sequences` table may be absent. v0.14 writers may omit sequences entirely. See [adr/0002-rpf-v014-funnel-portability.md](adr/0002-rpf-v014-funnel-portability.md).
 
 ## Identity model (hybrid solver flat-profile)
 
@@ -15,6 +15,9 @@ This repository is the authoritative source of truth for the Raptrix Power Inter
 
 - **Dense `Int32 bus_id`** is the relational foreign key used by solvers, contingencies, and RAS action targets.
 - **`buses.bus_uuid`** is required; equipment **`mrid`** is optional (nullable) and must not be required for PSS/E/PSLF ingest.
+- **Machine PK:** `generators.generator_id` (Int32). There is no `generators.id` on the wire.
+- **Machine string label** used by `dynamics_models.gen_id`, `contingencies.elements.gen_id`, and `generators_solved.id`: prefer `generators.mrid` when present; else a deterministic synthetic such as `"{bus_id}:{name}"`.
+- **Apply path:** writers that can resolve Int32 SHOULD also set `contingencies.elements.equipment_kind=generator` and `equipment_id` to the decimal `generator_id` string.
 - Optional file metadata: `rpf.identity.model = hybrid_solver_flat_v1`.
 - Optional `metadata.source_identity_scheme`: `dense_bus_id` \| `mrid` \| `mixed` \| `synthetic_mrid`.
 
@@ -27,6 +30,17 @@ This repository is the authoritative source of truth for the Raptrix Power Inter
 | `computational_load_profiles` power fields | **Physical MW** |
 | Classical `xd_prime` | pu on machine base `mbase_mva` |
 | GIS lat/lon | WGS84 degrees (Float64) |
+
+## v0.14.0 Additive Changes
+
+- **`contingencies.tpl_category`**: nullable dictionary `P1`…`P7` / `unspecified`. Optional NERC-oriented annotation. Null = untagged, not invalid.
+- **`contingencies.reserved`**: nullable boolean. `true` = never-trim; `false` = not reserved; null = infer from protection / study list.
+- **Optional `contingency_sequences`**: ordered N-1-1 pairs (`sequence_id`, primary/secondary FKs, `intervening_window_min`, `tpl_category`, `provenance`). Feature flag `raptrix.features.contingency_sequences`. Writers may omit the table.
+- **Dual-read**: 0.13.x files pad the two new contingency columns as null; sequences table may be absent.
+- **Identity honesty** (docs + write alias, no nested FK): machine PK is `generators.generator_id`; canonical element token is `gen_trip` (`generator_trip` alias).
+- **Version gate**: accept `v0.14.0` / `0.14.0` and retain `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`.
+
+See [adr/0002-rpf-v014-funnel-portability.md](adr/0002-rpf-v014-funnel-portability.md).
 
 ## v0.13.0 Breaking Changes
 
@@ -276,8 +290,8 @@ Every `.rpf` file must include:
 
 Current locked values:
 
-- `raptrix.version = 0.13.1` (writers); readers also accept `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`
-- `raptrix.branding = Raptrix CIM-Arrow / Raptrix Power Interchange v0.13.1 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.`
+- `raptrix.version = 0.14.0` (writers); readers also accept `v0.14.0` / `0.14.0` / `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`
+- `raptrix.branding = Raptrix CIM-Arrow / Raptrix Power Interchange v0.14.0 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.`
 - `rpf.case_fingerprint = <required deterministic case identity fingerprint>`
 - `rpf.validation_mode = topology_only | solved_ready`
 - `rpf.case_mode = flat_start_planning | warm_start_planning | solved_snapshot | hour_ahead_advisory` (v0.8.4+, required; `hour_ahead_advisory` added in v0.9.0)
@@ -297,6 +311,7 @@ Optional file-level metadata keys:
 - `rpf.protection.fidelity = logical | breaker_level | mixed` (v0.11.0+, optional; defaults to `logical` when `protection_contingencies` is present without an explicit value)
 - `raptrix.features.remedial_action_schemes = true` when optional `remedial_action_schemes` table is emitted (v0.12.1+)
 - `raptrix.features.contingency_island_analysis = true` when optional `contingency_island_analysis` table is emitted (v0.12.1+)
+- `raptrix.features.contingency_sequences = true` when optional `contingency_sequences` table is emitted (v0.14.0+)
 - `rpf.ras.schema_mode = canonical_v12` when canonical v0.12 RAS rows are emitted (v0.12.1+)
 - `rpf.mrid_support = v1` when stable equipment `mrid` columns are present in table schemas (v0.12.2+)
 - `rpf.rows.<table_name> = <row_count>` for each emitted table
@@ -362,6 +377,7 @@ Optional root columns, when present, are appended after the required columns in 
 31. `topology_changes` (v0.11.0+, optional post-event topology metadata)
 32. `remedial_action_schemes` (v0.12.1+, optional canonical RAS/SPS schema)
 33. `contingency_island_analysis` (v0.12.1+, optional contingency topology filter audit rows)
+34. `contingency_sequences` (v0.14.0+, optional sequential N-1-1 pairs)
 
 `connectivity_groups` is an optional detail table emitted only in connectivity-detail mode and is appended after the required root columns when that mode is active.
 
@@ -449,6 +465,10 @@ Optional canonical RAS/SPS table (v0.12.1+):
 Optional contingency topology filter audit table (v0.12.1+):
 
 - `contingency_island_analysis`
+
+Optional sequential N-1-1 table (v0.14.0+, emitted only when explicitly enabled):
+
+- `contingency_sequences`
 
 ## Column Reference
 
@@ -603,7 +623,7 @@ Recommended `control_mode` tokens for `dc_lines_2w` are `power`, `current`, `vol
 - `bus_id`: Int32, required
 - `name`: Utf8, nullable
 - `unit_type`: Utf8, required
-- `hierarchy_level`: Utf8, required
+- `hierarchy_level`: Utf8, required — leaf units use the default token `unit`
 - `parent_generator_id`: Int32, nullable
 - `aggregation_count`: Int32, nullable
 - `status`: Boolean, required
@@ -775,6 +795,12 @@ Inductive steps must be represented in `switched_shunt_banks`.
 - `recovery_possible`: Boolean, nullable (v0.9.0+) — true if system recovery is achievable within NERC criteria
 - `recovery_time_min`: Float64, nullable (v0.9.0+) — estimated recovery time in minutes
 - `greedy_reserve_summary`: Utf8, nullable (v0.9.0+) — short text description of greedy reserve dispatch actions
+- `tpl_category`: Dictionary<Int32, Utf8>, nullable (v0.14.0+) — optional NERC-oriented annotation `P1`…`P7` / `unspecified`. Null = untagged, not invalid. Structural meaning stays element count / protection / sequences.
+- `reserved`: Boolean, nullable (v0.14.0+) — `true` = never-trim; `false` = not reserved; null = infer from `protection_contingencies` / study list
+
+The six v0.9 operational-outcome columns are **analysis-only**. Planning / interchange files MUST leave them null. Analysis exports / SAL MAY populate them. `scenario_context` remains the structured ops→planning feedback path.
+
+Application inference: 1 element → N-1; 2+ elements → simultaneous; a `protection_contingencies` row → reserved simultaneous; a `contingency_sequences` row or study pair → sequential N-1-1. Do not use `protection_contingencies.sequence` (`delay_ms`) as a P3/P6 intervening window.
 
 `elements` fields:
 
@@ -802,6 +828,17 @@ Optional contingency topology filter audit rows (v0.12.1+):
 - `is_main_island`: Boolean, nullable
 - `excluded_from_events`: Boolean, nullable
 - `params_snapshot_json`: Utf8, nullable
+
+### contingency_sequences (optional, v0.14.0+)
+
+Ordered N-1-1 pairs. v0.14 writers MAY omit this table. Endpoints SHOULD be single-element `contingencies` rows; multi-element endpoints are simultaneous physics and are not hard-failed.
+
+- `sequence_id`: Dictionary<Int32, Utf8>, required
+- `primary_contingency_id`: Dictionary<Int32, Utf8>, required — FK to `contingencies.contingency_id`
+- `secondary_contingency_id`: Dictionary<Int32, Utf8>, required — FK to `contingencies.contingency_id`; MUST differ from primary
+- `intervening_window_min`: Int32, nullable — adjustment window in minutes; null = consumer default
+- `tpl_category`: Dictionary<Int32, Utf8>, nullable — usually `P3` or `P6`
+- `provenance`: Dictionary<Int32, Utf8>, nullable — `planner_file` \| `ems_export` \| `rpf` \| `autonomous`
 
 ### interfaces
 
@@ -1102,7 +1139,7 @@ Compatibility alias: `dynamics` is accepted by `table_schema(name)`.
 Allowed `element_type` values are locked to:
 
 - `branch_outage`
-- `gen_trip`
+- `gen_trip` (canonical write token; `generator_trip` is a reader alias normalized on write)
 - `load_shed`
 - `shunt_switch`
 - `protection_event` (v0.11.0+) — marks a contingency whose protection detail lives in the matching `protection_contingencies` row (joined on `contingency_id`)

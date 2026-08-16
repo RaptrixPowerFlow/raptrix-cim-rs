@@ -2135,6 +2135,7 @@ pub fn write_complete_rpf_with_options(
             // core / EMS ingestion paths populate these v0.11.0 optional tables.
             include_protection_contingencies: false,
             include_topology_changes: false,
+            include_contingency_sequences: false,
         },
         &additional_root_metadata,
     )?;
@@ -5552,17 +5553,19 @@ fn build_contingencies_batch(rows: &[ContingencyRow<'_>]) -> Result<RecordBatch>
             elements: row
                 .elements
                 .iter()
-                .map(|el| raptrix_cim_arrow::contingencies::ContingencyElementRow {
-                    element_type: el.element_type.to_string(),
-                    branch_id: el.branch_id,
-                    bus_id: el.bus_id,
-                    gen_id: None,
-                    load_id: None,
-                    amount_mw: None,
-                    status_change: el.status_change,
-                    equipment_kind: el.equipment_kind.as_ref().map(|s| s.to_string()),
-                    equipment_id: el.equipment_id.as_ref().map(|s| s.to_string()),
-                })
+                .map(
+                    |el| raptrix_cim_arrow::contingencies::ContingencyElementRow {
+                        element_type: el.element_type.to_string(),
+                        branch_id: el.branch_id,
+                        bus_id: el.bus_id,
+                        gen_id: None,
+                        load_id: None,
+                        amount_mw: None,
+                        status_change: el.status_change,
+                        equipment_kind: el.equipment_kind.as_ref().map(|s| s.to_string()),
+                        equipment_id: el.equipment_id.as_ref().map(|s| s.to_string()),
+                    },
+                )
                 .collect(),
             ..Default::default()
         })
@@ -5604,6 +5607,7 @@ fn build_dynamics_models_batch(rows: &[DynamicsModelRow<'_>]) -> Result<RecordBa
 mod tests {
     use std::borrow::Cow;
     use std::fs;
+    use std::path::PathBuf;
     use std::time::Instant;
 
     use anyhow::{Context, Result};
@@ -6976,6 +6980,68 @@ mod tests {
             Some(&"expanded".to_string()),
             "expanded mode must stamp 'expanded'"
         );
+        Ok(())
+    }
+
+    fn assert_v014_contingencies(path: &std::path::Path) -> Result<()> {
+        let tables = read_rpf_tables(path)?;
+        let conting = tables
+            .iter()
+            .find(|(n, _)| n == "contingencies")
+            .map(|(_, b)| b)
+            .with_context(|| format!("{} missing contingencies", path.display()))?;
+        assert_eq!(
+            conting.schema().fields().len(),
+            10,
+            "{} contingencies must be the v0.14 10-column shape",
+            path.display()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn regenerate_public_cim_fixtures_to_rpf() -> Result<()> {
+        let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/fixtures");
+        fs::create_dir_all(&fixtures)?;
+
+        // Generated two-branch EQ (same payload as summarize_rpf_reports_expected_counts).
+        let generated_eq = fixtures.join("generated_two_branch_eq.xml");
+        fs::write(&generated_eq, generate_eq_fixture_branch_count(2))?;
+        let generated_rpf = fixtures.join("generated_two_branch.rpf");
+        let generated_eq_str = generated_eq.to_string_lossy().into_owned();
+        let generated_rpf_str = generated_rpf.to_string_lossy().into_owned();
+        write_complete_rpf(&[&generated_eq_str], &generated_rpf_str)?;
+        assert_v014_contingencies(&generated_rpf)?;
+
+        let cases = [
+            (
+                "detail_eq_with_breaker.xml",
+                "detail_eq_with_breaker.rpf",
+                vec!["detail_eq_with_breaker.xml"],
+            ),
+            (
+                "smart_valve_demo_EQ.xml",
+                "smart_valve_demo.rpf",
+                vec!["smart_valve_demo_EQ.xml", "smart_valve_demo_DY.xml"],
+            ),
+        ];
+        for (eq_name, out_name, inputs) in cases {
+            let eq = fixtures.join(eq_name);
+            if !eq.exists() {
+                continue;
+            }
+            let input_paths: Vec<String> = inputs
+                .iter()
+                .map(|name| fixtures.join(name).to_string_lossy().into_owned())
+                .filter(|p| PathBuf::from(p).exists())
+                .collect();
+            let out = fixtures.join(out_name);
+            let out_str = out.to_string_lossy().into_owned();
+            let refs: Vec<&str> = input_paths.iter().map(String::as_str).collect();
+            write_complete_rpf(&refs, &out_str)
+                .with_context(|| format!("convert {eq_name} -> {out_name}"))?;
+            assert_v014_contingencies(&out)?;
+        }
         Ok(())
     }
 }

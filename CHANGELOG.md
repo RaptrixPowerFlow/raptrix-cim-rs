@@ -11,7 +11,28 @@ Copyright (c) 2026 Raptrix Power
 
 ## Unreleased
 
+## Converter 0.7.0 — RPF v0.14.0 funnel portability (2026-08-16)
+
+### Converter release: Crate version 0.7.0 (raptrix-cim-arrow) / 0.7.0 (raptrix-cim-rs) | Arrow schema v0.14.0
+
+**Additive MINOR.** Writers emit **v0.14.0**. Readers accept **`v0.14.0` / `0.14.0` and retain `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`**. Pre-0.13 files remain rejected. 0.13.x files do not need re-export.
+
 ### Added
+
+- Trailing nullable `contingencies.tpl_category` (`P1`…`P7` / `unspecified`) and `contingencies.reserved`.
+- Optional `contingency_sequences` table + `raptrix.features.contingency_sequences` for portable N-1-1 pairs.
+- Authoring builder/validator `raptrix-cim-arrow::contingency_sequences`.
+- Canonical element token `gen_trip` with `generator_trip` reader alias (normalized on write).
+- Synthetic public fixture `tests/data/fixtures/v014_funnel_demo.rpf` (all new columns populated; no CEII).
+- ADR 0002 (`docs/adr/0002-rpf-v014-funnel-portability.md`).
+
+### Changed
+
+- Documented generator identity: PK is `generators.generator_id`; string labels prefer `mrid`.
+- Documented analysis-only ownership of the six v0.9 contingency outcome columns.
+- ADR 0001: `tripped_elements` is the reserved simultaneous set; protection `sequence` is not P3/P6.
+
+### Added (prior unreleased authoring work, now in 0.7.0)
 
 - `raptrix-cim-arrow::dynamics` — full authoring builder/validator for `dynamics_models`
   (`build_dynamics_models_batch`, `validate_dynamics_models_batch`) supporting real
@@ -19,7 +40,7 @@ Copyright (c) 2026 Raptrix Power
   PSS/E-converter stub path. Stable identity is `(bus_id, gen_id)`.
 - `raptrix-cim-arrow::contingencies` — full authoring builder/validator for `contingencies`
   (`build_contingencies_batch`, `validate_contingencies_batch`) supporting compound elements
-  (`branch_outage`, `generator_trip`, `load_shed`, and an open vocabulary for
+  (`branch_outage`, `gen_trip` / `generator_trip` alias, `load_shed`, and an open vocabulary for
   `shunt_switch`/`split_bus`/`protection_event`/producer-specific tokens) with FK-aware,
   non-fatal validation warnings via `ContingencyFkContext`.
 - Re-exported at the crate root as `build_dynamics_models_batch_full` /
@@ -28,7 +49,7 @@ Copyright (c) 2026 Raptrix Power
 - `read_dynamics_models_batch` and `read_contingencies_batch` — decode a `RecordBatch` back
   into `DynamicsModelRow`/`ContingencyRow` domain values (inverse of the builders above), so
   authoring tools can merge keyed add/update/delete patches into an existing large table
-  (e.g. Texas7k's 2705 `dynamics_models` rows) instead of resending every row on every edit.
+  instead of resending every row on every edit.
   Both are re-exported at the crate root.
 
 ### Changed
@@ -50,8 +71,7 @@ Copyright (c) 2026 Raptrix Power
   `skip_buffer_validation` retry (previously scoped only to the "Found unmasked nulls for
   non-nullable" padded-row case) now also covers this `[0, -1]` signature — which can only occur
   for a genuinely empty dictionary, so it can never mask a real out-of-range key into a populated
-  dictionary. Verified against Texas7k Hungerford v0.13.1 twins (2705 `dynamics_models` rows, 9
-  `computational_load_profiles` rows) that previously failed to read at all.
+  dictionary. Verified against large external v0.13.1 exports that previously failed to read.
 - Added `raptrix-cim-arrow/examples/read_rpf.rs`, a small diagnostic CLI
   (`cargo run -p raptrix-cim-arrow --example read_rpf -- <path.rpf>`) that reports per-table row/
   column counts or a full error chain, for triaging exactly this class of real-world file issue.

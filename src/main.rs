@@ -24,16 +24,17 @@ use anyhow::{Context, Result, bail};
 use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 
 use raptrix_cim_rs::arrow_schema::{
-    BRANDING, METADATA_KEY_FEATURE_CONTINGENCIES_STUB, METADATA_KEY_FEATURE_DIAGRAM_LAYOUT,
-    METADATA_KEY_FEATURE_DYNAMICS_STUB, METADATA_KEY_FEATURE_NODE_BREAKER, format_health_report,
-    inspect_rpf_file,
+    BRANDING, METADATA_KEY_FEATURE_CONTINGENCIES_STUB, METADATA_KEY_FEATURE_CONTINGENCY_SEQUENCES,
+    METADATA_KEY_FEATURE_DIAGRAM_LAYOUT, METADATA_KEY_FEATURE_DYNAMICS_STUB,
+    METADATA_KEY_FEATURE_NODE_BREAKER, METADATA_KEY_FEATURE_PROTECTION_CONTINGENCIES,
+    METADATA_KEY_FEATURE_TOPOLOGY_CHANGES, format_health_report, inspect_rpf_file,
 };
 use raptrix_cim_rs::rpf_writer::{
     BusResolutionMode, DetachedIslandPolicy, WriteOptions, rpf_file_metadata, summarize_rpf,
     write_complete_rpf_with_options,
 };
 
-const ENHANCE_LONG_ABOUT: &str = "Read an existing v0.13.0/v0.13.1 .rpf, apply a JSON enhancement spec, and \
+const ENHANCE_LONG_ABOUT: &str = "Read an existing v0.13.x/v0.14.0 .rpf, apply a JSON enhancement spec, and \
 write a new .rpf. Pure authoring: no schema is invented, and every table other than the ones the \
 spec touches is preserved unchanged.\n\n\
 Spec JSON shape:\n\
@@ -200,7 +201,7 @@ struct ConvertArgs {
 /// Arguments for the `enhance` subcommand.
 #[derive(Debug, clap::Args)]
 struct EnhanceArgs {
-    /// Input v0.13.0 / v0.13.1 `.rpf` file to enhance.
+    /// Input v0.13.x / v0.14.0 `.rpf` file to enhance.
     #[arg(long)]
     input: PathBuf,
 
@@ -418,6 +419,27 @@ fn run_view(args: ViewArgs) -> Result<()> {
         .unwrap_or(false)
     {
         enabled_features.push("diagram-layout");
+    }
+    if metadata
+        .get(METADATA_KEY_FEATURE_PROTECTION_CONTINGENCIES)
+        .map(|value| value == "true")
+        .unwrap_or(false)
+    {
+        enabled_features.push("protection-contingencies");
+    }
+    if metadata
+        .get(METADATA_KEY_FEATURE_TOPOLOGY_CHANGES)
+        .map(|value| value == "true")
+        .unwrap_or(false)
+    {
+        enabled_features.push("topology-changes");
+    }
+    if metadata
+        .get(METADATA_KEY_FEATURE_CONTINGENCY_SEQUENCES)
+        .map(|value| value == "true")
+        .unwrap_or(false)
+    {
+        enabled_features.push("contingency-sequences");
     }
 
     println!(

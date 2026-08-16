@@ -103,7 +103,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 | Connectivity detail | `--connectivity-detail` | Granular ConnectivityNode bus mapping; emits optional `connectivity_groups` table |
 | Node-breaker | `--connectivity-detail --node-breaker` | Adds switch-topology detail tables for operational and viewer workflows |
 
-### Output tables (schema contract v0.13.0)
+### Output tables (schema contract v0.14.0)
 
 **18 canonical tables (always emitted):** `metadata`, `buses`, `branches`, `multi_section_lines`, `dc_lines_2w`, `generators`, `loads`, `fixed_shunts`, `switched_shunts`, `switched_shunt_banks`, `transformers_2w`, `transformers_3w`, `areas`, `zones`, `owners`, `contingencies`, `interfaces`, `dynamics_models`
 
@@ -118,6 +118,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 - `remedial_action_schemes` — optional canonical RAS/SPS table (v0.12.1+; API `RootWriteOptions.include_remedial_action_schemes`)
 - `contingency_island_analysis` — optional contingency topology filter audit rows (v0.12.1+; API `RootWriteOptions.include_contingency_island_analysis`)
 - `protection_contingencies`, `topology_changes` — legacy compatibility tables (v0.11.0); optional when enabled; deprecated for new RAS writes
+- `contingency_sequences` — optional sequential N-1-1 pairs (v0.14.0+; API `RootWriteOptions.include_contingency_sequences`)
 
 RAS safety note: all public examples in this repository use synthetic demonstration data only. No CEII, utility identifiers, or protected topology data are included.
 
@@ -145,7 +146,7 @@ RAS safety note: all public examples in this repository use synthetic demonstrat
 
 ## Data Contract (Locked)
 
-- Current schema contract: **v0.13.0** (CGMES 3.0+ only). Clean-cut break: readers accept **only** v0.13.0. Includes hybrid identity model, native UTC timestamps, dictionary bus types, nullable IREG, large-load profile columns, and classical dynamics params.
+- Current schema contract: **v0.14.0** (CGMES 3.0+ only). Additive MINOR on the v0.13.0 clean cut: readers accept v0.14.0 and retain v0.13.1 / v0.13.0. Adds `contingencies.tpl_category` / `reserved` and optional `contingency_sequences`.
 - Canonical source: raptrix-cim-arrow/src/schema.rs
 - Contract policy and semantics: docs/schema-contract.md
 - Plain-English field guide: [docs/rpf-field-guide.md](docs/rpf-field-guide.md)
@@ -159,9 +160,11 @@ RPF standardization here is intentional: it enables direct CIM-to-powerflow inte
 
 ### Versioning Policy
 
-Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is at schema **`v0.13.0`** and the converter crate release is **`0.6.0`**.
+Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is at schema **`v0.14.0`** and the converter crate release is **`0.7.0`**.
 
-Readers in this repository accept **only** `v0.13.0` / `0.13.0`. Prior contract versions must be re-emitted through a v0.13.0-capable writer (no dual-read).
+Readers in this repository accept `v0.14.0` / `0.14.0` and retain `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`. Pre-0.13 files must be re-emitted.
+
+**v0.14.0**: Adds trailing nullable `contingencies.tpl_category` / `reserved` and optional `contingency_sequences` for portable N-1-1 pairs. Canonical generator-trip token is `gen_trip`. 0.13.x files remain readable without re-export.
 
 **v0.12.5**: Adds nullable trailing `buses.latitude` / `buses.longitude` (WGS84 degrees) populated from CIM GL `Location`/`PositionPoint` when a GL profile is supplied. Line-route Locations resolve to from/to buses via Terminal endpoints. v0.12.4 files remain readable without re-export (readers null-pad missing geo columns).
 
@@ -364,7 +367,7 @@ Use `--verbose` when validating interoperability because it also prints the root
 
 ## `enhance` — patch a `.rpf` with a JSON spec (v0.6.1+)
 
-Pure-authoring patch of an existing v0.13.0 `.rpf`: apply a small JSON spec that adds/replaces
+Pure-authoring patch of an existing v0.13.x / v0.14.0 `.rpf`: apply a small JSON spec that adds/replaces
 `computational_load_profiles` rows and, optionally, `dynamics_models` rows, then write a new
 `.rpf`. Every other table (buses, branches, generators, contingencies, node-breaker/diagram/FACTS/
 RAS extensions, etc.) is preserved unchanged. No schema is invented — it's built entirely on the

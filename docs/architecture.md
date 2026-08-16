@@ -2,7 +2,7 @@
 
 ## Purpose
 
-raptrix-cim-rs turns CIM RDF/XML (including CGMES profile sets) into Arrow-native outputs for power-flow and related solver pipelines, with a locked **v0.13.0** Raptrix Power Interchange schema contract (`raptrix-cim-arrow` **0.6.0**).
+raptrix-cim-rs turns CIM RDF/XML (including CGMES profile sets) into Arrow-native outputs for power-flow and related solver pipelines, with a locked **v0.14.0** Raptrix Power Interchange schema contract (`raptrix-cim-arrow` **0.7.0**; dual-read of v0.13.x).
 
 The architecture is IEC 61970 CIM 17+ based, with ENTSO-E CGMES v3.0.3 used as the public regression corpus.
 
@@ -24,16 +24,16 @@ The architecture is IEC 61970 CIM 17+ based, with ENTSO-E CGMES v3.0.3 used as t
 4. Resolve references needed for topology, voltages, and numeric rows (including optional BaseVoltage / geo joins).
 5. Collapse connectivity to solver-friendly topological buses when configured (default).
 6. Build Arrow arrays and RecordBatch values for the locked RPF root layout.
-7. Serialize with Raptrix schema metadata (`raptrix.version` / `rpf_version` = `v0.13.0`).
+7. Serialize with Raptrix schema metadata (`raptrix.version` / `rpf_version` = `v0.14.0`).
 
 Current serialization status:
 
 - Contract target container: `.rpf` Arrow IPC (streaming or memory-mapped).
-- Writers emit the locked v0.13.0 root; readers accept **only** `v0.13.0` / `0.13.0` (clean cut — no pre-0.13 dual-read).
+- Writers emit the locked v0.14.0 root; readers accept `v0.14.0` / `0.14.0` and retain v0.13.1 / v0.13.0 (pre-0.13 remains rejected).
 
 ## Core Modules
 
-- `raptrix-cim-arrow/src/schema.rs`: locked v0.13.0 table schemas, metadata constants, and table registry helpers.
+- `raptrix-cim-arrow/src/schema.rs`: locked v0.14.0 table schemas, metadata constants, and table registry helpers.
 - `raptrix-cim-arrow/src/io.rs`: generic `.rpf` root-file assembly, validation, and readback helpers.
 - `src/models`: CIM types and trait hierarchy.
 - `src/parser.rs`: parse helpers and profile-specific row mapping.
@@ -47,7 +47,7 @@ Current serialization status:
 - Mapping boundary: typed model values to solver-oriented row structures.
 - Serialization boundary: row structures to Arrow RecordBatch and output container bytes.
 
-Locked schema boundaries in **v0.13.0**:
+Locked schema boundaries in **v0.14.0** (additive on the v0.13.0 clean cut):
 
 - all **18 required tables** must materialize (empty allowed)
 - hybrid identity: dense `Int32 bus_id` solver FKs + required `buses.bus_uuid`; optional equipment `mrid`
@@ -62,7 +62,7 @@ Locked schema boundaries in **v0.13.0**:
 ## Canonical RAS Model
 
 - `remedial_action_schemes` is the single canonical RAS/SPS schema for new writes.
-- Legacy `protection_contingencies` / `topology_changes` may appear in older files; v0.13.0 readers do not dual-read pre-0.13 contracts — re-emit through a current writer.
+- Legacy `protection_contingencies` / `topology_changes` may appear in older files; pre-0.13 contracts are not dual-read — re-emit through a current writer.
 - Execution semantics are node/branch-first: trigger and action targeting can be represented without breaker-level topology.
 - Breaker-level refinement remains optional via existing node-breaker detail tables when available.
 - Public repository requirement: all RAS examples and fixtures are synthetic demonstration data only (no CEII).

@@ -18,18 +18,34 @@ use arrow::array::{
 };
 use arrow::datatypes::{DataType, Int32Type};
 
-use crate::schema::contingencies_schema;
+use crate::schema::{
+    ELEMENT_TYPE_GEN_TRIP, ELEMENT_TYPE_GENERATOR_TRIP_ALIAS, TPL_CATEGORIES, contingencies_schema,
+};
 
 /// Open vocabulary recognized by Studio authoring UI; unknown tokens from other producers must
 /// still round-trip (readers tolerate unknown `element_type` values per the schema contract).
+/// Canonical generator-trip token is `gen_trip`; `generator_trip` is a reader alias.
 pub const KNOWN_ELEMENT_TYPES: &[&str] = &[
     "branch_outage",
-    "generator_trip",
+    ELEMENT_TYPE_GEN_TRIP,
     "load_shed",
     "shunt_switch",
     "split_bus",
     "protection_event",
 ];
+
+/// Normalize a producer `element_type` to the canonical write token.
+pub fn canonicalize_element_type(token: &str) -> &str {
+    if token == ELEMENT_TYPE_GENERATOR_TRIP_ALIAS {
+        ELEMENT_TYPE_GEN_TRIP
+    } else {
+        token
+    }
+}
+
+fn is_gen_trip(token: &str) -> bool {
+    token == ELEMENT_TYPE_GEN_TRIP || token == ELEMENT_TYPE_GENERATOR_TRIP_ALIAS
+}
 
 /// One compound-contingency element.
 #[derive(Debug, Clone, Default)]
@@ -51,13 +67,17 @@ pub struct ContingencyRow {
     pub contingency_id: String,
     pub elements: Vec<ContingencyElementRow>,
     /// Operational-outcome columns (v0.9.0+). Left `None` for planning/authoring rows; Studio
-    /// never authors these — they are populated by Sentinel/solver runs only.
+    /// never authors these — they are populated by analysis/solver exports only.
     pub risk_score: Option<f64>,
     pub cleared_by_reserves: Option<bool>,
     pub voltage_collapse_flag: Option<bool>,
     pub recovery_possible: Option<bool>,
     pub recovery_time_min: Option<f64>,
     pub greedy_reserve_summary: Option<String>,
+    /// v0.14.0 optional NERC-oriented annotation (`P1`…`P7` / `unspecified`). Null = untagged.
+    pub tpl_category: Option<String>,
+    /// v0.14.0 never-trim marker. Null = infer from protection / study list.
+    pub reserved: Option<bool>,
 }
 
 fn append_optional_i32(builder: &mut Int32Builder, value: Option<i32>) {
@@ -106,6 +126,8 @@ pub fn build_contingencies_batch(rows: &[ContingencyRow]) -> Result<RecordBatch>
     let mut recovery_possible_b = BooleanBuilder::with_capacity(n);
     let mut recovery_time_min_b = Float64Builder::with_capacity(n);
     let mut greedy_reserve_summary_b = arrow::array::StringBuilder::new();
+    let mut tpl_category_b = StringDictionaryBuilder::<Int32Type>::new();
+    let mut reserved_b = BooleanBuilder::with_capacity(n);
 
     for row in rows {
         contingency_id_b
@@ -117,14 +139,18 @@ pub fn build_contingencies_batch(rows: &[ContingencyRow]) -> Result<RecordBatch>
             values
                 .field_builder::<StringDictionaryBuilder<Int32Type>>(0)
                 .context("element_type builder")?
-                .append(&element.element_type)
+                .append(canonicalize_element_type(&element.element_type))
                 .context("append element_type")?;
             append_optional_i32(
-                values.field_builder::<Int32Builder>(1).context("branch_id builder")?,
+                values
+                    .field_builder::<Int32Builder>(1)
+                    .context("branch_id builder")?,
                 element.branch_id,
             );
             append_optional_i32(
-                values.field_builder::<Int32Builder>(2).context("bus_id builder")?,
+                values
+                    .field_builder::<Int32Builder>(2)
+                    .context("bus_id builder")?,
                 element.bus_id,
             );
             match &element.gen_id {
@@ -210,6 +236,12 @@ pub fn build_contingencies_batch(rows: &[ContingencyRow]) -> Result<RecordBatch>
             Some(v) => greedy_reserve_summary_b.append_value(v),
             None => greedy_reserve_summary_b.append_null(),
         }
+        if let Some(v) = &row.tpl_category {
+            tpl_category_b.append(v).context("append tpl_category")?;
+        } else {
+            tpl_category_b.append_null();
+        }
+        append_optional_bool(&mut reserved_b, row.reserved);
     }
 
     RecordBatch::try_new(
@@ -223,6 +255,8 @@ pub fn build_contingencies_batch(rows: &[ContingencyRow]) -> Result<RecordBatch>
             Arc::new(recovery_possible_b.finish()) as ArrayRef,
             Arc::new(recovery_time_min_b.finish()) as ArrayRef,
             Arc::new(greedy_reserve_summary_b.finish()) as ArrayRef,
+            Arc::new(tpl_category_b.finish()) as ArrayRef,
+            Arc::new(reserved_b.finish()) as ArrayRef,
         ],
     )
     .context("building contingencies batch")
@@ -251,14 +285,18 @@ fn i32_at(col: &ArrayRef, row: usize) -> Option<i32> {
     if col.is_null(row) {
         return None;
     }
-    col.as_any().downcast_ref::<Int32Array>().map(|a| a.value(row))
+    col.as_any()
+        .downcast_ref::<Int32Array>()
+        .map(|a| a.value(row))
 }
 
 fn f64_at(col: &ArrayRef, row: usize) -> Option<f64> {
     if col.is_null(row) {
         return None;
     }
-    col.as_any().downcast_ref::<Float64Array>().map(|a| a.value(row))
+    col.as_any()
+        .downcast_ref::<Float64Array>()
+        .map(|a| a.value(row))
 }
 
 fn bool_at(col: &ArrayRef, row: usize) -> Option<bool> {
@@ -274,7 +312,7 @@ fn bool_at(col: &ArrayRef, row: usize) -> Option<bool> {
 ///
 /// This is the inverse of [`build_contingencies_batch`] and is used by authoring tools
 /// (e.g. Raptrix Studio) to merge keyed edit patches into an existing table while
-/// preserving solver/Sentinel-populated outcome columns Studio never authors.
+/// preserving analysis/solver-populated outcome columns Studio never authors.
 pub fn read_contingencies_batch(batch: &RecordBatch) -> Result<Vec<ContingencyRow>> {
     let contingency_id = batch
         .column_by_name("contingency_id")
@@ -300,6 +338,8 @@ pub fn read_contingencies_batch(batch: &RecordBatch) -> Result<Vec<ContingencyRo
     let greedy_reserve_summary = batch
         .column_by_name("greedy_reserve_summary")
         .context("greedy_reserve_summary")?;
+    let tpl_category = batch.column_by_name("tpl_category");
+    let reserved = batch.column_by_name("reserved");
 
     let mut out = Vec::with_capacity(batch.num_rows());
     for row in 0..batch.num_rows() {
@@ -338,6 +378,8 @@ pub fn read_contingencies_batch(batch: &RecordBatch) -> Result<Vec<ContingencyRo
             recovery_possible: bool_at(recovery_possible, row),
             recovery_time_min: f64_at(recovery_time_min, row),
             greedy_reserve_summary: dict_value_at(greedy_reserve_summary, row),
+            tpl_category: tpl_category.and_then(|col| dict_value_at(col, row)),
+            reserved: reserved.and_then(|col| bool_at(col, row)),
         });
     }
     Ok(out)
@@ -368,12 +410,16 @@ pub fn validate_contingencies_batch(
         );
     }
 
-    let contingency_id = batch.column_by_name("contingency_id").context("contingency_id")?;
+    let contingency_id = batch
+        .column_by_name("contingency_id")
+        .context("contingency_id")?;
     let elements = batch.column_by_name("elements").context("elements")?;
     let list = elements
         .as_any()
         .downcast_ref::<arrow::array::ListArray>()
         .context("elements list")?;
+
+    let tpl_category = batch.column_by_name("tpl_category");
 
     let mut warnings = Vec::new();
     let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -390,6 +436,15 @@ pub fn validate_contingencies_batch(
         if !seen_ids.insert(cid.clone()) {
             bail!("contingencies row {row}: duplicate contingency_id '{cid}'");
         }
+        if let Some(col) = tpl_category
+            && let Some(token) = dict_value_at(col, row)
+            && !TPL_CATEGORIES.contains(&token.as_str())
+        {
+            warnings.push(format!(
+                "contingencies row {row} ('{cid}'): tpl_category '{token}' is outside the closed \
+                 set P1…P7 / unspecified; preserved"
+            ));
+        }
 
         let struct_arr = list.value(row);
         let st = struct_arr
@@ -404,9 +459,12 @@ pub fn validate_contingencies_batch(
             let element_type = dict_value_at(st.column(0), i)
                 .context("element_type must be a dictionary-encoded string")?;
             if element_type.trim().is_empty() {
-                bail!("contingencies row {row} ('{cid}') element {i}: element_type must not be empty");
+                bail!(
+                    "contingencies row {row} ('{cid}') element {i}: element_type must not be empty"
+                );
             }
-            if !KNOWN_ELEMENT_TYPES.contains(&element_type.as_str()) {
+            if !KNOWN_ELEMENT_TYPES.contains(&element_type.as_str()) && !is_gen_trip(&element_type)
+            {
                 warnings.push(format!(
                     "contingencies row {row} ('{cid}') element {i}: element_type '{element_type}' \
                      is outside Studio's known vocabulary; preserved but not editable in-app"
@@ -420,6 +478,20 @@ pub fn validate_contingencies_batch(
             let amount_mw = f64_at(st.column(5), i);
 
             match element_type.as_str() {
+                token if is_gen_trip(token) => {
+                    let (Some(bid), Some(gid)) = (bus_id, gen_id.clone()) else {
+                        bail!(
+                            "contingencies row {row} ('{cid}') element {i}: gen_trip requires bus_id and gen_id"
+                        );
+                    };
+                    if let Some(known) = fk.generator_keys {
+                        if !known.contains(&(bid, gid.clone())) {
+                            warnings.push(format!(
+                                "contingencies row {row} ('{cid}') element {i}: generator (bus_id={bid}, gen_id={gid}) not found in generators"
+                            ));
+                        }
+                    }
+                }
                 "branch_outage" => {
                     let Some(bid) = branch_id else {
                         bail!(
@@ -430,20 +502,6 @@ pub fn validate_contingencies_batch(
                         if !known.contains(&bid) {
                             warnings.push(format!(
                                 "contingencies row {row} ('{cid}') element {i}: branch_id {bid} not found in branches"
-                            ));
-                        }
-                    }
-                }
-                "generator_trip" => {
-                    let (Some(bid), Some(gid)) = (bus_id, gen_id.clone()) else {
-                        bail!(
-                            "contingencies row {row} ('{cid}') element {i}: generator_trip requires bus_id and gen_id"
-                        );
-                    };
-                    if let Some(known) = fk.generator_keys {
-                        if !known.contains(&(bid, gid.clone())) {
-                            warnings.push(format!(
-                                "contingencies row {row} ('{cid}') element {i}: generator (bus_id={bid}, gen_id={gid}) not found in generators"
                             ));
                         }
                     }
@@ -470,7 +528,10 @@ pub fn validate_contingencies_batch(
                 _ => {
                     // Open vocabulary (shunt_switch, split_bus, protection_event, unknown):
                     // require at least one equipment reference so the row is not vacuous.
-                    if branch_id.is_none() && bus_id.is_none() && gen_id.is_none() && load_id.is_none()
+                    if branch_id.is_none()
+                        && bus_id.is_none()
+                        && gen_id.is_none()
+                        && load_id.is_none()
                     {
                         warnings.push(format!(
                             "contingencies row {row} ('{cid}') element {i}: '{element_type}' has no equipment reference (branch/bus/gen/load)"
@@ -495,6 +556,7 @@ pub fn validate_contingencies_batch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::{ELEMENT_TYPE_GEN_TRIP, ELEMENT_TYPE_GENERATOR_TRIP_ALIAS};
 
     fn branch_row(id: &str, branch_id: i32) -> ContingencyRow {
         ContingencyRow {
@@ -640,6 +702,65 @@ mod tests {
             .downcast_ref::<arrow::array::ListArray>()
             .unwrap();
         assert_eq!(list.value(0).len(), 3);
+        let decoded = read_contingencies_batch(&batch)?;
+        assert_eq!(decoded[0].elements[1].element_type, ELEMENT_TYPE_GEN_TRIP);
+        Ok(())
+    }
+
+    #[test]
+    fn generator_trip_alias_normalizes_on_write() -> Result<()> {
+        let row = ContingencyRow {
+            contingency_id: "GEN_1".into(),
+            elements: vec![ContingencyElementRow {
+                element_type: ELEMENT_TYPE_GENERATOR_TRIP_ALIAS.into(),
+                bus_id: Some(10),
+                gen_id: Some("SM_1".into()),
+                status_change: true,
+                equipment_kind: Some("generator".into()),
+                equipment_id: Some("1".into()),
+                ..Default::default()
+            }],
+            tpl_category: Some("P3".into()),
+            reserved: Some(false),
+            ..Default::default()
+        };
+        let batch = build_contingencies_batch(&[row])?;
+        validate_contingencies_batch(&batch, &ContingencyFkContext::default())?;
+        let decoded = read_contingencies_batch(&batch)?;
+        assert_eq!(decoded[0].elements[0].element_type, ELEMENT_TYPE_GEN_TRIP);
+        assert_eq!(decoded[0].tpl_category.as_deref(), Some("P3"));
+        assert_eq!(decoded[0].reserved, Some(false));
+        Ok(())
+    }
+
+    #[test]
+    fn tower_multi_element_round_trips_as_simultaneous() -> Result<()> {
+        let row = ContingencyRow {
+            contingency_id: "TOWER_L1_L2".into(),
+            elements: vec![
+                ContingencyElementRow {
+                    element_type: "branch_outage".into(),
+                    branch_id: Some(1),
+                    status_change: true,
+                    ..Default::default()
+                },
+                ContingencyElementRow {
+                    element_type: "branch_outage".into(),
+                    branch_id: Some(2),
+                    status_change: true,
+                    ..Default::default()
+                },
+            ],
+            tpl_category: Some("P7".into()),
+            reserved: Some(true),
+            ..Default::default()
+        };
+        let batch = build_contingencies_batch(&[row])?;
+        validate_contingencies_batch(&batch, &ContingencyFkContext::default())?;
+        let decoded = read_contingencies_batch(&batch)?;
+        assert_eq!(decoded[0].elements.len(), 2);
+        assert_eq!(decoded[0].tpl_category.as_deref(), Some("P7"));
+        assert_eq!(decoded[0].reserved, Some(true));
         Ok(())
     }
 }

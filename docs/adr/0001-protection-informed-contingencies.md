@@ -229,7 +229,9 @@ what the closed solver may rely on, so the two repos can evolve independently.
   `contingencies` row.
 - `protection_contingencies.tripped_elements` as the authoritative **declared outage set**.
   The core applies this exactly like a compound multi-element contingency (reusing existing
-  multi-element application + Q-limit/PV-PQ/hot-start logic).
+  multi-element application + Q-limit/PV-PQ/hot-start logic). This outage set is the
+  **reserved simultaneous** set for the closed-core funnel (never k-NN / `max_n2_pairs`
+  trimmed). See [0002-rpf-v014-funnel-portability.md](0002-rpf-v014-funnel-portability.md).
 - `protection_contingencies.data_confidence` to drive logging/warnings (e.g. emit a warning
   when applying an `assumed` outage set).
 - `protection_contingencies.topology_change_id` to locate the associated `topology_changes`
@@ -242,6 +244,9 @@ what the closed solver may rely on, so the two repos can evolve independently.
   processor). Absent these, the core treats the contingency as logical-only.
 - `protection_contingencies.sequence` for staged/timed application or auto-reclose modeling
   (advisory in Phase 1; the steady-state solve uses the final post-sequence state).
+  This list is millisecond-scale protection clearing. It is **not** a TPL P3/P6
+  intervening window; sequential N-1-1 lives in `contingency_sequences` (v0.14.0+) or
+  study JSON.
 - `topology_changes.resulting_islands` to validate or annotate the post-contingency topology
   the solver derived from the outage set.
 

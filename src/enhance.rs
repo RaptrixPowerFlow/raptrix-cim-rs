@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! `enhance` — pure-authoring patch of an existing v0.13.0 `.rpf`.
+//! `enhance` — pure-authoring patch of an existing v0.13 / v0.14 `.rpf`.
 //!
 //! Reads an existing `.rpf`, applies a small JSON "enhancement spec" that can
 //! add/replace `computational_load_profiles` rows, optionally
@@ -91,10 +91,11 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
+#[cfg(test)]
+use arrow::array::new_null_array;
 use arrow::array::{
     Array, ArrayRef, BooleanArray, BooleanBuilder, Float64Array, Float64Builder, Int32Array,
     Int32Builder, RecordBatch, StringArray, StringBuilder, StringDictionaryBuilder,
-    new_null_array,
 };
 use arrow::datatypes::{DataType, Int32Type, UInt32Type};
 use serde::Deserialize;
@@ -104,13 +105,13 @@ use crate::arrow_schema::{
     METADATA_KEY_FEATURE_CONTINGENCIES_STUB, METADATA_KEY_FEATURE_DYNAMICS_STUB,
     ProtectionSettingsProvenance, ReconnectionParams, RootWriteOptions, SeasonalEnvelopeEntry,
     TABLE_BUSES, TABLE_BUSES_SOLVED, TABLE_COMPUTATIONAL_LOAD_PROFILES,
-    TABLE_CONTINGENCY_ISLAND_ANALYSIS, TABLE_DIAGRAM_OBJECTS, TABLE_DYNAMICS_MODELS,
-    TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED, TABLE_LOADS, TABLE_METADATA,
+    TABLE_CONTINGENCY_ISLAND_ANALYSIS, TABLE_CONTINGENCY_SEQUENCES, TABLE_DIAGRAM_OBJECTS,
+    TABLE_DYNAMICS_MODELS, TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED, TABLE_LOADS, TABLE_METADATA,
     TABLE_NODE_BREAKER_DETAIL, TABLE_PROTECTION_CONTINGENCIES, TABLE_REMEDIAL_ACTION_SCHEMES,
     TABLE_TOPOLOGY_CHANGES, VoltageMeasurement, VoltageTransferCurveStage,
-    build_computational_load_profiles_batch, loads_schema,
-    patch_metadata_computational_load_mode, read_rpf_tables, rpf_file_metadata,
-    validate_computational_load_profiles_batch, write_root_rpf_with_metadata,
+    build_computational_load_profiles_batch, loads_schema, patch_metadata_computational_load_mode,
+    read_rpf_tables, rpf_file_metadata, validate_computational_load_profiles_batch,
+    write_root_rpf_with_metadata,
 };
 
 /// Human-readable summary returned after a successful `enhance` run.
@@ -225,12 +226,9 @@ pub fn run_enhance(
         // Keep buses.p_sched / q_sched consistent with the loads table. Core only
         // rebuilds bus schedules from loads when the bus-table L1 is ~0.
         if let Some(buses_batch) = table_map.remove(TABLE_BUSES) {
-            let patched_buses = sync_bus_schedules_for_load_delta(
-                &buses_batch,
-                &old_load_pq,
-                &new_load_pq,
-            )
-            .context("failed to sync buses.p_sched after load_overrides")?;
+            let patched_buses =
+                sync_bus_schedules_for_load_delta(&buses_batch, &old_load_pq, &new_load_pq)
+                    .context("failed to sync buses.p_sched after load_overrides")?;
             table_map.insert(TABLE_BUSES, patched_buses);
         }
     }
@@ -303,6 +301,7 @@ pub fn run_enhance(
         include_remedial_action_schemes: present_names.contains(TABLE_REMEDIAL_ACTION_SCHEMES),
         include_contingency_island_analysis: present_names
             .contains(TABLE_CONTINGENCY_ISLAND_ANALYSIS),
+        include_contingency_sequences: present_names.contains(TABLE_CONTINGENCY_SEQUENCES),
     };
 
     // Carry over all other root-level file metadata (case fingerprint, topology diagnostics,
@@ -546,7 +545,7 @@ struct ClassicalParamsSpec {
     mbase_mva: Option<f64>,
 }
 
-/// Reads `metadata.base_mva`, defaulting to 100 when missing/non-positive (Texas7k / PSS/E norm).
+/// Reads `metadata.base_mva`, defaulting to 100 when missing/non-positive (PSS/E convention).
 fn metadata_base_mva(metadata: Option<&RecordBatch>) -> Result<f64> {
     let Some(meta) = metadata else {
         return Ok(100.0);
@@ -624,9 +623,18 @@ fn sync_bus_schedules_for_load_delta(
         return Ok(buses.clone());
     }
 
-    let bus_id_idx = buses.schema().index_of("bus_id").context("buses missing bus_id")?;
-    let p_idx = buses.schema().index_of("p_sched").context("buses missing p_sched")?;
-    let q_idx = buses.schema().index_of("q_sched").context("buses missing q_sched")?;
+    let bus_id_idx = buses
+        .schema()
+        .index_of("bus_id")
+        .context("buses missing bus_id")?;
+    let p_idx = buses
+        .schema()
+        .index_of("p_sched")
+        .context("buses missing p_sched")?;
+    let q_idx = buses
+        .schema()
+        .index_of("q_sched")
+        .context("buses missing q_sched")?;
     let qd_idx = buses.schema().index_of("qd_load_pu").ok();
 
     let bus_ids = buses
@@ -644,12 +652,7 @@ fn sync_bus_schedules_for_load_delta(
         .as_any()
         .downcast_ref::<Float64Array>()
         .context("buses.q_sched must be Float64")?;
-    let qd_load = qd_idx.and_then(|idx| {
-        buses
-            .column(idx)
-            .as_any()
-            .downcast_ref::<Float64Array>()
-    });
+    let qd_load = qd_idx.and_then(|idx| buses.column(idx).as_any().downcast_ref::<Float64Array>());
 
     let n = buses.num_rows();
     let mut p_builder = Float64Builder::with_capacity(n);

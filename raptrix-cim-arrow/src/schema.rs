@@ -7,7 +7,13 @@ Copyright (c) 2026 Raptrix Power
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Arrow schema definitions for the Raptrix Power Interchange v0.13.0 profile.
+//! Arrow schema definitions for the Raptrix Power Interchange v0.14.0 profile.
+//!
+//! ## v0.14.0 — funnel portability (additive MINOR)
+//! Trailing nullable `contingencies.tpl_category` / `contingencies.reserved`, plus optional
+//! `contingency_sequences` (ordered N-1-1 pairs). Readers dual-read v0.13.1 / v0.13.0
+//! (new columns pad null; sequences table may be absent). See
+//! `docs/adr/0002-rpf-v014-funnel-portability.md`.
 //!
 //! ## v0.13.0 — clean-cut breaking contract
 //! Removes legacy PSS/E required `psse_version`, renames `original_sentinel_case_id` →
@@ -90,16 +96,20 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / Raptrix Power Interchange v0.13.1 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow / Raptrix Power Interchange v0.14.0 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.";
 
 /// Canonical RPF format version tag embedded as file-level metadata.
-pub const RPF_VERSION: &str = "v0.13.1";
+pub const RPF_VERSION: &str = "v0.14.0";
 
 /// Supported RPF versions accepted by generic Arrow IPC readers.
 ///
-/// v0.13.1 is an additive compatibility extension of the v0.13.0 clean cut.
-/// Readers accept both `v0.13.0` and `v0.13.1`. Pre-0.13 files remain rejected.
-pub const SUPPORTED_RPF_VERSIONS: &[&str] = &["v0.13.1", "0.13.1", "v0.13.0", "0.13.0"];
+/// v0.14.0 is an additive MINOR on the v0.13.0 clean cut. Readers accept
+/// `v0.14.0` / `0.14.0` and retain `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`.
+/// Pre-0.13 files remain rejected. 0.13.x files pad new contingency columns as
+/// null; the `contingency_sequences` table may be absent.
+pub const SUPPORTED_RPF_VERSIONS: &[&str] = &[
+    "v0.14.0", "0.14.0", "v0.13.1", "0.13.1", "v0.13.0", "0.13.0",
+];
 
 /// Closed vocabulary for `voltage_transfer_curve.polarity`.
 pub const VOLTAGE_TRANSFER_POLARITIES: &[&str] = &["under", "over"];
@@ -108,13 +118,22 @@ pub const VOLTAGE_TRANSFER_ACTIONS: &[&str] = &["transfer", "trip", "partial_tra
 /// Closed vocabulary for `voltage_transfer_curve.load_class`.
 pub const VOLTAGE_TRANSFER_LOAD_CLASSES: &[&str] = &["it", "mechanical", "all"];
 /// Closed vocabulary for `voltage_measurement.basis`.
-pub const VOLTAGE_MEASUREMENT_BASES: &[&str] =
-    &["positive_sequence_rms", "minimum_phase_rms"];
+pub const VOLTAGE_MEASUREMENT_BASES: &[&str] = &["positive_sequence_rms", "minimum_phase_rms"];
 /// Closed vocabulary for `voltage_measurement.location`.
 pub const VOLTAGE_MEASUREMENT_LOCATIONS: &[&str] = &["poi", "facility_lv"];
 /// Closed vocabulary for `protection_settings_provenance.source`.
 pub const PROTECTION_SETTINGS_SOURCES: &[&str] =
     &["site_verified", "oem_default", "study_assumption"];
+/// Closed `tpl_category` tokens (v0.14.0+). Optional NERC-oriented annotation; null = untagged.
+pub const TPL_CATEGORIES: &[&str] = &["P1", "P2", "P3", "P4", "P5", "P6", "P7", "unspecified"];
+/// Closed `contingency_sequences.provenance` tokens (v0.14.0+).
+pub const SEQUENCE_PROVENANCES: &[&str] = &["planner_file", "ems_export", "rpf", "autonomous"];
+/// Canonical leaf `generators.hierarchy_level` token.
+pub const HIERARCHY_LEVEL_UNIT: &str = "unit";
+/// Canonical contingency element token for a generator trip (v0.14.0+ write form).
+pub const ELEMENT_TYPE_GEN_TRIP: &str = "gen_trip";
+/// Reader alias for [`ELEMENT_TYPE_GEN_TRIP`].
+pub const ELEMENT_TYPE_GENERATOR_TRIP_ALIAS: &str = "generator_trip";
 
 /// Native UTC timestamp type used for case provenance timestamps (v0.13.0+).
 pub fn utc_timestamp_type() -> DataType {
@@ -256,6 +275,9 @@ pub const METADATA_KEY_FEATURE_REMEDIAL_ACTION_SCHEMES: &str =
 /// File-level feature flag: optional `contingency_island_analysis` root table is present (v0.12.1+).
 pub const METADATA_KEY_FEATURE_CONTINGENCY_ISLAND_ANALYSIS: &str =
     "raptrix.features.contingency_island_analysis";
+/// File-level feature flag: optional `contingency_sequences` root table is present (v0.14.0+).
+pub const METADATA_KEY_FEATURE_CONTINGENCY_SEQUENCES: &str =
+    "raptrix.features.contingency_sequences";
 /// Optional metadata key declaring canonical RAS schema mode (v0.12.1+).
 /// Current value: `canonical_v12`.
 pub const METADATA_KEY_RAS_SCHEMA_MODE: &str = "rpf.ras.schema_mode";
@@ -294,6 +316,8 @@ pub const TABLE_OWNERS: &str = "owners";
 pub const TABLE_CONTINGENCIES: &str = "contingencies";
 /// Optional contingency topology filter audit rows (v0.12.1+).
 pub const TABLE_CONTINGENCY_ISLAND_ANALYSIS: &str = "contingency_island_analysis";
+/// Optional sequential N-1-1 pair table (v0.14.0+).
+pub const TABLE_CONTINGENCY_SEQUENCES: &str = "contingency_sequences";
 /// Canonical interfaces table name.
 pub const TABLE_INTERFACES: &str = "interfaces";
 /// Canonical dynamics models table name.
@@ -1363,9 +1387,36 @@ pub fn contingencies_schema() -> Schema {
             Field::new("recovery_possible", DataType::Boolean, true),
             Field::new("recovery_time_min", DataType::Float64, true),
             Field::new("greedy_reserve_summary", DataType::Utf8, true),
+            // v0.14.0: optional NERC-oriented annotation. Null = untagged, not invalid.
+            Field::new("tpl_category", dict_utf8(), true),
+            // v0.14.0: never-trim marker. Null = infer from protection / study list.
+            Field::new("reserved", DataType::Boolean, true),
         ],
         schema_metadata(),
     )
+}
+
+/// Optional `contingency_sequences` table schema (v0.14.0+).
+///
+/// Ordered N-1-1 pairs. Endpoints SHOULD be single-element `contingencies` rows;
+/// multi-element endpoints are simultaneous physics and are not hard-failed.
+pub fn contingency_sequences_schema() -> Schema {
+    Schema::new_with_metadata(
+        vec![
+            Field::new("sequence_id", dict_utf8(), false),
+            Field::new("primary_contingency_id", dict_utf8(), false),
+            Field::new("secondary_contingency_id", dict_utf8(), false),
+            Field::new("intervening_window_min", DataType::Int32, true),
+            Field::new("tpl_category", dict_utf8(), true),
+            Field::new("provenance", dict_utf8(), true),
+        ],
+        schema_metadata(),
+    )
+}
+
+/// Returns optional sequential N-1-1 table schemas in deterministic order (v0.14.0+).
+pub fn contingency_sequence_table_schemas() -> Vec<(&'static str, Schema)> {
+    vec![(TABLE_CONTINGENCY_SEQUENCES, contingency_sequences_schema())]
 }
 
 /// `contingency_island_analysis` table schema (v0.12.1+, optional).
@@ -1562,10 +1613,26 @@ pub fn computational_load_profiles_schema() -> Schema {
             Field::new("reconnection_criteria", map_string_f64(), true),
             Field::new("ride_through_capability", map_string_f64(), true),
             // v0.13.1 Ashburn-class typed protection extensions (trailing only)
-            Field::new("voltage_transfer_curve", voltage_transfer_curve_list_type(), true),
-            Field::new("disturbance_counter", disturbance_counter_struct_type(), true),
-            Field::new("reconnection_params", reconnection_params_struct_type(), true),
-            Field::new("voltage_measurement", voltage_measurement_struct_type(), true),
+            Field::new(
+                "voltage_transfer_curve",
+                voltage_transfer_curve_list_type(),
+                true,
+            ),
+            Field::new(
+                "disturbance_counter",
+                disturbance_counter_struct_type(),
+                true,
+            ),
+            Field::new(
+                "reconnection_params",
+                reconnection_params_struct_type(),
+                true,
+            ),
+            Field::new(
+                "voltage_measurement",
+                voltage_measurement_struct_type(),
+                true,
+            ),
             Field::new(
                 "protection_settings_provenance",
                 protection_settings_provenance_struct_type(),
@@ -1750,7 +1817,8 @@ pub fn generators_solved_schema() -> Schema {
         vec![
             // Foreign key into generators.bus_id — must be present.
             Field::new("bus_id", DataType::Int32, false),
-            // Foreign key into generators.id — must be present.
+            // String label for the unit. Prefer `generators.mrid` when present; else a
+            // deterministic synthetic such as "{bus_id}:{name}". There is no `generators.id`.
             Field::new("id", dict_utf8(), false),
             // Actual solved real power output in per-unit.
             Field::new("p_actual_pu", DataType::Float64, true),
@@ -1930,6 +1998,7 @@ pub fn table_schema(table_name: &str) -> Option<Schema> {
         TABLE_OWNERS => Some(owners_schema()),
         TABLE_CONTINGENCIES => Some(contingencies_schema()),
         TABLE_CONTINGENCY_ISLAND_ANALYSIS => Some(contingency_island_analysis_schema()),
+        TABLE_CONTINGENCY_SEQUENCES => Some(contingency_sequences_schema()),
         TABLE_INTERFACES => Some(interfaces_schema()),
         TABLE_DYNAMICS_MODELS => Some(dynamics_models_schema()),
         TABLE_PROTECTION_CONTINGENCIES => Some(protection_contingencies_schema()),
@@ -2096,12 +2165,16 @@ mod tests {
 
     #[test]
     fn v010_schema_contract_spot_check() {
-        // contingencies must have exactly 8 fields (2 base + 6 operational outcome cols)
+        // contingencies: 2 base + 6 operational outcome + 2 v0.14 funnel columns
         let c = contingencies_schema();
-        assert_eq!(c.fields().len(), 8, "contingencies should have 8 fields");
+        assert_eq!(c.fields().len(), 10, "contingencies should have 10 fields");
         assert_eq!(c.field(0).name(), "contingency_id");
         assert_eq!(c.field(2).name(), "risk_score");
         assert_eq!(c.field(7).name(), "greedy_reserve_summary");
+        assert_eq!(c.field(8).name(), "tpl_category");
+        assert!(c.field(8).is_nullable());
+        assert_eq!(c.field(9).name(), "reserved");
+        assert!(c.field(9).is_nullable());
 
         let dm = dynamics_models_schema();
         assert_eq!(dm.fields().len(), 6);
@@ -2148,21 +2221,28 @@ mod tests {
             "contingency_island_analysis must resolve via table_schema()"
         );
         assert!(
+            table_schema("contingency_sequences").is_some(),
+            "contingency_sequences must resolve via table_schema()"
+        );
+        assert!(
             !all.iter().any(|(n, _)| *n == "protection_contingencies"
                 || *n == "topology_changes"
                 || *n == "remedial_action_schemes"
-                || *n == "contingency_island_analysis"),
-            "optional RAS/protection/island tables must NOT appear in all_table_schemas()"
+                || *n == "contingency_island_analysis"
+                || *n == "contingency_sequences"),
+            "optional RAS/protection/island/sequence tables must NOT appear in all_table_schemas()"
         );
 
-        // version gate: v0.13.1 additive extension dual-reads v0.13.0; pre-0.13 rejected
+        // version gate: v0.14.0 additive MINOR dual-reads 0.13.x; pre-0.13 rejected
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.14.0"));
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.14.0"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.13.1"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.13.1"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.13.0"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.13.0"));
         assert!(!SUPPORTED_RPF_VERSIONS.contains(&"v0.12.5"));
-        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 4);
-        assert_eq!(RPF_VERSION, "v0.13.1");
+        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 6);
+        assert_eq!(RPF_VERSION, "v0.14.0");
         assert_eq!(SCHEMA_VERSION, RPF_VERSION);
     }
 
@@ -2245,6 +2325,29 @@ mod tests {
         let optional = super::contingency_island_table_schemas();
         assert_eq!(optional.len(), 1);
         assert_eq!(optional[0].0, "contingency_island_analysis");
+    }
+
+    #[test]
+    fn contingency_sequences_match_v014_contract() {
+        let seq = super::contingency_sequences_schema();
+        assert_eq!(seq.fields().len(), 6);
+        assert_eq!(seq.field(0).name(), "sequence_id");
+        assert!(!seq.field(0).is_nullable());
+        assert_eq!(seq.field(1).name(), "primary_contingency_id");
+        assert_eq!(seq.field(2).name(), "secondary_contingency_id");
+        assert_eq!(seq.field(3).name(), "intervening_window_min");
+        assert!(seq.field(3).is_nullable());
+        assert_eq!(seq.field(4).name(), "tpl_category");
+        assert!(seq.field(4).is_nullable());
+        assert_eq!(seq.field(5).name(), "provenance");
+        assert!(seq.field(5).is_nullable());
+        assert!(super::TPL_CATEGORIES.contains(&"P1"));
+        assert!(super::TPL_CATEGORIES.contains(&"P7"));
+        assert!(super::TPL_CATEGORIES.contains(&"unspecified"));
+        assert!(!super::TPL_CATEGORIES.contains(&"P0"));
+        let optional = super::contingency_sequence_table_schemas();
+        assert_eq!(optional.len(), 1);
+        assert_eq!(optional[0].0, "contingency_sequences");
     }
 
     #[test]
