@@ -574,7 +574,7 @@ Redistribution note:
 
 ## Test Data Policy
 
-- tests/data/fixtures: tiny committed XML snippets only
+- tests/data/fixtures: tiny committed XML/JSON snippets only (`.rpf` is gitignored and is never committed)
 - tests/data/external: placeholder path for local links or local files
 - tests/data/large and data: ignored for large datasets
 

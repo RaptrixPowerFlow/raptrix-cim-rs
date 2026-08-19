@@ -80,7 +80,7 @@ Run this workflow on any of the following changes:
 1. PR-D first on existing `protection_contingencies.tripped_elements` + study-JSON pairs (works on v0.13.1).
 2. After this 0.14.0 crate: honor `reserved=true` and ingest `contingency_sequences` when the feature flag is on.
 3. Update embedded or vendored schema references to current contract.
-4. Re-run CMake configure/build and import validation for `.rpf` samples (including `tests/data/fixtures/v014_funnel_demo.rpf`).
+4. Re-run CMake configure/build and import validation for local `.rpf` samples (generate `v014_funnel_demo.rpf` with `cargo test -p raptrix-cim-arrow --test v014_funnel_demo`; do not expect `.rpf` files in the clone).
 
 ### raptrix-studio
 
@@ -101,7 +101,7 @@ These are the failure modes that have burned time on `main`. Fix the gate here b
 
 | Gate | Typical crash | What to do first |
 | --- | --- | --- |
-| **Public Safety** | `*.rpf` is blocked except `tests/data/fixtures/*.rpf` | Keep new interchange files under that fixtures path and synthetic-only. Do not commit partner/external `.rpf`. |
+| **Public Safety** | `*.rpf` is blocked | Never commit interchange binaries. Tests may emit gitignored `.rpf` under `tests/data/fixtures/` from the XML/JSON snippets. |
 | **Public Safety** | `*.xml` / `*.rdf` outside `tests/data/fixtures/` | Put CIM exchange snippets only in fixtures. |
 | **Master Contract** | `cargo fmt --all -- --check` | Run `cargo fmt --all` before push. Clippy is **not** a Master Contract gate. |
 | **Markdown Lint** | blanks-around-lists (`MD032`) | Blank line before/after lists in `CHANGELOG.md` and ADRs. |

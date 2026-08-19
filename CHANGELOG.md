@@ -11,6 +11,10 @@ Copyright (c) 2026 Raptrix Power
 
 ## Unreleased
 
+### Removed
+
+- Committed `.rpf` files under `tests/data/fixtures/`. Interchange binaries stay gitignored; tests may still emit them locally from the XML/JSON snippets.
+
 ## Converter 0.7.1 — RPF v0.14.1 facility membership (2026-08-19)
 
 ### Converter release: Crate version 0.7.1 (raptrix-cim-arrow) / 0.7.1 (raptrix-cim-rs) | Arrow schema v0.14.1

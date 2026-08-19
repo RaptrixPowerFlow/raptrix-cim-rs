@@ -11,7 +11,7 @@ This guide explains every table and field in an `.rpf` file in plain English. It
 
 This repository targets IEC 61970 CIM 17+ exchange for North American and European integrations. Public regression coverage is anchored on ENTSO-E CGMES v3.0.3 datasets.
 
-This repo is also the source of truth for the RPF contract. Use `docs/schema-contract.md` for normative reader/writer requirements and this guide for plain-English implementation guidance. A synthetic dummy with every v0.14 column populated (plus protection / topology / sequence examples) is `tests/data/fixtures/v014_funnel_demo.rpf`.
+This repo is also the source of truth for the RPF contract. Use `docs/schema-contract.md` for normative reader/writer requirements and this guide for plain-English implementation guidance. A synthetic dummy with every v0.14 column populated (plus protection / topology / sequence examples) is generated locally by `cargo test -p raptrix-cim-arrow --test v014_funnel_demo` as `tests/data/fixtures/v014_funnel_demo.rpf` (gitignored; not on GitHub).
 
 ---
 

@@ -7,7 +7,6 @@ Cargo.lock
 *.parquet
 !tests/data/fixtures/*.parquet
 *.rpf
-!tests/data/fixtures/*.rpf
 
 # Large or machine-local model datasets are kept outside the repo.
 /data/
