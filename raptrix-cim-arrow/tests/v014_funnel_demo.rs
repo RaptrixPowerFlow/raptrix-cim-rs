@@ -27,10 +27,10 @@ use arrow::record_batch::RecordBatch;
 use raptrix_cim_arrow::{
     ContingencyElementRow, ContingencyRow, ContingencySequenceRow, HIERARCHY_LEVEL_UNIT,
     RootWriteOptions, SEQUENCE_PROVENANCES, TABLE_BRANCHES, TABLE_BUSES, TABLE_CONTINGENCIES,
-    TABLE_CONTINGENCY_SEQUENCES, TABLE_FIXED_SHUNTS, TABLE_GENERATORS, TABLE_LOADS,
+    TABLE_CONTINGENCY_SEQUENCES, TABLE_FIXED_SHUNTS, TABLE_GENERATORS, TABLE_LOADS, TABLE_METADATA,
     TABLE_PROTECTION_CONTINGENCIES, TABLE_TOPOLOGY_CHANGES, TPL_CATEGORIES, all_table_schemas,
     branches_schema, build_contingencies_batch_full, build_contingency_sequences_batch,
-    buses_schema, fixed_shunts_schema, generators_schema, loads_schema,
+    buses_schema, fixed_shunts_schema, generators_schema, loads_schema, metadata_schema,
     protection_contingencies_schema, read_rpf_tables, rpf_file_metadata, topology_changes_schema,
     write_root_rpf,
 };
@@ -428,6 +428,40 @@ fn demo_sequences() -> Result<RecordBatch> {
     ])
 }
 
+fn utc_ts() -> ArrayRef {
+    Arc::new(
+        arrow::array::TimestampMicrosecondArray::from(vec![Some(1_700_000_000_000_000i64)])
+            .with_timezone(std::sync::Arc::<str>::from("UTC")),
+    ) as ArrayRef
+}
+
+fn metadata_batch() -> Result<RecordBatch> {
+    let schema = metadata_schema();
+    let mut cols: Vec<ArrayRef> = Vec::with_capacity(schema.fields().len());
+    for field in schema.fields() {
+        let col: ArrayRef = match field.name().as_str() {
+            "base_mva" => Arc::new(Float64Array::from(vec![100.0])) as _,
+            "frequency_hz" => Arc::new(Float64Array::from(vec![60.0])) as _,
+            "study_name" => one_dict("v014_funnel_demo"),
+            "timestamp_utc" | "snapshot_timestamp_utc" => utc_ts(),
+            "raptrix_version" => {
+                Arc::new(StringArray::from(vec![raptrix_cim_arrow::RPF_VERSION])) as _
+            }
+            "is_planning_case" => Arc::new(BooleanArray::from(vec![true])) as _,
+            "source_case_id" => one_dict("synthetic"),
+            "case_fingerprint" => Arc::new(StringArray::from(vec!["v014_funnel_demo"])) as _,
+            "validation_mode" => one_dict("converter_export"),
+            "case_mode" => one_dict("flat_start_planning"),
+            "modern_grid_profile" | "has_ibr" | "has_smart_valve" | "has_multi_terminal_dc" => {
+                Arc::new(BooleanArray::from(vec![false])) as _
+            }
+            _ => new_null_array(field.data_type(), 1),
+        };
+        cols.push(col);
+    }
+    RecordBatch::try_new(Arc::new(schema), cols).context("metadata batch")
+}
+
 fn buses_batch() -> Result<RecordBatch> {
     let schema = buses_schema();
     RecordBatch::try_new(
@@ -581,6 +615,7 @@ fn write_demo(path: &std::path::Path) -> Result<()> {
         .into_iter()
         .map(|(name, schema)| (name, RecordBatch::new_empty(Arc::new(schema))))
         .collect();
+    table_batches.insert(TABLE_METADATA, metadata_batch()?);
     table_batches.insert(TABLE_BUSES, buses_batch()?);
     table_batches.insert(TABLE_BRANCHES, branches_batch()?);
     table_batches.insert(TABLE_GENERATORS, generators_batch()?);
