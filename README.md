@@ -103,7 +103,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 | Connectivity detail | `--connectivity-detail` | Granular ConnectivityNode bus mapping; emits optional `connectivity_groups` table |
 | Node-breaker | `--connectivity-detail --node-breaker` | Adds switch-topology detail tables for operational and viewer workflows |
 
-### Output tables (schema contract v0.14.0)
+### Output tables (schema contract v0.14.1)
 
 **18 canonical tables (always emitted):** `metadata`, `buses`, `branches`, `multi_section_lines`, `dc_lines_2w`, `generators`, `loads`, `fixed_shunts`, `switched_shunts`, `switched_shunt_banks`, `transformers_2w`, `transformers_3w`, `areas`, `zones`, `owners`, `contingencies`, `interfaces`, `dynamics_models`
 
@@ -146,7 +146,7 @@ RAS safety note: all public examples in this repository use synthetic demonstrat
 
 ## Data Contract (Locked)
 
-- Current schema contract: **v0.14.0** (CGMES 3.0+ only). Additive MINOR on the v0.13.0 clean cut: readers accept v0.14.0 and retain v0.13.1 / v0.13.0. Adds `contingencies.tpl_category` / `reserved` and optional `contingency_sequences`.
+- Current schema contract: **v0.14.1** (CGMES 3.0+ only). Additive membership flags on the v0.14.0 cut: readers accept v0.14.1 and retain v0.14.0 / v0.13.x. Adds trailing nullable `is_secured` / `is_bes` / `is_bps` / `is_bptf` on circuits and transformers.
 - Canonical source: raptrix-cim-arrow/src/schema.rs
 - Contract policy and semantics: docs/schema-contract.md
 - Plain-English field guide: [docs/rpf-field-guide.md](docs/rpf-field-guide.md)
@@ -160,9 +160,11 @@ RPF standardization here is intentional: it enables direct CIM-to-powerflow inte
 
 ### Versioning Policy
 
-Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is at schema **`v0.14.0`** and the converter crate release is **`0.7.0`**.
+Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is at schema **`v0.14.1`** and the converter crate release is **`0.7.1`**.
 
-Readers in this repository accept `v0.14.0` / `0.14.0` and retain `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`. Pre-0.13 files must be re-emitted.
+Readers in this repository accept `v0.14.1` / `0.14.1` and retain `v0.14.0` / `0.14.0` / `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`. Pre-0.13 files must be re-emitted.
+
+**v0.14.1**: Trailing nullable `is_secured` / `is_bes` / `is_bps` / `is_bptf` on `branches`, `transformers_2w`, `transformers_3w`, `multi_section_lines`. Identity is `mrid` / `branch_id` / terminals+ckt — never a vector index. Converters leave flags null.
 
 **v0.14.0**: Adds trailing nullable `contingencies.tpl_category` / `reserved` and optional `contingency_sequences` for portable N-1-1 pairs. Canonical generator-trip token is `gen_trip`. 0.13.x files remain readable without re-export.
 

@@ -101,17 +101,18 @@ use arrow::datatypes::{DataType, Int32Type, UInt32Type};
 use serde::Deserialize;
 
 use crate::arrow_schema::{
-    BuildoutEntry, ComputationalLoadProfileRow, DisturbanceCounter,
+    BuildoutEntry, ComputationalLoadProfileRow, DisturbanceCounter, FacilityMembershipStamp,
     METADATA_KEY_FEATURE_CONTINGENCIES_STUB, METADATA_KEY_FEATURE_DYNAMICS_STUB,
     ProtectionSettingsProvenance, ReconnectionParams, RootWriteOptions, SeasonalEnvelopeEntry,
-    TABLE_BUSES, TABLE_BUSES_SOLVED, TABLE_COMPUTATIONAL_LOAD_PROFILES,
+    TABLE_BRANCHES, TABLE_BUSES, TABLE_BUSES_SOLVED, TABLE_COMPUTATIONAL_LOAD_PROFILES,
     TABLE_CONTINGENCY_ISLAND_ANALYSIS, TABLE_CONTINGENCY_SEQUENCES, TABLE_DIAGRAM_OBJECTS,
     TABLE_DYNAMICS_MODELS, TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED, TABLE_LOADS, TABLE_METADATA,
-    TABLE_NODE_BREAKER_DETAIL, TABLE_PROTECTION_CONTINGENCIES, TABLE_REMEDIAL_ACTION_SCHEMES,
-    TABLE_TOPOLOGY_CHANGES, VoltageMeasurement, VoltageTransferCurveStage,
-    build_computational_load_profiles_batch, loads_schema, patch_metadata_computational_load_mode,
-    read_rpf_tables, rpf_file_metadata, validate_computational_load_profiles_batch,
-    write_root_rpf_with_metadata,
+    TABLE_MULTI_SECTION_LINES, TABLE_NODE_BREAKER_DETAIL, TABLE_PROTECTION_CONTINGENCIES,
+    TABLE_REMEDIAL_ACTION_SCHEMES, TABLE_TOPOLOGY_CHANGES, TABLE_TRANSFORMERS_2W,
+    TABLE_TRANSFORMERS_3W, VoltageMeasurement, VoltageTransferCurveStage,
+    apply_facility_membership_stamps, build_computational_load_profiles_batch, loads_schema,
+    patch_metadata_computational_load_mode, read_rpf_tables, rpf_file_metadata,
+    validate_computational_load_profiles_batch, write_root_rpf_with_metadata,
 };
 
 /// Human-readable summary returned after a successful `enhance` run.
@@ -136,6 +137,8 @@ pub struct EnhanceSummary {
     pub load_overrides_applied: usize,
     /// Number of new `loads` rows created because a bus had no existing load and `p_mw` was set.
     pub load_rows_created: usize,
+    /// Number of `facility_membership` stamps applied (`0` if omitted).
+    pub facility_membership_stamps_applied: usize,
 }
 
 /// Reads `input_path`, applies the enhancement spec at `spec_path`, and writes the result to
@@ -190,6 +193,7 @@ pub fn run_enhance(
         dynamics_models: dynamics_spec,
         load_overrides,
         computational_load_mode: explicit_mode,
+        facility_membership: membership_spec,
         _provenance: _,
     } = spec;
 
@@ -248,6 +252,39 @@ pub fn run_enhance(
         .get(TABLE_COMPUTATIONAL_LOAD_PROFILES)
         .map(RecordBatch::num_rows)
         .unwrap_or(0);
+
+    let membership_stamps = membership_spec.unwrap_or_default();
+    let facility_membership_stamps_applied = membership_stamps.len();
+    if !membership_stamps.is_empty() {
+        let stamps: Vec<FacilityMembershipStamp> = membership_stamps
+            .into_iter()
+            .map(FacilityMembershipSpec::into_stamp)
+            .collect();
+        for table in [
+            TABLE_BRANCHES,
+            TABLE_TRANSFORMERS_2W,
+            TABLE_TRANSFORMERS_3W,
+            TABLE_MULTI_SECTION_LINES,
+        ] {
+            let needed = stamps.iter().any(|s| s.table == table);
+            match table_map.remove(table) {
+                Some(batch) => {
+                    let patched = apply_facility_membership_stamps(table, &batch, &stamps)
+                        .with_context(|| {
+                            format!("failed to apply facility_membership to {table}")
+                        })?;
+                    table_map.insert(table, patched);
+                    present_names.insert(table.to_string());
+                }
+                None if needed => {
+                    bail!(
+                        "facility_membership references table '{table}' but the input .rpf has no such table"
+                    );
+                }
+                None => {}
+            }
+        }
+    }
 
     let resolved_mode = match explicit_mode {
         Some(explicit) => Some(explicit),
@@ -336,6 +373,7 @@ pub fn run_enhance(
         computational_load_mode: resolved_mode,
         load_overrides_applied,
         load_rows_created,
+        facility_membership_stamps_applied,
     })
 }
 
@@ -350,9 +388,65 @@ struct EnhanceSpecFile {
     load_overrides: Option<Vec<LoadOverrideSpec>>,
     #[serde(default)]
     computational_load_mode: Option<bool>,
+    #[serde(default)]
+    facility_membership: Option<Vec<FacilityMembershipSpec>>,
     /// Optional authoring notes; ignored by the enhancer.
     #[serde(default, rename = "_provenance")]
     _provenance: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FacilityMembershipSpec {
+    #[serde(default)]
+    table: Option<String>,
+    #[serde(default)]
+    mrid: Option<String>,
+    #[serde(default)]
+    branch_id: Option<i32>,
+    #[serde(default)]
+    line_id: Option<i32>,
+    #[serde(default)]
+    from_bus_id: Option<i32>,
+    #[serde(default)]
+    to_bus_id: Option<i32>,
+    #[serde(default)]
+    bus_h_id: Option<i32>,
+    #[serde(default)]
+    bus_m_id: Option<i32>,
+    #[serde(default)]
+    bus_l_id: Option<i32>,
+    #[serde(default)]
+    ckt: Option<String>,
+    #[serde(default)]
+    is_secured: Option<bool>,
+    #[serde(default)]
+    is_bes: Option<bool>,
+    #[serde(default)]
+    is_bps: Option<bool>,
+    #[serde(default)]
+    is_bptf: Option<bool>,
+}
+
+impl FacilityMembershipSpec {
+    fn into_stamp(self) -> FacilityMembershipStamp {
+        FacilityMembershipStamp {
+            table: self.table.unwrap_or_else(|| TABLE_BRANCHES.to_string()),
+            mrid: self.mrid,
+            branch_id: self.branch_id,
+            line_id: self.line_id,
+            from_bus_id: self.from_bus_id,
+            to_bus_id: self.to_bus_id,
+            bus_h_id: self.bus_h_id,
+            bus_m_id: self.bus_m_id,
+            bus_l_id: self.bus_l_id,
+            ckt: self.ckt,
+            is_secured: self.is_secured,
+            is_bes: self.is_bes,
+            is_bps: self.is_bps,
+            is_bptf: self.is_bptf,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]

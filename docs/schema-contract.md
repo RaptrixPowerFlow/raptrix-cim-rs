@@ -3,11 +3,30 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 Copyright (c) 2026 Raptrix Power
 -->
 
-# Schema Contract (Locked contract: v0.14.0 — CGMES 3.0+ Only; dual-read v0.13.x)
+# Schema Contract (Locked contract: v0.14.1 — CGMES 3.0+ Only; dual-read v0.14.0 / v0.13.x)
 
 This repository is the authoritative source of truth for the Raptrix Power Interchange (`.rpf`) wire contract used by CIM-first conversion pipelines.
 
-**v0.14.0** is the current contract release (additive funnel portability on the v0.13.0 clean cut). `SUPPORTED_RPF_VERSIONS` accepts **`v0.14.0` / `0.14.0` and retains `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`**. Pre-0.13 files remain rejected. 0.13.x files load with `contingencies.tpl_category` / `reserved` null; the `contingency_sequences` table may be absent. v0.14 writers may omit sequences entirely. See [adr/0002-rpf-v014-funnel-portability.md](adr/0002-rpf-v014-funnel-portability.md).
+**v0.14.1** is the current contract release (facility-membership flags on the v0.14.0 funnel cut). `SUPPORTED_RPF_VERSIONS` accepts **`v0.14.1` / `0.14.1` and retains `v0.14.0` / `0.14.0` / `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`**. Pre-0.13 files remain rejected. Older files pad `is_secured` / `is_bes` / `is_bps` / `is_bptf` as null. See [adr/0002-rpf-v014-funnel-portability.md](adr/0002-rpf-v014-funnel-portability.md).
+
+## v0.14.1 Additive Changes
+
+Trailing nullable Boolean columns on `branches`, `transformers_2w`, `transformers_3w`, and `multi_section_lines`:
+
+| Column | Meaning |
+| --- | --- |
+| `is_secured` | EMS / RC monitor / must-include |
+| `is_bes` | NERC Bulk Electric System |
+| `is_bps` | Broader bulk-power set |
+| `is_bptf` | NYISO Bulk Power Transmission Facilities (BETF in some decks) |
+
+**Tri-state:** `null` = unknown (auto-define may run); `true` = on the list; `false` = explicitly not.
+
+**Identity (never a 0-based vector index):** match overlays in this order: `mrid` (if present), `branch_id` (branches), `line_id` (`multi_section_lines`), `(from_bus_id, to_bus_id, ckt)` (branches / 2W transformers), `(bus_h_id, bus_m_id, bus_l_id, ckt)` (3W transformers).
+
+**Multi-section inheritance (locked):** for each flag independently, a **non-null section/row value wins**. If the section is null, inherit the parent `multi_section_lines` value (which may itself be null). Explicit `false` on a section does not inherit `true` from the parent.
+
+**Converters** emit null. Do not invent BES from kV. Stamp via `enhance` `facility_membership`.
 
 ## Identity model (hybrid solver flat-profile)
 

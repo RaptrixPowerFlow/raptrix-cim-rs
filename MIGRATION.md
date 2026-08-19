@@ -4,6 +4,28 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 
 Copyright (c) 2026 Raptrix Power
 
+## v0.14.1 (additive compatibility extension — dual-read of v0.14.0 / v0.13.x; no re-export required)
+
+Trailing nullable facility-membership flags. Writers emit `v0.14.1`. Readers accept `v0.14.1` / `0.14.1` and retain `v0.14.0` / `0.14.0` / `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`. Older files pad the new columns as null.
+
+### What changed
+
+| Area | Action |
+| --- | --- |
+| Version gate | Accept `v0.14.1` / `0.14.1` **and** 0.14.0 / 0.13.x |
+| Writers | Emit `v0.14.1`; converters leave membership **null** (do not invent BES from kV) |
+| `branches`, `transformers_2w`, `transformers_3w`, `multi_section_lines` | Trailing nullable `is_secured`, `is_bes`, `is_bps`, `is_bptf` |
+| Identity | `mrid`, `branch_id`, `line_id`, or terminals+`ckt` — **never** a 0-based vector index |
+| Inheritance | Multi-section: non-null section row wins; else parent `multi_section_lines`; else unknown |
+| Authoring | `enhance` spec key `facility_membership` |
+
+### Consumer checklist
+
+1. Accept `0.14.1` and prior dual-read versions at the version gate.
+2. Treat missing membership columns as null (unknown).
+3. Join overlays on `branch_id` / `mrid` / from-to-ckt, never vector indices.
+4. Do not treat kV ≥ 100 as `is_bes=true`.
+
 ## v0.14.0 (additive MINOR — dual-read of v0.13.1 / v0.13.0; no re-export required)
 
 True MINOR after the v0.13.1 compatibility-extension exception. Writers emit `v0.14.0`. Readers accept `v0.14.0` / `0.14.0` and retain `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`.

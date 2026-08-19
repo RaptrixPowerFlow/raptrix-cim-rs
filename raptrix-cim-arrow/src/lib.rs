@@ -33,6 +33,7 @@ pub mod computational_load;
 pub mod contingencies;
 pub mod contingency_sequences;
 pub mod dynamics;
+pub mod facility_membership;
 pub mod ffi;
 mod health;
 mod io;
@@ -59,6 +60,11 @@ pub use dynamics::{
     ClassicalParams, DynamicsModelRow as DynamicsModelRowFull, Perc1Params,
     build_dynamics_models_batch as build_dynamics_models_batch_full, read_dynamics_models_batch,
     validate_dynamics_models_batch,
+};
+pub use facility_membership::{
+    FACILITY_MEMBERSHIP_COLUMNS, FacilityMembershipStamp, apply_facility_membership_stamps,
+    ensure_membership_columns, facility_membership_fields, parent_membership_by_line_id,
+    resolve_branch_membership_row, resolve_facility_membership,
 };
 pub use health::{
     RpfCaseAggregates, RpfCaseCounts, RpfCaseHealth, RpfConvergenceHints, RpfHealthGrade,

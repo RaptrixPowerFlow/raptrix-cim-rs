@@ -11,6 +11,20 @@ Copyright (c) 2026 Raptrix Power
 
 ## Unreleased
 
+## Converter 0.7.1 — RPF v0.14.1 facility membership (2026-08-19)
+
+### Converter release: Crate version 0.7.1 (raptrix-cim-arrow) / 0.7.1 (raptrix-cim-rs) | Arrow schema v0.14.1
+
+**Compatibility extension.** Writers emit **v0.14.1**. Readers accept **`v0.14.1` / `0.14.1` and retain `v0.14.0` / `0.14.0` / `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`**. No re-export required for older files.
+
+### Added
+
+- Trailing nullable `is_secured` / `is_bes` / `is_bps` / `is_bptf` on `branches`, `transformers_2w`, `transformers_3w`, and `multi_section_lines`.
+- Tri-state: `null` = unknown, `true` = on the list, `false` = explicitly not.
+- `raptrix-cim-arrow::facility_membership` — stamp by stable identity (`mrid`, `branch_id`, `line_id`, terminals+ckt). **Never** a vector index.
+- Multi-section inheritance helper: section non-null wins; else parent line; else unknown.
+- `enhance` spec key `facility_membership` for overlay authoring. CIM converters leave flags null.
+
 ## Converter 0.7.0 — RPF v0.14.0 funnel portability (2026-08-16)
 
 ### Converter release: Crate version 0.7.0 (raptrix-cim-arrow) / 0.7.0 (raptrix-cim-rs) | Arrow schema v0.14.0

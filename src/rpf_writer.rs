@@ -4681,6 +4681,11 @@ fn build_branches_batch(rows: &[BranchRow<'_>]) -> Result<RecordBatch> {
         new_null_array(schema.field(25).data_type(), rows.len()),
         new_null_array(schema.field(26).data_type(), rows.len()),
         Arc::new(mrid_b.finish()) as ArrayRef,
+        // v0.14.1 membership: converters do not invent BES/secured from kV.
+        new_null_array(schema.field(28).data_type(), rows.len()),
+        new_null_array(schema.field(29).data_type(), rows.len()),
+        new_null_array(schema.field(30).data_type(), rows.len()),
+        new_null_array(schema.field(31).data_type(), rows.len()),
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build branches record batch")
@@ -4979,6 +4984,10 @@ fn build_transformers_2w_batch(rows: &[Transformer2WRow<'_>]) -> Result<RecordBa
         Arc::new(from_nominal_kv_b.finish()) as ArrayRef,
         Arc::new(to_nominal_kv_b.finish()) as ArrayRef,
         Arc::new(mrid_b.finish()) as ArrayRef,
+        new_null_array(schema.field(23).data_type(), rows.len()),
+        new_null_array(schema.field(24).data_type(), rows.len()),
+        new_null_array(schema.field(25).data_type(), rows.len()),
+        new_null_array(schema.field(26).data_type(), rows.len()),
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build transformers_2w record batch")
@@ -5074,6 +5083,10 @@ fn build_transformers_3w_batch(rows: &[Transformer3WRow<'_>]) -> Result<RecordBa
         Arc::new(nominal_kv_m_b.finish()) as ArrayRef,
         Arc::new(nominal_kv_l_b.finish()) as ArrayRef,
         Arc::new(mrid_b.finish()) as ArrayRef,
+        new_null_array(schema.field(25).data_type(), rows.len()),
+        new_null_array(schema.field(26).data_type(), rows.len()),
+        new_null_array(schema.field(27).data_type(), rows.len()),
+        new_null_array(schema.field(28).data_type(), rows.len()),
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build transformers_3w record batch")

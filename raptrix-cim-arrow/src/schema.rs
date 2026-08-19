@@ -7,7 +7,15 @@ Copyright (c) 2026 Raptrix Power
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Arrow schema definitions for the Raptrix Power Interchange v0.14.0 profile.
+//! Arrow schema definitions for the Raptrix Power Interchange v0.14.1 profile.
+//!
+//! ## v0.14.1 — facility membership (additive compatibility extension)
+//! Trailing nullable `is_secured` / `is_bes` / `is_bps` / `is_bptf` on `branches`,
+//! `transformers_2w`, `transformers_3w`, and `multi_section_lines`. Tri-state:
+//! null = unknown, true = on the list, false = explicitly not. Readers dual-read
+//! v0.14.0 / v0.13.x (new columns pad null). Converters leave them null.
+//! Identity is `mrid` / `branch_id` / `line_id` / terminals+ckt — never a vector index.
+//! Multi-section inheritance: non-null section wins; else parent line; else unknown.
 //!
 //! ## v0.14.0 — funnel portability (additive MINOR)
 //! Trailing nullable `contingencies.tpl_category` / `contingencies.reserved`, plus optional
@@ -96,19 +104,20 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / Raptrix Power Interchange v0.14.0 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow / Raptrix Power Interchange v0.14.1 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.";
 
 /// Canonical RPF format version tag embedded as file-level metadata.
-pub const RPF_VERSION: &str = "v0.14.0";
+pub const RPF_VERSION: &str = "v0.14.1";
 
 /// Supported RPF versions accepted by generic Arrow IPC readers.
 ///
-/// v0.14.0 is an additive MINOR on the v0.13.0 clean cut. Readers accept
-/// `v0.14.0` / `0.14.0` and retain `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`.
-/// Pre-0.13 files remain rejected. 0.13.x files pad new contingency columns as
-/// null; the `contingency_sequences` table may be absent.
+/// v0.14.1 is a compatibility-extension on v0.14.0 (trailing nullable membership
+/// columns). Readers accept `v0.14.1` / `0.14.1` and retain `v0.14.0` / `0.14.0`
+/// plus `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`. Pre-0.13 files remain rejected.
+/// Older files pad new membership columns as null.
 pub const SUPPORTED_RPF_VERSIONS: &[&str] = &[
-    "v0.14.0", "0.14.0", "v0.13.1", "0.13.1", "v0.13.0", "0.13.0",
+    "v0.14.1", "0.14.1", "v0.14.0", "0.14.0", "v0.13.1", "0.13.1", "v0.13.0",
+    "0.13.0",
 ];
 
 /// Closed vocabulary for `voltage_transfer_curve.polarity`.
@@ -924,6 +933,11 @@ pub fn branches_schema() -> Schema {
             Field::new("section_index", DataType::Int32, true),
             // v0.12.2: stable CIM mRID (ACLineSegment.base.m_rid etc.)
             Field::new("mrid", DataType::Utf8, true),
+            // v0.14.1: trailing nullable facility membership (null = unknown).
+            Field::new("is_secured", DataType::Boolean, true),
+            Field::new("is_bes", DataType::Boolean, true),
+            Field::new("is_bps", DataType::Boolean, true),
+            Field::new("is_bptf", DataType::Boolean, true),
         ],
         schema_metadata(),
     )
@@ -949,6 +963,11 @@ pub fn multi_section_lines_schema() -> Schema {
             Field::new("rate_b_mva", DataType::Float64, true),
             Field::new("status", DataType::Boolean, false),
             Field::new("name", DataType::Utf8, true),
+            // v0.14.1: logical-circuit membership; sections inherit when their row is null.
+            Field::new("is_secured", DataType::Boolean, true),
+            Field::new("is_bes", DataType::Boolean, true),
+            Field::new("is_bps", DataType::Boolean, true),
+            Field::new("is_bptf", DataType::Boolean, true),
         ],
         schema_metadata(),
     )
@@ -1297,6 +1316,11 @@ pub fn transformers_2w_schema() -> Schema {
             Field::new("to_nominal_kv", DataType::Float64, false),
             // v0.12.2: stable CIM mRID (PowerTransformer.base.m_rid etc.)
             Field::new("mrid", DataType::Utf8, true),
+            // v0.14.1: trailing nullable facility membership (null = unknown).
+            Field::new("is_secured", DataType::Boolean, true),
+            Field::new("is_bes", DataType::Boolean, true),
+            Field::new("is_bps", DataType::Boolean, true),
+            Field::new("is_bptf", DataType::Boolean, true),
         ],
         schema_metadata(),
     )
@@ -1332,6 +1356,11 @@ pub fn transformers_3w_schema() -> Schema {
             Field::new("nominal_kv_l", DataType::Float64, false),
             // v0.12.2: stable CIM mRID (PowerTransformer.base.m_rid etc.)
             Field::new("mrid", DataType::Utf8, true),
+            // v0.14.1: trailing nullable facility membership (null = unknown).
+            Field::new("is_secured", DataType::Boolean, true),
+            Field::new("is_bes", DataType::Boolean, true),
+            Field::new("is_bps", DataType::Boolean, true),
+            Field::new("is_bptf", DataType::Boolean, true),
         ],
         schema_metadata(),
     )
@@ -2233,7 +2262,9 @@ mod tests {
             "optional RAS/protection/island/sequence tables must NOT appear in all_table_schemas()"
         );
 
-        // version gate: v0.14.0 additive MINOR dual-reads 0.13.x; pre-0.13 rejected
+        // version gate: v0.14.1 dual-reads 0.14.0 and 0.13.x; pre-0.13 rejected
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.14.1"));
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.14.1"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.14.0"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.14.0"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.13.1"));
@@ -2241,8 +2272,8 @@ mod tests {
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.13.0"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.13.0"));
         assert!(!SUPPORTED_RPF_VERSIONS.contains(&"v0.12.5"));
-        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 6);
-        assert_eq!(RPF_VERSION, "v0.14.0");
+        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 8);
+        assert_eq!(RPF_VERSION, "v0.14.1");
         assert_eq!(SCHEMA_VERSION, RPF_VERSION);
     }
 
@@ -2685,7 +2716,7 @@ mod tests {
     #[test]
     fn branches_schema_appends_facts_columns() {
         let branches = branches_schema();
-        assert_eq!(branches.fields().len(), 28);
+        assert_eq!(branches.fields().len(), 32);
         assert_eq!(branches.field(17).name(), "device_type");
         assert_eq!(branches.field(18).name(), "control_mode");
         assert_eq!(branches.field(19).name(), "control_target_flow_mw");
@@ -2697,6 +2728,12 @@ mod tests {
         assert_eq!(branches.field(25).name(), "parent_line_id");
         assert_eq!(branches.field(26).name(), "section_index");
         assert_eq!(branches.field(27).name(), "mrid");
+        assert_eq!(branches.field(28).name(), "is_secured");
+        assert!(branches.field(28).is_nullable());
+        assert_eq!(branches.field(29).name(), "is_bes");
+        assert_eq!(branches.field(30).name(), "is_bps");
+        assert_eq!(branches.field(31).name(), "is_bptf");
+        assert!(branches.field(31).is_nullable());
     }
 
     #[test]
