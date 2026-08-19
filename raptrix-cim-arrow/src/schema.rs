@@ -116,8 +116,7 @@ pub const RPF_VERSION: &str = "v0.14.1";
 /// plus `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`. Pre-0.13 files remain rejected.
 /// Older files pad new membership columns as null.
 pub const SUPPORTED_RPF_VERSIONS: &[&str] = &[
-    "v0.14.1", "0.14.1", "v0.14.0", "0.14.0", "v0.13.1", "0.13.1", "v0.13.0",
-    "0.13.0",
+    "v0.14.1", "0.14.1", "v0.14.0", "0.14.0", "v0.13.1", "0.13.1", "v0.13.0", "0.13.0",
 ];
 
 /// Closed vocabulary for `voltage_transfer_curve.polarity`.

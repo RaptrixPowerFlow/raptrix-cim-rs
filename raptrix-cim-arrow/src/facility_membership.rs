@@ -35,8 +35,7 @@ const TABLE_TRANSFORMERS_2W: &str = "transformers_2w";
 const TABLE_TRANSFORMERS_3W: &str = "transformers_3w";
 
 /// Canonical trailing column names, in on-wire order.
-pub const FACILITY_MEMBERSHIP_COLUMNS: &[&str] =
-    &["is_secured", "is_bes", "is_bps", "is_bptf"];
+pub const FACILITY_MEMBERSHIP_COLUMNS: &[&str] = &["is_secured", "is_bes", "is_bps", "is_bptf"];
 
 /// Trailing nullable Boolean fields appended to membership-bearing tables.
 pub fn facility_membership_fields() -> Vec<Field> {
@@ -207,9 +206,7 @@ pub fn ensure_membership_columns(batch: &RecordBatch) -> Result<RecordBatch> {
 }
 
 /// Parent `line_id` → resolved flags, for inheritance.
-pub fn parent_membership_by_line_id(
-    msl: &RecordBatch,
-) -> Result<HashMap<i32, [Option<bool>; 4]>> {
+pub fn parent_membership_by_line_id(msl: &RecordBatch) -> Result<HashMap<i32, [Option<bool>; 4]>> {
     let msl = ensure_membership_columns(msl)?;
     let mut map = HashMap::new();
     let id_col = int32_col(&msl, "line_id")?;
@@ -336,7 +333,8 @@ fn terminals_match(
     row: usize,
     stamp: &FacilityMembershipStamp,
 ) -> Result<bool> {
-    let (Some(from), Some(to), Some(ckt)) = (stamp.from_bus_id, stamp.to_bus_id, stamp.ckt.as_deref())
+    let (Some(from), Some(to), Some(ckt)) =
+        (stamp.from_bus_id, stamp.to_bus_id, stamp.ckt.as_deref())
     else {
         return Ok(false);
     };
@@ -415,9 +413,9 @@ mod tests {
                 "from_bus_id" => {
                     cols.push(Arc::new(Int32Array::from((0..n as i32).collect::<Vec<_>>())) as _)
                 }
-                "to_bus_id" => cols.push(Arc::new(Int32Array::from(
-                    (1..=n as i32).collect::<Vec<_>>(),
-                )) as _),
+                "to_bus_id" => {
+                    cols.push(Arc::new(Int32Array::from((1..=n as i32).collect::<Vec<_>>())) as _)
+                }
                 "ckt" => cols.push(dict_i32_ones(n)),
                 "name" => cols.push(dict_u32_ones(n)),
                 "mrid" => {
@@ -433,7 +431,9 @@ mod tests {
                         cols.push(Arc::new(arrow::array::Float64Array::from(vec![1.0; n])) as _)
                     }
                     DataType::Int32 => cols.push(Arc::new(Int32Array::from(vec![0; n])) as _),
-                    DataType::Boolean => cols.push(Arc::new(BooleanArray::from(vec![true; n])) as _),
+                    DataType::Boolean => {
+                        cols.push(Arc::new(BooleanArray::from(vec![true; n])) as _)
+                    }
                     DataType::Utf8 => cols.push(Arc::new(StringArray::from(vec![""; n])) as _),
                     _ => cols.push(arrow::array::new_null_array(field.data_type(), n)),
                 },
@@ -448,15 +448,9 @@ mod tests {
             resolve_facility_membership(Some(false), Some(true)),
             Some(false)
         );
-        assert_eq!(
-            resolve_facility_membership(None, Some(true)),
-            Some(true)
-        );
+        assert_eq!(resolve_facility_membership(None, Some(true)), Some(true));
         assert_eq!(resolve_facility_membership(None, None), None);
-        assert_eq!(
-            resolve_facility_membership(Some(true), None),
-            Some(true)
-        );
+        assert_eq!(resolve_facility_membership(Some(true), None), Some(true));
     }
 
     #[test]
