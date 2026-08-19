@@ -11,9 +11,11 @@ Copyright (c) 2026 Raptrix Power
 
 ## Unreleased
 
-### Removed
+## Converter 0.7.2 — RPF v0.14.2 transformer tap / PST control (2026-08-19)
 
-- Committed `.rpf` files under `tests/data/fixtures/`. Interchange binaries stay gitignored; tests may still emit them locally from the XML/JSON snippets.
+### Converter release: Crate version 0.7.2 (raptrix-cim-arrow) / 0.7.2 (raptrix-cim-rs) | Arrow schema v0.14.2
+
+**Compatibility extension.** Writers emit **v0.14.2**. Readers accept **v0.14.2** and retain v0.14.1 / v0.14.0 / v0.13.x. Trailing nullable `tap_min` / `tap_max` / `tap_limit_unit` / `n_positions` / `tap_step` / `tap_control_mode` / `regulated_bus_id` / `operation_time_min` on `transformers_2w` and `transformers_3w`. 3W = H winding / COD1 only. CIM converters leave them null. COD 0 / incomplete grid → all eight null. `tap_control_mode` is RAW COD and is not `branches.control_mode`. On-wire unit authority is `tap_limit_unit` (`ratio` / `degrees`); readers do not re-derive it from COD. Do not infer a step from a static tap. Canonical helpers: `usable_tap_control` / `normalize_tap_control`.
 
 ## Converter 0.7.1 — RPF v0.14.1 facility membership (2026-08-19)
 

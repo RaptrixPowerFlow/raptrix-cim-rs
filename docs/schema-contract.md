@@ -3,11 +3,56 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 Copyright (c) 2026 Raptrix Power
 -->
 
-# Schema Contract (Locked contract: v0.14.1 — CGMES 3.0+ Only; dual-read v0.14.0 / v0.13.x)
+# Schema Contract (Locked contract: v0.14.2 — CGMES 3.0+ Only; dual-read v0.14.1 / v0.14.0 / v0.13.x)
 
 This repository is the authoritative source of truth for the Raptrix Power Interchange (`.rpf`) wire contract used by CIM-first conversion pipelines.
 
-**v0.14.1** is the current contract release (facility-membership flags on the v0.14.0 funnel cut). `SUPPORTED_RPF_VERSIONS` accepts **`v0.14.1` / `0.14.1` and retains `v0.14.0` / `0.14.0` / `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`**. Pre-0.13 files remain rejected. Older files pad `is_secured` / `is_bes` / `is_bps` / `is_bptf` as null. See [adr/0002-rpf-v014-funnel-portability.md](adr/0002-rpf-v014-funnel-portability.md).
+**v0.14.2** is the current contract release (transformer tap / PST control on the v0.14.1 membership cut). `SUPPORTED_RPF_VERSIONS` accepts **`v0.14.2` / `0.14.2` and retains `v0.14.1` / `0.14.1` / `v0.14.0` / `0.14.0` / `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`**. Pre-0.13 files remain rejected. Older files pad new trailing columns as null.
+
+## v0.14.2 Additive Changes
+
+Trailing nullable tap / PST control columns on `transformers_2w` and `transformers_3w`.
+
+`transformers_3w` carries a single COD1-style control block on the H winding; M/L tap control is out of scope for this revision.
+
+| Column | Type | Meaning |
+| --- | --- | --- |
+| `tap_min` | Float64, nullable | RAW `RMI` |
+| `tap_max` | Float64, nullable | RAW `RMA` |
+| `tap_limit_unit` | Dictionary\<Int32, Utf8\>, nullable | `ratio` \| `degrees`. Discriminator for `tap_min`/`tap_max`. |
+| `n_positions` | Int32, nullable | RAW `NTP` |
+| `tap_step` | Float64, nullable | `(tap_max - tap_min) / (n_positions - 1)` when `n_positions > 1` |
+| `tap_control_mode` | Int32, nullable | RAW `COD`. **Not** `branches.control_mode`. |
+| `regulated_bus_id` | Int32, nullable | RAW `CONT` (dense `bus_id`; null = local) |
+| `operation_time_min` | Float64, nullable | Not in RAW. Null = missing timing. Recovery may use a study assumption or reject as `missing_timing`. Fill path = enhance / study overlay. |
+
+**Do not infer a step from a static `tap_ratio`.** Dual-read of v0.14.1 and earlier pads these columns null. CIM converters leave all eight null.
+
+On-wire authority for min/max units is **`tap_limit_unit`**. Readers must not re-derive units from `tap_control_mode` / COD. `tap_limit_unit_from_cod` is a **writer helper** (PSS/E default mapping lives in `raptrix-psse-rs`); other decks may stamp `degrees` on non-3 CODs.
+
+### Writer normalization
+
+If COD is 0, the control block is absent, or the discrete grid is incomplete → write **all eight columns null**. Do not write `tap_control_mode = 0` with non-null RMA/RMI. Prefer `normalize_tap_control` so `tap_step` is filled from the derived grid and consumers do not reimplement the formula.
+
+### Validity predicate (`usable_tap_control`)
+
+Solvers answer *can I step this device?* from the derived grid, not from the COD integer alone.
+
+```text
+usable_tap_control =
+  tap_control_mode is non-null and != 0
+  AND tap_limit_unit in {ratio, degrees}
+  AND tap_min, tap_max finite
+  AND tap_max > tap_min
+  AND n_positions > 1
+  AND tap_step is null or equals derived_tap_step(tap_min, tap_max, n_positions)
+```
+
+Everything else → treat as **fixed / incomplete** (ignore the range columns). Canonical implementation: `raptrix_cim_arrow::usable_tap_control` / `normalize_tap_control`.
+
+### Name collision
+
+`tap_control_mode` (Int32, RAW COD on transformer tables) must never be joined or type-coerced with `branches.control_mode` (Utf8 dict / FACTS). Readers that accept a generic `control_mode` without an explicit table kind are wrong.
 
 ## v0.14.1 Additive Changes
 
@@ -49,6 +94,7 @@ Trailing nullable Boolean columns on `branches`, `transformers_2w`, `transformer
 | `computational_load_profiles` power fields | **Physical MW** |
 | Classical `xd_prime` | pu on machine base `mbase_mva` |
 | GIS lat/lon | WGS84 degrees (Float64) |
+| Transformer tap limits | `tap_limit_unit`: `ratio` (pu) or `degrees` (PST). Never infer from static `tap_ratio`. |
 
 ## v0.14.0 Additive Changes
 
@@ -309,8 +355,8 @@ Every `.rpf` file must include:
 
 Current locked values:
 
-- `raptrix.version = 0.14.0` (writers); readers also accept `v0.14.0` / `0.14.0` / `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`
-- `raptrix.branding = Raptrix CIM-Arrow / Raptrix Power Interchange v0.14.0 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.`
+- `raptrix.version = 0.14.2` (writers); readers also accept `v0.14.2` / `0.14.2` / `v0.14.1` / `0.14.1` / `v0.14.0` / `0.14.0` / `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`
+- `raptrix.branding = Raptrix CIM-Arrow / Raptrix Power Interchange v0.14.2 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.`
 - `rpf.case_fingerprint = <required deterministic case identity fingerprint>`
 - `rpf.validation_mode = topology_only | solved_ready`
 - `rpf.case_mode = flat_start_planning | warm_start_planning | solved_snapshot | hour_ahead_advisory` (v0.8.4+, required; `hour_ahead_advisory` added in v0.9.0)
@@ -760,6 +806,15 @@ Inductive steps must be represented in `switched_shunt_banks`.
 - `name`: Dictionary<UInt32, Utf8>, nullable
 - `from_nominal_kv`: Float64, required (`> 0`)
 - `to_nominal_kv`: Float64, required (`> 0`)
+- `mrid`: Utf8, nullable (v0.12.2+)
+- `is_secured` / `is_bes` / `is_bps` / `is_bptf`: Boolean, nullable (v0.14.1+)
+- `tap_min` / `tap_max`: Float64, nullable (v0.14.2+)
+- `tap_limit_unit`: Dictionary<Int32, Utf8>, nullable (v0.14.2+) — `ratio` \| `degrees`
+- `n_positions`: Int32, nullable (v0.14.2+)
+- `tap_step`: Float64, nullable (v0.14.2+)
+- `tap_control_mode`: Int32, nullable (v0.14.2+) — RAW COD; not `branches.control_mode`
+- `regulated_bus_id`: Int32, nullable (v0.14.2+)
+- `operation_time_min`: Float64, nullable (v0.14.2+)
 
 ### transformers_3w
 
@@ -787,6 +842,9 @@ Inductive steps must be represented in `switched_shunt_banks`.
 - `nominal_kv_h`: Float64, required (`> 0`)
 - `nominal_kv_m`: Float64, required (`> 0`)
 - `nominal_kv_l`: Float64, required (`> 0`)
+- `mrid`: Utf8, nullable (v0.12.2+)
+- `is_secured` / `is_bes` / `is_bps` / `is_bptf`: Boolean, nullable (v0.14.1+)
+- tap-control columns: same as `transformers_2w` (v0.14.2+). **H winding / COD1 only**; M/L tap control is out of scope.
 
 ### areas
 

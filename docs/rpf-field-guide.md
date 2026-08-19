@@ -5,13 +5,13 @@ Copyright (c) 2026 Raptrix Power
 
 # RPF Field Guide — Plain-English Reference
 
-**Schema contract: v0.14.0 (dual-read v0.13.1 / v0.13.0) | Format: Apache Arrow IPC**
+**Schema contract: v0.14.2 (dual-read v0.14.1 / v0.14.0 / v0.13.x) | Format: Apache Arrow IPC**
 
 This guide explains every table and field in an `.rpf` file in plain English. It is written for engineers who need to read, validate, or build tools against RPF files without digging into Arrow source code. For the normative type-level contract see [schema-contract.md](schema-contract.md). Migration notes for the v0.14.0 additive MINOR are in [MIGRATION.md](../MIGRATION.md).
 
 This repository targets IEC 61970 CIM 17+ exchange for North American and European integrations. Public regression coverage is anchored on ENTSO-E CGMES v3.0.3 datasets.
 
-This repo is also the source of truth for the RPF contract. Use `docs/schema-contract.md` for normative reader/writer requirements and this guide for plain-English implementation guidance. A synthetic dummy with every v0.14 column populated (plus protection / topology / sequence examples) is generated locally by `cargo test -p raptrix-cim-arrow --test v014_funnel_demo` as `tests/data/fixtures/v014_funnel_demo.rpf` (gitignored; not on GitHub).
+This repo is also the source of truth for the RPF contract. Use `docs/schema-contract.md` for normative reader/writer requirements and this guide for plain-English implementation guidance. A synthetic dummy with every v0.14 column populated (plus protection / topology / sequence examples) is `tests/data/fixtures/v014_funnel_demo.rpf`.
 
 ---
 
@@ -47,7 +47,7 @@ These are key-value strings in the Arrow file header. Every RPF reader should ch
 
 | Key | Example value | What it means |
 |---|---|---|
-| `raptrix.version` | `v0.14.0` | The schema contract version this file was written to. Writers emit `v0.14.0`; readers accept `v0.14.0` / `0.14.0` and `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`. Pre-0.13 files must be re-exported. |
+| `raptrix.version` | `v0.14.2` | The schema contract version this file was written to. Writers emit `v0.14.2`; readers accept `v0.14.2` / `0.14.2` / `v0.14.1` / `0.14.1` / `v0.14.0` / `0.14.0` and `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`. Pre-0.13 files must be re-exported. |
 | `rpf.identity.model` | `hybrid_solver_flat_v1` | **(v0.13.0+, optional)** Declares the hybrid identity model: dense `bus_id` foreign keys for solvers, plus optional equipment `mrid` where available. |
 | `raptrix.branding` | *(long string)* | Human-readable provenance string identifying the writing tool and copyright. |
 | `rpf.case_fingerprint` | `abc123...` | A deterministic hash of the case identity. Useful for de-duplication and reproducibility checks. |
@@ -299,6 +299,13 @@ Switched shunts are reactor or capacitor banks that can be switched in discrete 
 | `status` | true/false | True = in service. |
 | `name` | text | Human-readable name. |
 | `from_nominal_kv`, `to_nominal_kv` | numbers | Required nominal kV on each winding; each value must be finite and strictly greater than 0. |
+| `tap_min`, `tap_max` | numbers, nullable | Movable limits from RAW RMI/RMA. Unit is `tap_limit_unit`. Null when COD=0. |
+| `tap_limit_unit` | text, nullable | `ratio` or `degrees`. Required on a usable block. On-wire authority for min/max units — do not re-derive from `tap_control_mode`. |
+| `n_positions` | integer, nullable | RAW NTP. Null unless NTP>1. |
+| `tap_step` | number, nullable | `(tap_max-tap_min)/(n_positions-1)`. Never inferred from `tap_ratio`. |
+| `tap_control_mode` | integer, nullable | RAW COD. **Not** `branches.control_mode`. Null (not `0`) when fixed. |
+| `regulated_bus_id` | integer, nullable | RAW CONT. Null = local. |
+| `operation_time_min` | number, nullable | Not in RAW. Null = missing timing; recovery may assume or reject as `missing_timing`. |
 
 ---
 
@@ -323,6 +330,7 @@ Three-winding transformers connect three voltage levels. RPF models them with a 
 | `status` | true/false | True = in service. |
 | `name` | text | Human-readable name. |
 | `nominal_kv_h`, `nominal_kv_m`, `nominal_kv_l` | numbers | Required nominal kV for each of the three windings; each value must be finite and strictly greater than 0. |
+| tap-control columns | same as 2W | **H winding / COD1 only.** M/L tap control is out of scope for v0.14.2. |
 
 ---
 

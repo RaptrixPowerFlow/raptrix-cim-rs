@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result};
+use raptrix_cim_arrow::{TAP_CONTROL_COLUMNS, read_rpf_tables};
 use raptrix_cim_rs::arrow_schema::{SCHEMA_VERSION, all_table_schemas};
 use raptrix_cim_rs::rpf_writer::{
     DetachedIslandPolicy, WriteOptions, rpf_file_metadata, summarize_rpf,
@@ -180,6 +181,27 @@ fn all_workspace_fixture_cim_cases_emit_contract_compliant_rpf() -> Result<()> {
             "unexpected raptrix.version for case '{}'",
             case.name
         );
+
+        let tables = read_rpf_tables(&output)
+            .with_context(|| format!("failed to read RPF tables for '{}'", case.name))?;
+        for table in ["transformers_2w", "transformers_3w"] {
+            let batch = tables
+                .iter()
+                .find(|(n, _)| n == table)
+                .map(|(_, b)| b)
+                .with_context(|| format!("missing {table} for '{}'", case.name))?;
+            for name in TAP_CONTROL_COLUMNS {
+                let col = batch
+                    .column_by_name(name)
+                    .with_context(|| format!("{} missing {name} for '{}'", table, case.name))?;
+                assert_eq!(
+                    col.null_count(),
+                    col.len(),
+                    "{table}.{name} must stay null on CIM fixture '{}'",
+                    case.name
+                );
+            }
+        }
     }
 
     Ok(())

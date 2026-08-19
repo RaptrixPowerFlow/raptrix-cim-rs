@@ -12,7 +12,8 @@ use raptrix_cim_arrow::ffi::{
     RPF_HEALTH_HEALTHY, RPF_HEALTH_PATHOLOGICAL, RPF_HEALTH_STRESSED, RpfCaseHealthFFI,
 };
 use raptrix_cim_arrow::{
-    METADATA_KEY_RPF_VERSION, METADATA_KEY_VERSION, SUPPORTED_RPF_VERSIONS, rpf_file_metadata,
+    METADATA_KEY_RPF_VERSION, METADATA_KEY_VERSION, SUPPORTED_RPF_VERSIONS, inspect_rpf_file,
+    rpf_file_metadata,
 };
 
 unsafe extern "C" {
@@ -59,7 +60,7 @@ fn first_golden_rpf() -> Option<PathBuf> {
             .flat_map(|entries| entries.filter_map(|e| e.ok()).map(|e| e.path()))
             .filter(|p| p.extension().map(|x| x == "rpf").unwrap_or(false)),
     );
-    candidates.find(|path| contract_supported(path))
+    candidates.find(|path| contract_supported(path) && inspect_rpf_file(path).is_ok())
 }
 
 unsafe fn last_error_message() -> String {

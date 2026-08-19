@@ -7,7 +7,16 @@ Copyright (c) 2026 Raptrix Power
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Arrow schema definitions for the Raptrix Power Interchange v0.14.1 profile.
+//! Arrow schema definitions for the Raptrix Power Interchange v0.14.2 profile.
+//!
+//! ## v0.14.2 — transformer tap / PST control (additive compatibility extension)
+//! Trailing nullable `tap_min` / `tap_max` / `tap_limit_unit` / `n_positions` /
+//! `tap_step` / `tap_control_mode` / `regulated_bus_id` / `operation_time_min` on
+//! `transformers_2w` and `transformers_3w`. 3W carries a single COD1-style
+//! control block on the H winding; M/L tap control is out of scope.
+//! `tap_control_mode` is RAW COD (Int32) and is not `branches.control_mode`.
+//! Dual-read older files pad null. Do not infer a step from a static tap ratio.
+//! COD 0 / missing / incomplete grid → writers emit all eight columns null.
 //!
 //! ## v0.14.1 — facility membership (additive compatibility extension)
 //! Trailing nullable `is_secured` / `is_bes` / `is_bps` / `is_bptf` on `branches`,
@@ -103,20 +112,23 @@ use std::sync::Arc;
 
 use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 
+use crate::tap_control::tap_control_fields;
+
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / Raptrix Power Interchange v0.14.1 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow / Raptrix Power Interchange v0.14.2 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.";
 
 /// Canonical RPF format version tag embedded as file-level metadata.
-pub const RPF_VERSION: &str = "v0.14.1";
+pub const RPF_VERSION: &str = "v0.14.2";
 
 /// Supported RPF versions accepted by generic Arrow IPC readers.
 ///
-/// v0.14.1 is a compatibility-extension on v0.14.0 (trailing nullable membership
-/// columns). Readers accept `v0.14.1` / `0.14.1` and retain `v0.14.0` / `0.14.0`
-/// plus `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`. Pre-0.13 files remain rejected.
-/// Older files pad new membership columns as null.
+/// v0.14.2 is a compatibility-extension on v0.14.1 (trailing nullable tap-control
+/// columns). Readers accept `v0.14.2` / `0.14.2` and retain `v0.14.1` / `0.14.1`
+/// / `v0.14.0` / `0.14.0` plus `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`.
+/// Pre-0.13 files remain rejected. Older files pad new columns as null.
 pub const SUPPORTED_RPF_VERSIONS: &[&str] = &[
-    "v0.14.1", "0.14.1", "v0.14.0", "0.14.0", "v0.13.1", "0.13.1", "v0.13.0", "0.13.0",
+    "v0.14.2", "0.14.2", "v0.14.1", "0.14.1", "v0.14.0", "0.14.0", "v0.13.1", "0.13.1", "v0.13.0",
+    "0.13.0",
 ];
 
 /// Closed vocabulary for `voltage_transfer_curve.polarity`.
@@ -1320,7 +1332,10 @@ pub fn transformers_2w_schema() -> Schema {
             Field::new("is_bes", DataType::Boolean, true),
             Field::new("is_bps", DataType::Boolean, true),
             Field::new("is_bptf", DataType::Boolean, true),
-        ],
+        ]
+        .into_iter()
+        .chain(tap_control_fields())
+        .collect::<Vec<_>>(),
         schema_metadata(),
     )
 }
@@ -1360,7 +1375,10 @@ pub fn transformers_3w_schema() -> Schema {
             Field::new("is_bes", DataType::Boolean, true),
             Field::new("is_bps", DataType::Boolean, true),
             Field::new("is_bptf", DataType::Boolean, true),
-        ],
+        ]
+        .into_iter()
+        .chain(tap_control_fields())
+        .collect::<Vec<_>>(),
         schema_metadata(),
     )
 }
@@ -2261,7 +2279,9 @@ mod tests {
             "optional RAS/protection/island/sequence tables must NOT appear in all_table_schemas()"
         );
 
-        // version gate: v0.14.1 dual-reads 0.14.0 and 0.13.x; pre-0.13 rejected
+        // version gate: v0.14.2 dual-reads 0.14.1 / 0.14.0 / 0.13.x; pre-0.13 rejected
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.14.2"));
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.14.2"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.14.1"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.14.1"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.14.0"));
@@ -2271,8 +2291,8 @@ mod tests {
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.13.0"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.13.0"));
         assert!(!SUPPORTED_RPF_VERSIONS.contains(&"v0.12.5"));
-        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 8);
-        assert_eq!(RPF_VERSION, "v0.14.1");
+        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 10);
+        assert_eq!(RPF_VERSION, "v0.14.2");
         assert_eq!(SCHEMA_VERSION, RPF_VERSION);
     }
 
@@ -2533,11 +2553,20 @@ mod tests {
         let transformers_2w = super::transformers_2w_schema();
         assert!(!transformers_2w.field(20).is_nullable());
         assert!(!transformers_2w.field(21).is_nullable());
+        assert_eq!(transformers_2w.field(27).name(), "tap_min");
+        assert!(transformers_2w.field(27).is_nullable());
+        assert_eq!(transformers_2w.field(29).name(), "tap_limit_unit");
+        assert_eq!(transformers_2w.field(32).name(), "tap_control_mode");
+        assert_eq!(transformers_2w.fields().len(), 35);
 
         let transformers_3w = super::transformers_3w_schema();
         assert!(!transformers_3w.field(21).is_nullable());
         assert!(!transformers_3w.field(22).is_nullable());
         assert!(!transformers_3w.field(23).is_nullable());
+        assert_eq!(transformers_3w.field(29).name(), "tap_min");
+        assert_eq!(transformers_3w.field(31).name(), "tap_limit_unit");
+        assert_eq!(transformers_3w.field(34).name(), "tap_control_mode");
+        assert_eq!(transformers_3w.fields().len(), 37);
     }
 
     #[test]

@@ -4,6 +4,33 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 
 Copyright (c) 2026 Raptrix Power
 
+## v0.14.2 (additive compatibility extension — dual-read of v0.14.1 / v0.14.0 / v0.13.x)
+
+Trailing nullable tap / PST control on `transformers_2w` / `transformers_3w`. Writers emit `v0.14.2`. Older files pad the new columns as null. Do not invent `tap_step` from `tap_ratio`.
+
+### What changed
+
+| Area | Action |
+| --- | --- |
+| Version gate | Accept `v0.14.2` / `0.14.2` **and** 0.14.1 / 0.14.0 / 0.13.x |
+| Writers | Emit `v0.14.2`. CIM leaves tap-control **null**. PSS/E maps COD/CONT/RMA/RMI/NTP. |
+| Columns | `tap_min`, `tap_max`, `tap_limit_unit`, `n_positions`, `tap_step`, `tap_control_mode`, `regulated_bus_id`, `operation_time_min` |
+| 3W scope | Single COD1-style block on the H winding; M/L tap control is out of scope |
+| Name | `tap_control_mode` (Int32 COD) is **not** `branches.control_mode` |
+| Units | On-wire authority is `tap_limit_unit` (`ratio` \| `degrees`). Do not re-derive from COD. |
+| COD=0 | All eight columns null. Never `tap_control_mode=0` with non-null RMA/RMI |
+| Timing | `operation_time_min` null = missing; enhance / study overlay later |
+| Predicate | `usable_tap_control` in `raptrix-cim-arrow` |
+
+### Consumer checklist
+
+1. Accept `0.14.2` and prior dual-read versions at the version gate.
+2. Treat missing tap-control columns as null (fixed).
+3. Gate the lever on `usable_tap_control`, not on COD alone.
+4. Join `tap_control_mode` only on transformer tables.
+5. Read `tap_limit_unit` before treating `tap_min`/`tap_max` as ratios. Do not re-derive the unit from COD.
+6. Do not infer a step from static `tap_ratio` / `phase_shift`. Prefer writer-filled `tap_step` from `normalize_tap_control`.
+
 ## v0.14.1 (additive compatibility extension — dual-read of v0.14.0 / v0.13.x; no re-export required)
 
 Trailing nullable facility-membership flags. Writers emit `v0.14.1`. Readers accept `v0.14.1` / `0.14.1` and retain `v0.14.0` / `0.14.0` / `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`. Older files pad the new columns as null.

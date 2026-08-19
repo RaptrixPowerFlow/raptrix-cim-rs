@@ -32,7 +32,7 @@ use arrow::array::{
 use arrow::datatypes::{DataType, Field, Int32Type, UInt32Type};
 use arrow::record_batch::RecordBatch;
 use chrono::Utc;
-use raptrix_cim_arrow::{RootWriteOptions, write_root_rpf_with_metadata};
+use raptrix_cim_arrow::{RootWriteOptions, null_tap_control_arrays, write_root_rpf_with_metadata};
 pub use raptrix_cim_arrow::{
     RpfSummary, TableSummary, read_rpf_tables, rpf_file_metadata, summarize_rpf,
 };
@@ -4960,7 +4960,7 @@ fn build_transformers_2w_batch(rows: &[Transformer2WRow<'_>]) -> Result<RecordBa
         }
     }
 
-    let arrays: Vec<ArrayRef> = vec![
+    let mut arrays: Vec<ArrayRef> = vec![
         Arc::new(from_bus_id_b.finish()) as ArrayRef,
         Arc::new(to_bus_id_b.finish()) as ArrayRef,
         Arc::new(ckt_b.finish()) as ArrayRef,
@@ -4989,6 +4989,8 @@ fn build_transformers_2w_batch(rows: &[Transformer2WRow<'_>]) -> Result<RecordBa
         new_null_array(schema.field(25).data_type(), rows.len()),
         new_null_array(schema.field(26).data_type(), rows.len()),
     ];
+    // v0.14.2 tap control: CIM path does not invent RAW COD/RMA/RMI/NTP.
+    arrays.extend(null_tap_control_arrays(rows.len()));
 
     RecordBatch::try_new(schema, arrays).context("failed to build transformers_2w record batch")
 }
@@ -5057,7 +5059,7 @@ fn build_transformers_3w_batch(rows: &[Transformer3WRow<'_>]) -> Result<RecordBa
         }
     }
 
-    let arrays: Vec<ArrayRef> = vec![
+    let mut arrays: Vec<ArrayRef> = vec![
         Arc::new(bus_h_id_b.finish()) as ArrayRef,
         Arc::new(bus_m_id_b.finish()) as ArrayRef,
         Arc::new(bus_l_id_b.finish()) as ArrayRef,
@@ -5088,6 +5090,8 @@ fn build_transformers_3w_batch(rows: &[Transformer3WRow<'_>]) -> Result<RecordBa
         new_null_array(schema.field(27).data_type(), rows.len()),
         new_null_array(schema.field(28).data_type(), rows.len()),
     ];
+    // v0.14.2 tap control (winding H / COD1 only). CIM path leaves null.
+    arrays.extend(null_tap_control_arrays(rows.len()));
 
     RecordBatch::try_new(schema, arrays).context("failed to build transformers_3w record batch")
 }
@@ -5637,6 +5641,7 @@ mod tests {
         diagram_points_schema, dynamics_models_schema, metadata_schema, node_breaker_detail_schema,
         switch_detail_schema,
     };
+    use raptrix_cim_arrow::TAP_CONTROL_COLUMNS;
 
     use super::{
         BusResolutionMode, DetachedIslandPolicy, GenRow, LoadZipComponentsPu, Transformer2WRow,
@@ -7012,6 +7017,29 @@ mod tests {
         Ok(())
     }
 
+    fn assert_cim_tap_control_all_null(path: &std::path::Path) -> Result<()> {
+        let tables = read_rpf_tables(path)?;
+        for table in ["transformers_2w", "transformers_3w"] {
+            let batch = tables
+                .iter()
+                .find(|(n, _)| n == table)
+                .map(|(_, b)| b)
+                .with_context(|| format!("{} missing {table}", path.display()))?;
+            for name in TAP_CONTROL_COLUMNS {
+                let col = batch
+                    .column_by_name(name)
+                    .with_context(|| format!("{} {table} missing {name}", path.display()))?;
+                assert_eq!(
+                    col.null_count(),
+                    col.len(),
+                    "{} {table}.{name} must stay null on the CIM path",
+                    path.display()
+                );
+            }
+        }
+        Ok(())
+    }
+
     #[test]
     fn regenerate_public_cim_fixtures_to_rpf() -> Result<()> {
         let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/fixtures");
@@ -7025,6 +7053,7 @@ mod tests {
         let generated_rpf_str = generated_rpf.to_string_lossy().into_owned();
         write_complete_rpf(&[&generated_eq_str], &generated_rpf_str)?;
         assert_v014_contingencies(&generated_rpf)?;
+        assert_cim_tap_control_all_null(&generated_rpf)?;
 
         let cases = [
             (
@@ -7054,6 +7083,7 @@ mod tests {
             write_complete_rpf(&refs, &out_str)
                 .with_context(|| format!("convert {eq_name} -> {out_name}"))?;
             assert_v014_contingencies(&out)?;
+            assert_cim_tap_control_all_null(&out)?;
         }
         Ok(())
     }

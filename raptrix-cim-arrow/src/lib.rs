@@ -39,6 +39,7 @@ mod health;
 mod io;
 mod patch;
 mod schema;
+pub mod tap_control;
 
 pub use computational_load::{
     BuildoutEntry, ComputationalLoadProfileRow, DisturbanceCounter, FACILITY_CLASSES,
@@ -78,3 +79,8 @@ pub use io::{
 };
 pub use patch::apply_rpf_patch;
 pub use schema::*;
+pub use tap_control::{
+    TAP_CONTROL_COLUMNS, TAP_LIMIT_UNIT_DEGREES, TAP_LIMIT_UNIT_RATIO, TapControlBlock,
+    TapLimitUnit, derived_tap_step, normalize_tap_control, null_tap_control_arrays,
+    tap_control_fields, tap_limit_unit_from_cod, usable_tap_control,
+};
