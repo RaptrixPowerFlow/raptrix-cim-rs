@@ -4,6 +4,29 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 
 Copyright (c) 2026 Raptrix Power
 
+## v0.14.3 (additive compatibility extension — dual-read of v0.14.2 / v0.14.1 / v0.14.0 / v0.13.x)
+
+Trailing nullable switched-shunt control on `switched_shunts`. Writers emit `v0.14.3`. Older files pad the new columns as null. CIM and PSLF leave both columns null.
+
+### What changed
+
+| Area | Action |
+| --- | --- |
+| Version gate | Accept `v0.14.3` / `0.14.3` **and** 0.14.2 / 0.14.1 / 0.14.0 / 0.13.x |
+| Writers | Emit `v0.14.3`. CIM / PSLF leave shunt-control **null**. PSS/E maps MODSW 0/1/2 and SWREG. |
+| Columns | `shunt_control_mode`, `regulated_bus_id` |
+| Tokens | `locked` / `discrete_voltage` / `continuous_voltage` only. MODSW ≥ 3 → null + `unknown_modsw` |
+| Local bus | `regulated_bus_id` null = local. Never write SWREG 0 |
+| Name | `shunt_control_mode` is **not** `branches.control_mode` or `tap_control_mode` |
+| File-level | Do not conflate with `metadata.default_shunt_control_mode` |
+
+### Consumer checklist
+
+1. Accept `0.14.3` and prior dual-read versions at the version gate.
+2. Treat missing shunt-control columns as null (unspecified). Keep today’s N/B heuristic.
+3. Join `shunt_control_mode` only on `switched_shunts`.
+4. Do not invent PSLF / CIM MODSW from bank shape.
+
 ## v0.14.2 (additive compatibility extension — dual-read of v0.14.1 / v0.14.0 / v0.13.x)
 
 Trailing nullable tap / PST control on `transformers_2w` / `transformers_3w`. Writers emit `v0.14.2`. Older files pad the new columns as null. Do not invent `tap_step` from `tap_ratio`.

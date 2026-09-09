@@ -1546,13 +1546,14 @@ mod tests {
         TABLE_CONTINGENCIES, TABLE_CONTINGENCY_ISLAND_ANALYSIS, TABLE_CONTINGENCY_SEQUENCES,
         TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED,
         TABLE_GENERATORS, TABLE_LOADS, TABLE_PROTECTION_CONTINGENCIES,
-        TABLE_REMEDIAL_ACTION_SCHEMES, TABLE_TOPOLOGY_CHANGES, TABLE_TRANSFORMERS_2W,
-        TABLE_TRANSFORMERS_3W, all_table_schemas, branches_schema,
+        TABLE_REMEDIAL_ACTION_SCHEMES, TABLE_SWITCHED_SHUNTS, TABLE_TOPOLOGY_CHANGES,
+        TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, all_table_schemas, branches_schema,
         computational_load_profiles_schema, contingencies_schema,
         contingency_island_analysis_schema, diagram_objects_schema, diagram_points_schema,
         facts_devices_schema, facts_solved_schema, generators_schema, loads_schema,
         protection_contingencies_schema, remedial_action_schemes_schema, schema_metadata,
-        topology_changes_schema, transformers_2w_schema, transformers_3w_schema,
+        switched_shunts_schema, topology_changes_schema, transformers_2w_schema,
+        transformers_3w_schema,
     };
 
     use super::{
@@ -1907,7 +1908,7 @@ mod tests {
             .expect_err("v0.9.3 reader should reject missing required nominal_kv fields");
         let message = format!("{err:#}");
         assert!(message.contains("missing non-nullable field 'to_nominal_kv'"));
-        assert_eq!(SCHEMA_VERSION, "v0.14.2");
+        assert_eq!(SCHEMA_VERSION, "v0.14.3");
         Ok(())
     }
 
@@ -2664,6 +2665,82 @@ mod tests {
                     .with_context(|| format!("{table}.{name}"))?;
                 assert_eq!(col.null_count(), col.len());
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn read_pads_v0142_switched_shunt_control() -> Result<()> {
+        let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_shunt_v0142_pad");
+        std::fs::create_dir_all(&tmp_dir)?;
+        let output_path = tmp_dir.join("switched_shunts_pre_control.rpf");
+
+        let mut table_batches: HashMap<&'static str, RecordBatch> = all_table_schemas()
+            .into_iter()
+            .map(|(name, schema)| (name, RecordBatch::new_empty(Arc::new(schema))))
+            .collect();
+
+        let shunts = switched_shunts_schema();
+        let short: Vec<Field> = shunts.fields()[..shunts.fields().len() - 2]
+            .iter()
+            .map(|field| field.as_ref().clone())
+            .collect();
+        table_batches.insert(
+            TABLE_SWITCHED_SHUNTS,
+            RecordBatch::new_empty(Arc::new(Schema::new_with_metadata(
+                short,
+                schema_metadata(),
+            ))),
+        );
+
+        let mut root_fields = Vec::new();
+        let mut root_columns: Vec<ArrayRef> = Vec::new();
+        for (name, _) in all_table_schemas() {
+            let table_batch = table_batches
+                .get(name)
+                .expect("table batch should exist for each required table");
+            let table_schema = table_batch.schema();
+            root_fields.push(Field::new(
+                name,
+                DataType::Struct(table_schema.fields().clone()),
+                true,
+            ));
+            root_columns.push(Arc::new(StructArray::new(
+                table_schema.fields().clone(),
+                table_batch.columns().to_vec(),
+                None,
+            )) as ArrayRef);
+        }
+
+        let mut root_meta = schema_metadata();
+        root_meta.insert(METADATA_KEY_VERSION.to_string(), "v0.14.2".to_string());
+        root_meta.insert(METADATA_KEY_RPF_VERSION.to_string(), "v0.14.2".to_string());
+        for (name, _) in all_table_schemas() {
+            root_meta.insert(row_count_metadata_key(name), "0".to_string());
+        }
+        let root_schema = Arc::new(Schema::new_with_metadata(root_fields, root_meta));
+        let root_batch = RecordBatch::try_new(root_schema.clone(), root_columns)?;
+
+        let mut out = File::create(&output_path)?;
+        let mut writer = FileWriter::try_new(&mut out, &root_schema)?;
+        writer.write_metadata(METADATA_KEY_VERSION, "v0.14.2");
+        writer.write_metadata(METADATA_KEY_RPF_VERSION, "v0.14.2");
+        writer.write(&root_batch)?;
+        writer.finish()?;
+
+        let tables = read_rpf_tables(&output_path)?;
+        let (_, batch) = tables
+            .iter()
+            .find(|(name, _)| *name == TABLE_SWITCHED_SHUNTS)
+            .with_context(|| "missing switched_shunts")?;
+        assert_eq!(batch.schema().fields().len(), 11);
+        assert_eq!(batch.schema().field(9).name(), "shunt_control_mode");
+        assert_eq!(batch.schema().field(10).name(), "regulated_bus_id");
+        for name in crate::SHUNT_CONTROL_COLUMNS {
+            let col = batch
+                .column_by_name(name)
+                .with_context(|| format!("switched_shunts.{name}"))?;
+            assert_eq!(col.null_count(), col.len());
         }
         Ok(())
     }

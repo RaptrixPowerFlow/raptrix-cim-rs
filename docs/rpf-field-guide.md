@@ -5,7 +5,7 @@ Copyright (c) 2026 Raptrix Power
 
 # RPF Field Guide — Plain-English Reference
 
-**Schema contract: v0.14.2 (dual-read v0.14.1 / v0.14.0 / v0.13.x) | Format: Apache Arrow IPC**
+**Schema contract: v0.14.3 (dual-read v0.14.2 / v0.14.1 / v0.14.0 / v0.13.x) | Format: Apache Arrow IPC**
 
 This guide explains every table and field in an `.rpf` file in plain English. It is written for engineers who need to read, validate, or build tools against RPF files without digging into Arrow source code. For the normative type-level contract see [schema-contract.md](schema-contract.md). Migration notes for the v0.14.0 additive MINOR are in [MIGRATION.md](../MIGRATION.md).
 
@@ -47,7 +47,7 @@ These are key-value strings in the Arrow file header. Every RPF reader should ch
 
 | Key | Example value | What it means |
 |---|---|---|
-| `raptrix.version` | `v0.14.2` | The schema contract version this file was written to. Writers emit `v0.14.2`; readers accept `v0.14.2` / `0.14.2` / `v0.14.1` / `0.14.1` / `v0.14.0` / `0.14.0` and `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`. Pre-0.13 files must be re-exported. |
+| `raptrix.version` | `v0.14.3` | The schema contract version this file was written to. Writers emit `v0.14.3`; readers accept `v0.14.3` / `0.14.3` / `v0.14.2` / `0.14.2` / `v0.14.1` / `0.14.1` / `v0.14.0` / `0.14.0` and `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`. Pre-0.13 files must be re-exported. |
 | `rpf.identity.model` | `hybrid_solver_flat_v1` | **(v0.13.0+, optional)** Declares the hybrid identity model: dense `bus_id` foreign keys for solvers, plus optional equipment `mrid` where available. |
 | `raptrix.branding` | *(long string)* | Human-readable provenance string identifying the writing tool and copyright. |
 | `rpf.case_fingerprint` | `abc123...` | A deterministic hash of the case identity. Useful for de-duplication and reproducibility checks. |
@@ -275,6 +275,8 @@ Switched shunts are reactor or capacitor banks that can be switched in discrete 
 | `b_init_pu` | number | Authoritative initial susceptance in per-unit. Always use this field — it is more reliable than reconstructing from `b_steps[current_step - 1]`. Populated from CGMES `ShuntCompensator.sections` or equivalent. |
 | `shunt_id` | text | Stable per-bank identity to disambiguate multiple switched-shunt banks at the same bus. CIM path: the `ShuntCompensator` mRID. PSS/E path: synthesized as `"{bus_id}_shunt_{n}"` (1-indexed bank within the bus). Null when source data lacks a stable bank mRID. Use this field — not `bus_id` alone — to cross-reference into `switched_shunts_solved`. (v0.8.5+) |
 | `mrid` | text or null | **(v0.13.0+)** Optional stable equipment identity (may equal `shunt_id` when mRID-backed). Null when unavailable. |
+| `shunt_control_mode` | text or null | **(v0.14.3+)** Per-device bank mode: `locked`, `discrete_voltage`, or `continuous_voltage`. Null = unspecified (keep the N/B heuristic). Not `default_shunt_control_mode`. |
+| `regulated_bus_id` | integer or null | **(v0.14.3+)** Remote regulated bus. Null = local. |
 
 ---
 

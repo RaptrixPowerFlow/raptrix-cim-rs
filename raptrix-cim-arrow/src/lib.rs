@@ -39,6 +39,7 @@ mod health;
 mod io;
 mod patch;
 mod schema;
+pub mod shunt_control;
 pub mod tap_control;
 
 pub use computational_load::{
@@ -79,6 +80,12 @@ pub use io::{
 };
 pub use patch::apply_rpf_patch;
 pub use schema::*;
+pub use shunt_control::{
+    SHUNT_CONTROL_COLUMNS, SHUNT_CONTROL_MODE_CONTINUOUS_VOLTAGE,
+    SHUNT_CONTROL_MODE_DISCRETE_VOLTAGE, SHUNT_CONTROL_MODE_LOCKED, SHUNT_CONTROL_MODES,
+    UNKNOWN_MODSW_WARNING, null_shunt_control_arrays, regulated_bus_id_from_swreg,
+    shunt_control_fields, shunt_control_mode_from_modsw,
+};
 pub use tap_control::{
     TAP_CONTROL_COLUMNS, TAP_LIMIT_UNIT_DEGREES, TAP_LIMIT_UNIT_RATIO, TapControlBlock,
     TapLimitUnit, derived_tap_step, normalize_tap_control, null_tap_control_arrays,

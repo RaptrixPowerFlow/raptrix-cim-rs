@@ -7,7 +7,15 @@ Copyright (c) 2026 Raptrix Power
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Arrow schema definitions for the Raptrix Power Interchange v0.14.2 profile.
+//! Arrow schema definitions for the Raptrix Power Interchange v0.14.3 profile.
+//!
+//! ## v0.14.3 — switched-shunt control (additive compatibility extension)
+//! Trailing nullable `shunt_control_mode` (Utf8 dict: `locked` /
+//! `discrete_voltage` / `continuous_voltage`) and `regulated_bus_id` (Int32,
+//! null = local) on `switched_shunts`. Dual-read older files pad null.
+//! CIM / PSLF writers leave both null. Do not conflate with file-level
+//! `default_shunt_control_mode`. `shunt_control_mode` is not
+//! `branches.control_mode` or `tap_control_mode`.
 //!
 //! ## v0.14.2 — transformer tap / PST control (additive compatibility extension)
 //! Trailing nullable `tap_min` / `tap_max` / `tap_limit_unit` / `n_positions` /
@@ -112,23 +120,25 @@ use std::sync::Arc;
 
 use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 
+use crate::shunt_control::shunt_control_fields;
 use crate::tap_control::tap_control_fields;
 
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / Raptrix Power Interchange v0.14.2 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow / Raptrix Power Interchange v0.14.3 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.";
 
 /// Canonical RPF format version tag embedded as file-level metadata.
-pub const RPF_VERSION: &str = "v0.14.2";
+pub const RPF_VERSION: &str = "v0.14.3";
 
 /// Supported RPF versions accepted by generic Arrow IPC readers.
 ///
-/// v0.14.2 is a compatibility-extension on v0.14.1 (trailing nullable tap-control
-/// columns). Readers accept `v0.14.2` / `0.14.2` and retain `v0.14.1` / `0.14.1`
-/// / `v0.14.0` / `0.14.0` plus `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`.
-/// Pre-0.13 files remain rejected. Older files pad new columns as null.
+/// v0.14.3 is a compatibility-extension on v0.14.2 (trailing nullable
+/// switched-shunt control columns). Readers accept `v0.14.3` / `0.14.3` and
+/// retain `v0.14.2` / `0.14.2` / `v0.14.1` / `0.14.1` / `v0.14.0` / `0.14.0`
+/// plus `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`. Pre-0.13 files remain
+/// rejected. Older files pad new columns as null.
 pub const SUPPORTED_RPF_VERSIONS: &[&str] = &[
-    "v0.14.2", "0.14.2", "v0.14.1", "0.14.1", "v0.14.0", "0.14.0", "v0.13.1", "0.13.1", "v0.13.0",
-    "0.13.0",
+    "v0.14.3", "0.14.3", "v0.14.2", "0.14.2", "v0.14.1", "0.14.1", "v0.14.0", "0.14.0", "v0.13.1",
+    "0.13.1", "v0.13.0", "0.13.0",
 ];
 
 /// Closed vocabulary for `voltage_transfer_curve.polarity`.
@@ -1111,7 +1121,10 @@ pub fn switched_shunts_schema() -> Schema {
             Field::new("shunt_id", dict_utf8(), true),
             // v0.13.0: optional stable identity (may equal shunt_id when mRID-backed)
             Field::new("mrid", DataType::Utf8, true),
-        ],
+        ]
+        .into_iter()
+        .chain(shunt_control_fields())
+        .collect::<Vec<_>>(),
         schema_metadata(),
     )
 }
@@ -2279,7 +2292,9 @@ mod tests {
             "optional RAS/protection/island/sequence tables must NOT appear in all_table_schemas()"
         );
 
-        // version gate: v0.14.2 dual-reads 0.14.1 / 0.14.0 / 0.13.x; pre-0.13 rejected
+        // version gate: v0.14.3 dual-reads 0.14.2 / 0.14.1 / 0.14.0 / 0.13.x; pre-0.13 rejected
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.14.3"));
+        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.14.3"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.14.2"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.14.2"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.14.1"));
@@ -2291,8 +2306,8 @@ mod tests {
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.13.0"));
         assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.13.0"));
         assert!(!SUPPORTED_RPF_VERSIONS.contains(&"v0.12.5"));
-        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 10);
-        assert_eq!(RPF_VERSION, "v0.14.2");
+        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 12);
+        assert_eq!(RPF_VERSION, "v0.14.3");
         assert_eq!(SCHEMA_VERSION, RPF_VERSION);
     }
 
@@ -2587,6 +2602,22 @@ mod tests {
         assert!(loads.field(8).is_nullable());
         assert_eq!(loads.field(10).name(), "mrid");
         assert!(loads.field(10).is_nullable());
+    }
+
+    #[test]
+    fn switched_shunts_schema_v0143_control_columns() {
+        let shunts = super::switched_shunts_schema();
+        assert_eq!(shunts.fields().len(), 11);
+        assert_eq!(shunts.field(8).name(), "mrid");
+        assert_eq!(shunts.field(9).name(), "shunt_control_mode");
+        assert!(shunts.field(9).is_nullable());
+        assert_eq!(
+            shunts.field(9).data_type(),
+            &DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8))
+        );
+        assert_eq!(shunts.field(10).name(), "regulated_bus_id");
+        assert_eq!(shunts.field(10).data_type(), &DataType::Int32);
+        assert!(shunts.field(10).is_nullable());
     }
 
     #[test]

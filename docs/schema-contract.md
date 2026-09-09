@@ -3,13 +3,33 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 Copyright (c) 2026 Raptrix Power
 -->
 
-# Schema Contract (Locked contract: v0.14.2 — CGMES 3.0+ Only; dual-read v0.14.1 / v0.14.0 / v0.13.x)
+# Schema Contract (Locked contract: v0.14.3 — CGMES 3.0+ Only; dual-read v0.14.2 / v0.14.1 / v0.14.0 / v0.13.x)
 
 This repository is the authoritative source of truth for the Raptrix Power Interchange (`.rpf`) wire contract used by CIM-first conversion pipelines.
 
-**v0.14.2** is the current contract release (transformer tap / PST control on the v0.14.1 membership cut). `SUPPORTED_RPF_VERSIONS` accepts **`v0.14.2` / `0.14.2` and retains `v0.14.1` / `0.14.1` / `v0.14.0` / `0.14.0` / `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`**. Pre-0.13 files remain rejected. Older files pad new trailing columns as null.
+**v0.14.3** is the current contract release (switched-shunt control on the v0.14.2 tap-control cut). `SUPPORTED_RPF_VERSIONS` accepts **`v0.14.3` / `0.14.3` and retains `v0.14.2` / `0.14.2` / `v0.14.1` / `0.14.1` / `v0.14.0` / `0.14.0` / `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`**. Pre-0.13 files remain rejected. Older files pad new trailing columns as null.
 
-A proposed additive v0.14.3 cut for per-device switched-shunt `MODSW` / `SWREG` is **not locked**. See [switched-shunt-control-0.14.3.md](switched-shunt-control-0.14.3.md). Do not implement it from a single worst-bus voltage difference against another engine. Classify RAW vs RPF on the same solver first.
+See [switched-shunt-control-0.14.3.md](switched-shunt-control-0.14.3.md) for the accepted note. Do not implement Q-band / `discrete_reactive` in this revision. Do not conflate per-device `shunt_control_mode` with file-level `default_shunt_control_mode`.
+
+## v0.14.3 Additive Changes
+
+Trailing nullable switched-shunt control columns on `switched_shunts` only.
+
+| Column | Type | Meaning |
+| --- | --- | --- |
+| `shunt_control_mode` | Dictionary\<Int32, Utf8\>, nullable | Per-device bank mode. Tokens: `locked` \| `discrete_voltage` \| `continuous_voltage`. **Not** `branches.control_mode`. **Not** `tap_control_mode`. **Not** `metadata.default_shunt_control_mode`. |
+| `regulated_bus_id` | Int32, nullable | RAW `SWREG` / `SWREM` (dense `bus_id`). **null = local.** Do not write `0`. |
+
+**Who fills what**
+
+| Writer | `shunt_control_mode` | `regulated_bus_id` |
+| --- | --- | --- |
+| PSS/E | MODSW 0/1/2 → tokens; any other code → null + `unknown_modsw` | SWREG 0 or I → null |
+| PSLF | **null** (do not invent PSS/E MODSW from EPC SVD) | null unless EPC has an honest remote-bus field |
+| CIM | **null** unless a `RegulatingControl` join is honest | null unless the regulating-node join is honest |
+| Dual-read v0.14.2 | column absent → null | column absent → null |
+
+Reader: null means “no per-device mode on the wire.” Keep today’s N/B heuristic or treat as unspecified. Do not assume `locked`.
 
 ## v0.14.2 Additive Changes
 
@@ -357,8 +377,8 @@ Every `.rpf` file must include:
 
 Current locked values:
 
-- `raptrix.version = 0.14.2` (writers); readers also accept `v0.14.2` / `0.14.2` / `v0.14.1` / `0.14.1` / `v0.14.0` / `0.14.0` / `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`
-- `raptrix.branding = Raptrix CIM-Arrow / Raptrix Power Interchange v0.14.2 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.`
+- `raptrix.version = 0.14.3` (writers); readers also accept `v0.14.3` / `0.14.3` / `v0.14.2` / `0.14.2` / `v0.14.1` / `0.14.1` / `v0.14.0` / `0.14.0` / `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`
+- `raptrix.branding = Raptrix CIM-Arrow / Raptrix Power Interchange v0.14.3 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.`
 - `rpf.case_fingerprint = <required deterministic case identity fingerprint>`
 - `rpf.validation_mode = topology_only | solved_ready`
 - `rpf.case_mode = flat_start_planning | warm_start_planning | solved_snapshot | hour_ahead_advisory` (v0.8.4+, required; `hour_ahead_advisory` added in v0.9.0)
@@ -772,6 +792,9 @@ Null/default behavior:
 - `current_step`: Int32, required
 - `b_init_pu`: Float64, nullable — authoritative initial susceptance in per-unit (v0.8.3+). PSS/E source: `BINIT / base_mva`. CIM source: `b_steps[current_step - 1]`. Readers should prefer this field over reconstructing from `b_steps + current_step`. Nullable for backward compatibility; writers must populate this field.
 - `shunt_id`: Dictionary<Int32, Utf8>, nullable — stable per-bank identity to disambiguate multiple banks at the same bus (v0.8.5+). CIM path: `ShuntCompensator` mRID. PSS/E path: synthesized as `"{bus_id}_shunt_{n}"` (1-indexed). Nullable for backward compatibility; writers must populate when available.
+- `mrid`: Utf8, nullable (v0.13.0+)
+- `shunt_control_mode`: Dictionary<Int32, Utf8>, nullable (v0.14.3+) — `locked` \| `discrete_voltage` \| `continuous_voltage`. Not `branches.control_mode`.
+- `regulated_bus_id`: Int32, nullable (v0.14.3+) — RAW SWREG/SWREM; null = local.
 
 For v0.8.9+, `switched_shunts.b_steps` must contain strictly capacitive (positive) values.
 Inductive steps must be represented in `switched_shunt_banks`.

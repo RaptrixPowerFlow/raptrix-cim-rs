@@ -5,9 +5,9 @@ Copyright (c) 2026 Raptrix Power
 
 # Proposal: switched-shunt control on RPF (shape of a v0.14.3 cut)
 
-**Status: proposal. Not locked. Live contract remains v0.14.2.**
+**Status: accepted. Locked on crate 0.7.3 / RPF v0.14.3.**
 
-This is the contract note for an additive trailing cut on `switched_shunts`. It is **not** a request to stamp `v0.14.3` and push every writer today. Implement only after this note is accepted. Dual-read of v0.14.2 is mandatory.
+This is the contract note for the additive trailing cut on `switched_shunts`. Dual-read of v0.14.2 is mandatory.
 
 The goal is **alignment and reproducibility**: a PSS/E RAW and the converter `.rpf` of the same case must carry the same switched-shunt control model, so independent engines and Raptrix see one network, not two. Today they do not, because the mode never leaves the parser.
 

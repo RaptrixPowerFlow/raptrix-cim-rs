@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result};
-use raptrix_cim_arrow::{TAP_CONTROL_COLUMNS, read_rpf_tables};
+use raptrix_cim_arrow::{SHUNT_CONTROL_COLUMNS, TAP_CONTROL_COLUMNS, read_rpf_tables};
 use raptrix_cim_rs::arrow_schema::{SCHEMA_VERSION, all_table_schemas};
 use raptrix_cim_rs::rpf_writer::{
     DetachedIslandPolicy, WriteOptions, rpf_file_metadata, summarize_rpf,
@@ -201,6 +201,22 @@ fn all_workspace_fixture_cim_cases_emit_contract_compliant_rpf() -> Result<()> {
                     case.name
                 );
             }
+        }
+        let shunts = tables
+            .iter()
+            .find(|(n, _)| *n == "switched_shunts")
+            .map(|(_, b)| b)
+            .with_context(|| format!("missing switched_shunts for '{}'", case.name))?;
+        for name in SHUNT_CONTROL_COLUMNS {
+            let col = shunts
+                .column_by_name(name)
+                .with_context(|| format!("switched_shunts missing {name} for '{}'", case.name))?;
+            assert_eq!(
+                col.null_count(),
+                col.len(),
+                "switched_shunts.{name} must stay null on CIM fixture '{}'",
+                case.name
+            );
         }
     }
 

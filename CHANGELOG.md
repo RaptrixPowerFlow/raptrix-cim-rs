@@ -11,7 +11,13 @@ Copyright (c) 2026 Raptrix Power
 
 ## Unreleased
 
-- Pin `arrow` / `parquet` to **59.3**. RPF writer default remains **v0.14.2**.
+## Converter 0.7.3 — RPF v0.14.3 switched-shunt control (2026-09-09)
+
+### Converter release: Crate version 0.7.3 (raptrix-cim-arrow) / 0.7.3 (raptrix-cim-rs) | Arrow schema v0.14.3
+
+**Compatibility extension.** Writers emit **v0.14.3**. Readers accept **v0.14.3** and retain v0.14.2 / v0.14.1 / v0.14.0 / v0.13.x. Trailing nullable `shunt_control_mode` (`locked` / `discrete_voltage` / `continuous_voltage`) and `regulated_bus_id` (null = local) on `switched_shunts`. CIM converters leave them null. MODSW 0/1/2 → tokens; any other code → null + `unknown_modsw`. Do not conflate with file-level `default_shunt_control_mode`. `shunt_control_mode` is not `branches.control_mode` or `tap_control_mode`.
+
+- Pin `arrow` / `parquet` to **59.3**.
 
 ## Converter 0.7.2 — RPF v0.14.2 transformer tap / PST control (2026-08-19)
 

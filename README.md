@@ -115,7 +115,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 | Connectivity detail | `--connectivity-detail` | Granular ConnectivityNode bus mapping; emits optional `connectivity_groups` table |
 | Node-breaker | `--connectivity-detail --node-breaker` | Adds switch-topology detail tables for operational and viewer workflows |
 
-### Output tables (schema contract v0.14.2)
+### Output tables (schema contract v0.14.3)
 
 **18 canonical tables (always emitted):** `metadata`, `buses`, `branches`, `multi_section_lines`, `dc_lines_2w`, `generators`, `loads`, `fixed_shunts`, `switched_shunts`, `switched_shunt_banks`, `transformers_2w`, `transformers_3w`, `areas`, `zones`, `owners`, `contingencies`, `interfaces`, `dynamics_models`
 
@@ -158,7 +158,7 @@ RAS safety note: all public examples in this repository use synthetic demonstrat
 
 ## Data Contract (Locked)
 
-- Current schema contract: **v0.14.2** (CGMES 3.0+ only). Additive tap/PST control on the v0.14.1 membership cut: readers accept v0.14.2 and retain v0.14.1 / v0.14.0 / v0.13.x. Adds trailing nullable `tap_min` / `tap_max` / `tap_limit_unit` / `n_positions` / `tap_step` / `tap_control_mode` / `regulated_bus_id` / `operation_time_min` on transformers (3W = H / COD1).
+- Current schema contract: **v0.14.3** (CGMES 3.0+ only). Additive switched-shunt control on the v0.14.2 tap-control cut: readers accept v0.14.3 and retain v0.14.2 / v0.14.1 / v0.14.0 / v0.13.x. Adds trailing nullable `shunt_control_mode` / `regulated_bus_id` on `switched_shunts`. CIM converters leave them null.
 - Canonical source: raptrix-cim-arrow/src/schema.rs
 - Contract policy and semantics: docs/schema-contract.md
 - Plain-English field guide: [docs/rpf-field-guide.md](docs/rpf-field-guide.md)
@@ -172,9 +172,11 @@ RPF standardization here is intentional: it enables direct CIM-to-powerflow inte
 
 ### Versioning Policy
 
-Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is at schema **`v0.14.2`** and the converter crate release is **`0.7.2`**.
+Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is at schema **`v0.14.3`** and the converter crate release is **`0.7.3`**.
 
-Readers in this repository accept `v0.14.2` / `0.14.2` and retain `v0.14.1` / `0.14.1` / `v0.14.0` / `0.14.0` / `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`. Pre-0.13 files must be re-emitted.
+Readers in this repository accept `v0.14.3` / `0.14.3` and retain `v0.14.2` / `0.14.2` / `v0.14.1` / `0.14.1` / `v0.14.0` / `0.14.0` / `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`. Pre-0.13 files must be re-emitted.
+
+**v0.14.3**: Trailing nullable `switched_shunts.shunt_control_mode` (`locked` / `discrete_voltage` / `continuous_voltage`) and `regulated_bus_id` (null = local). CIM / PSLF leave both null. MODSW ≥ 3 → null + `unknown_modsw`. Do not conflate with file-level `default_shunt_control_mode`.
 
 **v0.14.2**: Trailing nullable tap / PST control on `transformers_2w` / `transformers_3w` (`tap_min`, `tap_max`, `tap_limit_unit`, `n_positions`, `tap_step`, `tap_control_mode`, `regulated_bus_id`, `operation_time_min`). 3W is H-winding / COD1 only. COD 0 → all eight null. `tap_control_mode` is not `branches.control_mode`. Do not infer a step from a static tap. CIM converters leave these null.
 

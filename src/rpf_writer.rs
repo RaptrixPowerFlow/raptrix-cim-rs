@@ -32,7 +32,10 @@ use arrow::array::{
 use arrow::datatypes::{DataType, Field, Int32Type, UInt32Type};
 use arrow::record_batch::RecordBatch;
 use chrono::Utc;
-use raptrix_cim_arrow::{RootWriteOptions, null_tap_control_arrays, write_root_rpf_with_metadata};
+use raptrix_cim_arrow::{
+    RootWriteOptions, null_shunt_control_arrays, null_tap_control_arrays,
+    write_root_rpf_with_metadata,
+};
 pub use raptrix_cim_arrow::{
     RpfSummary, TableSummary, read_rpf_tables, rpf_file_metadata, summarize_rpf,
 };
@@ -5249,7 +5252,7 @@ fn build_switched_shunts_batch(rows: &[SwitchedShuntRow]) -> Result<RecordBatch>
 
     let mrid_arr = new_null_array(&DataType::Utf8, rows.len());
 
-    let arrays: Vec<ArrayRef> = vec![
+    let mut arrays: Vec<ArrayRef> = vec![
         Arc::new(bus_id_b.finish()) as ArrayRef,
         Arc::new(status_b.finish()) as ArrayRef,
         Arc::new(v_low_b.finish()) as ArrayRef,
@@ -5260,6 +5263,8 @@ fn build_switched_shunts_batch(rows: &[SwitchedShuntRow]) -> Result<RecordBatch>
         Arc::new(shunt_id_b.finish()) as ArrayRef,
         mrid_arr,
     ];
+    // v0.14.3 shunt control: CIM path does not invent PSS/E MODSW / SWREG.
+    arrays.extend(null_shunt_control_arrays(rows.len()));
 
     RecordBatch::try_new(schema, arrays).context("failed to build switched_shunts record batch")
 }
