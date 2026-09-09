@@ -9,6 +9,8 @@ This repository is the authoritative source of truth for the Raptrix Power Inter
 
 **v0.14.2** is the current contract release (transformer tap / PST control on the v0.14.1 membership cut). `SUPPORTED_RPF_VERSIONS` accepts **`v0.14.2` / `0.14.2` and retains `v0.14.1` / `0.14.1` / `v0.14.0` / `0.14.0` / `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`**. Pre-0.13 files remain rejected. Older files pad new trailing columns as null.
 
+A proposed additive v0.14.3 cut for per-device switched-shunt `MODSW` / `SWREG` is **not locked**. See [switched-shunt-control-0.14.3.md](switched-shunt-control-0.14.3.md). Do not implement it from a single worst-bus voltage difference against another engine. Classify RAW vs RPF on the same solver first.
+
 ## v0.14.2 Additive Changes
 
 Trailing nullable tap / PST control columns on `transformers_2w` and `transformers_3w`.
