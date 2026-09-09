@@ -12,6 +12,8 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+  # Override Windows-only .cargo/config.toml target-dir on Linux runners.
+  CARGO_TARGET_DIR: target
 
 permissions:
   contents: write
@@ -23,8 +25,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup Rust 1.96 (rustfmt + clippy)
-        uses: dtolnay/rust-toolchain@1.96
+      - name: Setup Rust 1.97.1 (rustfmt + clippy)
+        uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: rustfmt, clippy
 

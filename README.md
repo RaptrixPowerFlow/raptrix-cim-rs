@@ -326,6 +326,8 @@ required writer obligations.
 
 ## CLI Usage
 
+On Windows OneDrive checkouts, Cargo artifacts go to `C:\build-cache\cargo\raptrix-cim-rs` (see `.cargo/config.toml`). `C:\toolchains` is for vcpkg/compilers, not crate builds. After clone, run `.\scripts\ensure-cargo-target-dir.ps1`. Do not junction `./target` into the cache — OneDrive follows reparse points. `raptrix-core` CMake finds the cdylib via `cargo metadata`. CI sets `CARGO_TARGET_DIR=target`. To drop debug incremental caches: `.\scripts\ensure-cargo-target-dir.ps1 -PruneDev`.
+
 Build the production CLI in release mode:
 
 - `cargo build --release`

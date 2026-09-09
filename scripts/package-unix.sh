@@ -15,8 +15,20 @@ BIN_NAME="raptrix-cim-rs"
 DIST_DIR="dist"
 PKG_ROOT="${DIST_DIR}/${BIN_NAME}-v${VERSION}-${OS_LABEL}-${ARCH_LABEL}"
 
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$REPO_ROOT"
+
+if [[ -n "${CARGO_TARGET_DIR:-}" ]]; then
+  TARGET_DIR="$CARGO_TARGET_DIR"
+  if [[ "$TARGET_DIR" != /* ]]; then
+    TARGET_DIR="${REPO_ROOT}/${TARGET_DIR}"
+  fi
+else
+  TARGET_DIR="$(cargo metadata --format-version 1 --no-deps --manifest-path "${REPO_ROOT}/Cargo.toml" | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')"
+fi
+
 mkdir -p "$PKG_ROOT"
-cp "target/${TARGET}/release/${BIN_NAME}" "$PKG_ROOT/"
+cp "${TARGET_DIR}/${TARGET}/release/${BIN_NAME}" "$PKG_ROOT/"
 cp "README.md" "$PKG_ROOT/"
 cp "LICENSE" "$PKG_ROOT/"
 

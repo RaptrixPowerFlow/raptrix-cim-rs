@@ -1,2 +1,8 @@
 [alias]
 rpf-regression = "run --release --bin regression_matrix"
+
+# Windows OneDrive checkouts: keep rustc artifacts off the synced tree.
+# C:\toolchains is for vcpkg/compilers; C:\build-cache is for build output.
+# CI and non-Windows hosts override this via CARGO_TARGET_DIR=target.
+[build]
+target-dir = "C:/build-cache/cargo/raptrix-cim-rs"
