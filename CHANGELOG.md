@@ -11,6 +11,8 @@ Copyright (c) 2026 Raptrix Power
 
 ## Unreleased
 
+- Pin `arrow` / `parquet` to **59.3**. RPF writer default remains **v0.14.2**.
+
 ## Converter 0.7.2 — RPF v0.14.2 transformer tap / PST control (2026-08-19)
 
 ### Converter release: Crate version 0.7.2 (raptrix-cim-arrow) / 0.7.2 (raptrix-cim-rs) | Arrow schema v0.14.2
