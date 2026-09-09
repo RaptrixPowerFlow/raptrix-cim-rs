@@ -39,11 +39,22 @@ Production-grid usage is supported through the commercial Raptrix core platform:
 
 Enterprise and academic inquiries: contact us via [Raptrix website](https://www.raptrixpowerflow.com/) or [RaptrixPowerFlow on GitHub](https://github.com/RaptrixPowerFlow/).
 
-## Why RPF? CIM Direct to Power Flow, No Vendor Detour
+## Why RPF? The open interchange for power-flow cases
 
-CIM/XML profile exchange is rich and interoperable, but it was not designed as a zero-copy runtime handoff format for modern security analysis pipelines. RPF exists to close that gap.
+Power systems already have a rich **network model** language: IEC 61970 CIM / CGMES. That is the right place to describe equipment, connectivity, and profiled planning data. It is not a solver-ready **case** file. A current solved power flow — buses, branches, machines, shunts, a declared planning-vs-solved mode, and the voltages and flows that came out of Newton — is still almost always handed around as a vendor deck.
 
-| CIM exchange reality | How RPF solves it |
+Those decks are not an open standard:
+
+| Format | What you actually get |
+| --- | --- |
+| **PSS/E RAW / SAV** | The de-facto US planning interchange. The record layout is intentionally incomplete in public documentation; full fidelity lives in a licensed product. |
+| **PSLF EPC** | Same pattern for the WECC / GE stack: a working format if you own the tool, not a public contract you can implement from. |
+| **CIM / CGMES RDF/XML** | Open and essential for the **network**. EQ/TP/SV/SSH/DY/DL still have to be joined at runtime. SV can carry a solution, but the payload is not a memory-mapped, version-gated, solver-flat case. |
+| **RPF (`.rpf`)** | Open (MPL-2.0), documented, versioned Apache Arrow IPC. One file is the network **and** an optional solved snapshot, plus contingencies, RAS, dynamics hooks, and explicit `case_mode`. Anyone can read or write it with `pyarrow`, this crate, or [raptrix-studio](https://github.com/RaptrixPowerFlow/raptrix-studio). |
+
+There is no better freely specified interchange today for “here is the case I solved” or “here is the case I need you to solve.” If the industry wants reproducible planning-to-real-time handoff without a vendor in the middle, it should treat **RPF as the case interchange** and CIM as the network source — not the other way around, and not RAW or EPC.
+
+| CIM / vendor-deck reality | How RPF solves it |
 | --- | --- |
 | **Profile joins at runtime are expensive** — EQ/TP/SV/SSH/DY/DL data must be stitched repeatedly before solve-stage workflows | **Single canonical Arrow IPC payload** — profiles are normalized once into deterministic tables, then memory-mapped downstream |
 | **Semantic ambiguity across toolchains** — planning vs. solved intent can be unclear and inconsistently encoded | **Explicit case semantics** — `case_mode` and solved-state metadata are first-class, validated contract fields |
@@ -55,8 +66,9 @@ CIM/XML profile exchange is rich and interoperable, but it was not designed as a
 - **Time-to-answer**: remove unnecessary translation hops between planning data and contingency-ready power-flow input.
 - **Data integrity**: one canonical contract lowers drift between engineering sources and solver execution payloads.
 - **Operational independence**: CIM-first ingestion keeps the path open and reproducible for utilities, ISOs, consultants, and datacenter studies.
+- **A public case format**: RAW and EPC will not become that format. RPF already is — documented in this repo, free to implement, and able to carry a live solved state.
 
-In short: this converter takes IEC 61970 CIM exchange data directly into Raptrix Power Interchange (`.rpf`) so power-flow workflows can run without a PSS/E-in-the-middle dependency.
+In short: this converter takes IEC 61970 CIM exchange data directly into Raptrix Power Interchange (`.rpf`) so power-flow workflows can run without a PSS/E-in-the-middle dependency. Downstream converters do the same from PSS/E and PSLF into the same contract.
 
 Copyright (c) 2026 Raptrix Power
 

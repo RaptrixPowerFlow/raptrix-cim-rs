@@ -17,7 +17,7 @@ This repo is also the source of truth for the RPF contract. Use `docs/schema-con
 
 ## What is an RPF file?
 
-An `.rpf` file is a single [Apache Arrow IPC](https://arrow.apache.org/docs/format/IPC.html) file. Think of it as a container that holds several named tables — buses, branches, generators, and so on — all packed into one binary file with metadata attached.
+An `.rpf` file is a single [Apache Arrow IPC](https://arrow.apache.org/docs/format/IPC.html) file. Think of it as a container that holds several named tables — buses, branches, generators, and so on — all packed into one binary file with metadata attached. CIM/CGMES describes the network; vendor decks (PSS/E RAW, PSLF EPC) are the usual **case** interchange and are not publicly specified. RPF is the open case file: planning tables plus an optional solved snapshot, under a versioned contract anyone can implement.
 
 You can open any `.rpf` file with the free [raptrix-studio](https://github.com/RaptrixPowerFlow/raptrix-studio) viewer, with Python via `pyarrow`, or by running `cargo run --release -- view --input case.rpf` on this repo.
 
