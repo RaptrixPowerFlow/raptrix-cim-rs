@@ -12,7 +12,7 @@ Copyright (c) 2026 Raptrix Power
 //! Tenet references:
 //! - Tenet 1: the CLI delegates directly to `write_complete_rpf` and avoids
 //!   any readback or post-write parsing.
-//! - Tenet 4: all user-facing output includes the required Musto branding.
+//! - Tenet 4: all user-facing output includes the required Raptrix branding.
 //! - Tenet 6: the CLI is the primary entrypoint while the library API remains
 //!   stable through `raptrix_cim_rs::write_complete_rpf`.
 

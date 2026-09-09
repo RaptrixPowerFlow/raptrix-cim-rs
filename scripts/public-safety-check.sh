@@ -15,6 +15,8 @@ bad=0
 max_bytes=$((10 * 1024 * 1024))
 
 pattern='BEGIN RSA PRIVATE KEY|BEGIN PRIVATE KEY|BEGIN DSA PRIVATE KEY|AWS_SECRET_ACCESS_KEY|AWS_ACCESS_KEY_ID|AKIA[0-9A-Z]{16}|password=|api_key|API_KEY|token=|-----BEGIN OPENSSH PRIVATE KEY-----'
+# Partner / vendor product names stay out of this public converter.
+partner_pattern='SAInt|encoord|VAREFDEF'
 
 # Build file list based on mode
 if [[ "$MODE" == "staged" ]]; then
@@ -74,10 +76,20 @@ for file in "${files[@]}"; do
       git show ":$file" 2>/dev/null | grep -I -n -E "$pattern" | sed -n '1,5p'
       bad=1
     fi
+    if [[ "$file" != "scripts/public-safety-check.sh" ]] && git show ":$file" 2>/dev/null | grep -I -n -E -i --quiet "$partner_pattern"; then
+      echo "[public-safety] partner-specific name in staged file: $file"
+      git show ":$file" 2>/dev/null | grep -I -n -E -i "$partner_pattern" | sed -n '1,5p'
+      bad=1
+    fi
   else
     if [[ "$file" != "scripts/public-safety-check.sh" ]] && [[ -f "$file" ]] && grep -I -n -E --quiet "$pattern" "$file"; then
       echo "[public-safety] potential secret in tracked file: $file"
       grep -I -n -E "$pattern" "$file" | sed -n '1,5p'
+      bad=1
+    fi
+    if [[ "$file" != "scripts/public-safety-check.sh" ]] && [[ -f "$file" ]] && grep -I -n -E -i --quiet "$partner_pattern" "$file"; then
+      echo "[public-safety] partner-specific name in tracked file: $file"
+      grep -I -n -E -i "$partner_pattern" "$file" | sed -n '1,5p'
       bad=1
     fi
   fi
