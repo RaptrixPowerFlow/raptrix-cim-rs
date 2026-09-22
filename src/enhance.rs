@@ -102,17 +102,19 @@ use serde::Deserialize;
 
 use crate::arrow_schema::{
     BuildoutEntry, ComputationalLoadProfileRow, DisturbanceCounter, FacilityMembershipStamp,
-    METADATA_KEY_FEATURE_CONTINGENCIES_STUB, METADATA_KEY_FEATURE_DYNAMICS_STUB,
-    ProtectionSettingsProvenance, ReconnectionParams, RootWriteOptions, SeasonalEnvelopeEntry,
-    TABLE_BRANCHES, TABLE_BUSES, TABLE_BUSES_SOLVED, TABLE_COMPUTATIONAL_LOAD_PROFILES,
-    TABLE_CONTINGENCY_ISLAND_ANALYSIS, TABLE_CONTINGENCY_SEQUENCES, TABLE_DIAGRAM_OBJECTS,
-    TABLE_DYNAMICS_MODELS, TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED, TABLE_LOADS, TABLE_METADATA,
-    TABLE_MULTI_SECTION_LINES, TABLE_NODE_BREAKER_DETAIL, TABLE_PROTECTION_CONTINGENCIES,
-    TABLE_REMEDIAL_ACTION_SCHEMES, TABLE_TOPOLOGY_CHANGES, TABLE_TRANSFORMERS_2W,
-    TABLE_TRANSFORMERS_3W, VoltageMeasurement, VoltageTransferCurveStage,
-    apply_facility_membership_stamps, build_computational_load_profiles_batch, loads_schema,
-    patch_metadata_computational_load_mode, read_rpf_tables, rpf_file_metadata,
-    validate_computational_load_profiles_batch, write_root_rpf_with_metadata,
+    FrequencyTransferCurveStage, METADATA_KEY_FEATURE_CONTINGENCIES_STUB,
+    METADATA_KEY_FEATURE_DYNAMICS_STUB, ProtectionSettingsProvenance, ReconnectionParams,
+    RideThroughFrequencyBand, RideThroughRequirement, RideThroughVoltageBand, RootWriteOptions,
+    SeasonalEnvelopeEntry, TABLE_BRANCHES, TABLE_BUSES, TABLE_BUSES_SOLVED,
+    TABLE_COMPUTATIONAL_LOAD_PROFILES, TABLE_CONTINGENCY_ISLAND_ANALYSIS,
+    TABLE_CONTINGENCY_SEQUENCES, TABLE_DIAGRAM_OBJECTS, TABLE_DYNAMICS_MODELS, TABLE_FACTS_DEVICES,
+    TABLE_FACTS_SOLVED, TABLE_LOADS, TABLE_METADATA, TABLE_MULTI_SECTION_LINES,
+    TABLE_NODE_BREAKER_DETAIL, TABLE_PROTECTION_CONTINGENCIES, TABLE_REMEDIAL_ACTION_SCHEMES,
+    TABLE_TOPOLOGY_CHANGES, TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, VoltageMeasurement,
+    VoltageTransferCurveStage, apply_facility_membership_stamps,
+    build_computational_load_profiles_batch, loads_schema, patch_metadata_computational_load_mode,
+    read_rpf_tables, rpf_file_metadata, validate_computational_load_profiles_batch,
+    write_root_rpf_with_metadata,
 };
 
 /// Human-readable summary returned after a successful `enhance` run.
@@ -339,6 +341,7 @@ pub fn run_enhance(
         include_contingency_island_analysis: present_names
             .contains(TABLE_CONTINGENCY_ISLAND_ANALYSIS),
         include_contingency_sequences: present_names.contains(TABLE_CONTINGENCY_SEQUENCES),
+        include_dc_converters: true,
     };
 
     // Carry over all other root-level file metadata (case fingerprint, topology diagnostics,
@@ -530,6 +533,10 @@ struct ComputationalLoadProfileSpec {
     voltage_measurement: Option<VoltageMeasurementSpec>,
     #[serde(default)]
     protection_settings_provenance: Option<ProtectionSettingsProvenanceSpec>,
+    #[serde(default)]
+    frequency_transfer_curve: Option<Vec<FrequencyTransferCurveStageSpec>>,
+    #[serde(default)]
+    ride_through_requirement: Option<RideThroughRequirementSpec>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -571,6 +578,50 @@ struct ReconnectionParamsSpec {
     ramp_mw_per_min: Option<f32>,
     #[serde(default)]
     manual_reset_required: Option<bool>,
+    #[serde(default)]
+    restore_fraction: Option<f32>,
+    #[serde(default)]
+    restore_time_s: Option<f32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FrequencyTransferCurveStageSpec {
+    f_hz: f32,
+    t_ms: f32,
+    polarity: String,
+    action: String,
+    #[serde(default)]
+    mw_fraction: Option<f32>,
+    #[serde(default)]
+    load_class: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RideThroughVoltageBandSpec {
+    v_low_pu: f32,
+    v_high_pu: f32,
+    #[serde(default)]
+    t_ms: Option<f32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RideThroughFrequencyBandSpec {
+    f_low_hz: f32,
+    f_high_hz: f32,
+    #[serde(default)]
+    t_ms: Option<f32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RideThroughRequirementSpec {
+    #[serde(default)]
+    voltage_bands: Option<Vec<RideThroughVoltageBandSpec>>,
+    #[serde(default)]
+    frequency_bands: Option<Vec<RideThroughFrequencyBandSpec>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1192,6 +1243,8 @@ fn clp_spec_to_row(spec: ComputationalLoadProfileSpec) -> ComputationalLoadProfi
             delay_ms: r.delay_ms,
             ramp_mw_per_min: r.ramp_mw_per_min,
             manual_reset_required: r.manual_reset_required,
+            restore_fraction: r.restore_fraction,
+            restore_time_s: r.restore_time_s,
         }),
         voltage_measurement: spec.voltage_measurement.map(|v| VoltageMeasurement {
             basis: v.basis,
@@ -1206,6 +1259,43 @@ fn clp_spec_to_row(spec: ComputationalLoadProfileSpec) -> ComputationalLoadProfi
                 effective_date_us: p.effective_date_us,
             }
         }),
+        frequency_transfer_curve: spec.frequency_transfer_curve.map(|stages| {
+            stages
+                .into_iter()
+                .map(|s| FrequencyTransferCurveStage {
+                    f_hz: s.f_hz,
+                    t_ms: s.t_ms,
+                    polarity: s.polarity,
+                    action: s.action,
+                    mw_fraction: s.mw_fraction,
+                    load_class: s.load_class,
+                })
+                .collect()
+        }),
+        ride_through_requirement: spec
+            .ride_through_requirement
+            .map(|r| RideThroughRequirement {
+                voltage_bands: r.voltage_bands.map(|bands| {
+                    bands
+                        .into_iter()
+                        .map(|b| RideThroughVoltageBand {
+                            v_low_pu: b.v_low_pu,
+                            v_high_pu: b.v_high_pu,
+                            t_ms: b.t_ms,
+                        })
+                        .collect()
+                }),
+                frequency_bands: r.frequency_bands.map(|bands| {
+                    bands
+                        .into_iter()
+                        .map(|b| RideThroughFrequencyBand {
+                            f_low_hz: b.f_low_hz,
+                            f_high_hz: b.f_high_hz,
+                            t_ms: b.t_ms,
+                        })
+                        .collect()
+                }),
+            }),
     }
 }
 

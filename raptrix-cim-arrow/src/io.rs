@@ -30,26 +30,29 @@ use arrow::ipc::writer::FileWriter;
 use arrow::record_batch::RecordBatch;
 use memmap2::MmapOptions;
 
+use crate::dc_converter::validate_dc_converters;
 use crate::schema::{
     BRANDING, METADATA_KEY_BRANDING, METADATA_KEY_FACTS_SOLVED_STATE_PRESENCE,
     METADATA_KEY_FEATURE_COMPUTATIONAL_LOAD_PROFILES, METADATA_KEY_FEATURE_CONTINGENCIES_STUB,
     METADATA_KEY_FEATURE_CONTINGENCY_ISLAND_ANALYSIS, METADATA_KEY_FEATURE_CONTINGENCY_SEQUENCES,
-    METADATA_KEY_FEATURE_DIAGRAM_LAYOUT, METADATA_KEY_FEATURE_DYNAMICS_STUB,
-    METADATA_KEY_FEATURE_FACTS, METADATA_KEY_FEATURE_FACTS_SOLVED,
-    METADATA_KEY_FEATURE_NODE_BREAKER, METADATA_KEY_FEATURE_PROTECTION_CONTINGENCIES,
-    METADATA_KEY_FEATURE_REMEDIAL_ACTION_SCHEMES, METADATA_KEY_FEATURE_TOPOLOGY_CHANGES,
-    METADATA_KEY_PROTECTION_FIDELITY, METADATA_KEY_RAS_SCHEMA_MODE, METADATA_KEY_RPF_VERSION,
-    METADATA_KEY_VERSION, SCHEMA_VERSION, SUPPORTED_RPF_VERSIONS, TABLE_BRANCHES, TABLE_BUSES,
-    TABLE_BUSES_SOLVED, TABLE_COMPUTATIONAL_LOAD_PROFILES, TABLE_CONTINGENCIES,
-    TABLE_CONTINGENCY_ISLAND_ANALYSIS, TABLE_CONTINGENCY_SEQUENCES, TABLE_DC_LINES_2W,
-    TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED,
-    TABLE_GENERATORS, TABLE_GENERATORS_SOLVED, TABLE_LOADS, TABLE_MULTI_SECTION_LINES,
+    METADATA_KEY_FEATURE_DC_CONVERTERS, METADATA_KEY_FEATURE_DIAGRAM_LAYOUT,
+    METADATA_KEY_FEATURE_DYNAMICS_STUB, METADATA_KEY_FEATURE_FACTS,
+    METADATA_KEY_FEATURE_FACTS_SOLVED, METADATA_KEY_FEATURE_NODE_BREAKER,
+    METADATA_KEY_FEATURE_PROTECTION_CONTINGENCIES, METADATA_KEY_FEATURE_REMEDIAL_ACTION_SCHEMES,
+    METADATA_KEY_FEATURE_TOPOLOGY_CHANGES, METADATA_KEY_PROTECTION_FIDELITY,
+    METADATA_KEY_RAS_SCHEMA_MODE, METADATA_KEY_RPF_VERSION, METADATA_KEY_VERSION, SCHEMA_VERSION,
+    SUPPORTED_RPF_VERSIONS, TABLE_BRANCHES, TABLE_BUSES, TABLE_BUSES_SOLVED,
+    TABLE_COMPUTATIONAL_LOAD_PROFILES, TABLE_CONTINGENCIES, TABLE_CONTINGENCY_ISLAND_ANALYSIS,
+    TABLE_CONTINGENCY_SEQUENCES, TABLE_DC_CONVERTERS, TABLE_DC_LINES_2W, TABLE_DIAGRAM_OBJECTS,
+    TABLE_DIAGRAM_POINTS, TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED, TABLE_GENERATORS,
+    TABLE_GENERATORS_SOLVED, TABLE_LOADS, TABLE_MULTI_SECTION_LINES,
     TABLE_PROTECTION_CONTINGENCIES, TABLE_REMEDIAL_ACTION_SCHEMES, TABLE_SWITCHED_SHUNT_BANKS,
     TABLE_TOPOLOGY_CHANGES, TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, all_table_schemas,
     computational_load_table_schemas, contingency_island_table_schemas,
-    contingency_sequence_table_schemas, diagram_layout_table_schemas, facts_table_schemas,
-    node_breaker_table_schemas, protection_table_schemas, remedial_action_table_schemas,
-    schema_metadata, solved_state_table_schemas, table_schema_variants,
+    contingency_sequence_table_schemas, dc_converter_table_schemas, diagram_layout_table_schemas,
+    facts_table_schemas, node_breaker_table_schemas, protection_table_schemas,
+    remedial_action_table_schemas, schema_metadata, solved_state_table_schemas,
+    table_schema_variants,
 };
 
 /// Summary stats for a single logical table found in an `.rpf` file.
@@ -89,7 +92,7 @@ impl RpfSummary {
 }
 
 /// Options controlling root `.rpf` file assembly.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct RootWriteOptions {
     /// When true, append optional node-breaker detail tables after the 15
     /// canonical required root columns.
@@ -129,6 +132,30 @@ pub struct RootWriteOptions {
     pub include_contingency_island_analysis: bool,
     /// When true, append optional `contingency_sequences` table (v0.14.0+).
     pub include_contingency_sequences: bool,
+    /// When true, append `dc_converters` (v0.14.4+). Defaults to true.
+    /// A v0.14.4 file that omits the table fails validation. Zero rows is valid.
+    pub include_dc_converters: bool,
+}
+
+impl Default for RootWriteOptions {
+    fn default() -> Self {
+        Self {
+            include_node_breaker_detail: false,
+            include_diagram_layout: false,
+            contingencies_are_stub: false,
+            dynamics_are_stub: false,
+            include_solved_state: false,
+            include_facts_devices: false,
+            include_facts_solved: false,
+            include_computational_load_profiles: false,
+            include_protection_contingencies: false,
+            include_topology_changes: false,
+            include_remedial_action_schemes: false,
+            include_contingency_island_analysis: false,
+            include_contingency_sequences: false,
+            include_dc_converters: true,
+        }
+    }
 }
 
 /// Returns the metadata key used to store the logical row count for a table.
@@ -164,6 +191,9 @@ fn enabled_optional_table_schemas(options: &RootWriteOptions) -> Vec<(&'static s
     }
     if options.include_contingency_sequences {
         optional.extend(contingency_sequence_table_schemas());
+    }
+    if options.include_dc_converters {
+        optional.extend(dc_converter_table_schemas());
     }
     optional
 }
@@ -256,6 +286,9 @@ pub fn root_rpf_schema_with_options(options: &RootWriteOptions) -> Schema {
     }
     if options.include_contingency_sequences {
         table_schemas.extend(contingency_sequence_table_schemas());
+    }
+    if options.include_dc_converters {
+        table_schemas.extend(dc_converter_table_schemas());
     }
 
     let fields = table_schemas
@@ -459,6 +492,13 @@ fn read_rpf_tables_impl(
         {
             bail!("invalid RPF root schema: missing required table '{expected_name}'");
         }
+    }
+    if !reader_schema
+        .fields()
+        .iter()
+        .any(|field| field.name() == TABLE_DC_CONVERTERS)
+    {
+        bail!("invalid RPF root schema: missing required table '{TABLE_DC_CONVERTERS}'");
     }
 
     let mut out = Vec::new();
@@ -961,6 +1001,12 @@ pub fn write_root_rpf_with_metadata(
             "true".to_string(),
         );
     }
+    if options.include_dc_converters {
+        root_metadata.insert(
+            METADATA_KEY_FEATURE_DC_CONVERTERS.to_string(),
+            "true".to_string(),
+        );
+    }
     for (key, value) in additional_root_metadata {
         root_metadata.insert(key.clone(), value.clone());
     }
@@ -970,9 +1016,15 @@ pub fn write_root_rpf_with_metadata(
     let mut root_columns: Vec<ArrayRef> = Vec::with_capacity(table_specs.len());
 
     for (table_name, expected_schema) in table_specs {
-        let raw_batch = table_batches
-            .get(table_name)
-            .with_context(|| format!("missing required table batch '{table_name}'"))?;
+        let synthesized;
+        let raw_batch = if let Some(batch) = table_batches.get(table_name) {
+            batch
+        } else if table_name == TABLE_DC_CONVERTERS {
+            synthesized = RecordBatch::new_empty(Arc::new(expected_schema.clone()));
+            &synthesized
+        } else {
+            bail!("missing required table batch '{table_name}'")
+        };
         let table_batch = prepare_table_batch_for_write(table_name, raw_batch, &expected_schema)?;
 
         let mut padded_columns: Vec<ArrayRef> = Vec::with_capacity(table_batch.num_columns());
@@ -1031,6 +1083,27 @@ pub fn write_root_rpf_with_metadata(
 
     validate_rpf_file(output_path, options)?;
     Ok(())
+}
+
+/// Canonical writer output is 15 columns. The solved-snapshot dialect is 11
+/// columns and carries `is_vsc` instead of `converter_type`.
+/// Returns true when the batch is that snapshot dialect.
+fn check_dc_lines_2w_width(dc_lines: &RecordBatch) -> Result<bool> {
+    let width = dc_lines.num_columns();
+    let snapshot = dc_lines.column_by_name("is_vsc").is_some()
+        && dc_lines.column_by_name("converter_type").is_none();
+    if snapshot && width != 11 {
+        bail!(
+            "post-write contract violation: solved-snapshot dc_lines_2w has {width} columns, expected 11"
+        );
+    }
+    if snapshot {
+        return Ok(true);
+    }
+    if width != 15 {
+        bail!("post-write contract violation: dc_lines_2w has {width} columns, expected 15");
+    }
+    Ok(false)
 }
 
 /// Validates a just-written `.rpf` file against the locked root contract.
@@ -1135,6 +1208,35 @@ pub fn validate_rpf_file(path: impl AsRef<Path>, options: &RootWriteOptions) -> 
     require_non_null_count_equals_len(TABLE_DC_LINES_2W, dc_lines, "dc_line_id")?;
     require_non_null_count_equals_len(TABLE_DC_LINES_2W, dc_lines, "from_bus_id")?;
     require_non_null_count_equals_len(TABLE_DC_LINES_2W, dc_lines, "to_bus_id")?;
+    let snapshot_dc = check_dc_lines_2w_width(dc_lines)?;
+
+    let feature = metadata
+        .get(METADATA_KEY_FEATURE_DC_CONVERTERS)
+        .with_context(|| {
+            format!(
+                "post-write contract violation: missing metadata key '{}'",
+                METADATA_KEY_FEATURE_DC_CONVERTERS
+            )
+        })?;
+    if feature != "true" {
+        bail!(
+            "post-write contract violation: '{}' expected 'true', found '{}'",
+            METADATA_KEY_FEATURE_DC_CONVERTERS,
+            feature
+        );
+    }
+    let converters = by_name
+        .get(TABLE_DC_CONVERTERS)
+        .context("post-write contract violation: missing dc_converters table")?;
+    require_non_null_count_equals_len(TABLE_DC_CONVERTERS, converters, "dc_line_id")?;
+    require_non_null_count_equals_len(TABLE_DC_CONVERTERS, converters, "bus_id")?;
+    require_non_null_count_equals_len(TABLE_DC_CONVERTERS, converters, "role")?;
+    require_non_null_count_equals_len(TABLE_DC_CONVERTERS, converters, "converter_kind")?;
+    require_non_null_count_equals_len(TABLE_DC_CONVERTERS, converters, "is_meter_end")?;
+    if !snapshot_dc || converters.num_rows() > 0 {
+        validate_dc_converters(dc_lines, converters)
+            .context("post-write contract violation: dc_converters")?;
+    }
 
     let generators = by_name
         .get(TABLE_GENERATORS)
@@ -1544,12 +1646,13 @@ mod tests {
         METADATA_KEY_PROTECTION_FIDELITY, METADATA_KEY_RAS_SCHEMA_MODE, METADATA_KEY_RPF_VERSION,
         METADATA_KEY_VERSION, SCHEMA_VERSION, TABLE_BRANCHES, TABLE_COMPUTATIONAL_LOAD_PROFILES,
         TABLE_CONTINGENCIES, TABLE_CONTINGENCY_ISLAND_ANALYSIS, TABLE_CONTINGENCY_SEQUENCES,
-        TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_FACTS_DEVICES, TABLE_FACTS_SOLVED,
-        TABLE_GENERATORS, TABLE_LOADS, TABLE_PROTECTION_CONTINGENCIES,
+        TABLE_DC_CONVERTERS, TABLE_DIAGRAM_OBJECTS, TABLE_DIAGRAM_POINTS, TABLE_FACTS_DEVICES,
+        TABLE_FACTS_SOLVED, TABLE_GENERATORS, TABLE_LOADS, TABLE_PROTECTION_CONTINGENCIES,
         TABLE_REMEDIAL_ACTION_SCHEMES, TABLE_SWITCHED_SHUNTS, TABLE_TOPOLOGY_CHANGES,
         TABLE_TRANSFORMERS_2W, TABLE_TRANSFORMERS_3W, all_table_schemas, branches_schema,
         computational_load_profiles_schema, contingencies_schema,
-        contingency_island_analysis_schema, diagram_objects_schema, diagram_points_schema,
+        contingency_island_analysis_schema, dc_converters_schema, dc_lines_2w_schema,
+        dc_lines_2w_snapshot_dialect_schema, diagram_objects_schema, diagram_points_schema,
         facts_devices_schema, facts_solved_schema, generators_schema, loads_schema,
         protection_contingencies_schema, remedial_action_schemes_schema, schema_metadata,
         switched_shunts_schema, topology_changes_schema, transformers_2w_schema,
@@ -1557,9 +1660,43 @@ mod tests {
     };
 
     use super::{
-        RootWriteOptions, read_rpf_tables, row_count_metadata_key, rpf_file_metadata,
-        validate_rpf_file, write_root_rpf, write_root_rpf_with_metadata,
+        RootWriteOptions, check_dc_lines_2w_width, read_rpf_tables, row_count_metadata_key,
+        rpf_file_metadata, validate_rpf_file, write_root_rpf, write_root_rpf_with_metadata,
     };
+
+    #[test]
+    fn dc_lines_width_check_returns_error_instead_of_panicking() {
+        let canonical = RecordBatch::new_empty(Arc::new(dc_lines_2w_schema()));
+        assert!(!check_dc_lines_2w_width(&canonical).unwrap());
+        let snapshot = RecordBatch::new_empty(Arc::new(dc_lines_2w_snapshot_dialect_schema()));
+        assert!(check_dc_lines_2w_width(&snapshot).unwrap());
+        let bad = RecordBatch::new_empty(Arc::new(Schema::new(vec![Field::new(
+            "dc_line_id",
+            DataType::Int32,
+            false,
+        )])));
+        let err = check_dc_lines_2w_width(&bad).unwrap_err().to_string();
+        assert!(err.contains("expected 15"), "{err}");
+    }
+
+    fn push_empty_dc_converters(
+        root_fields: &mut Vec<Field>,
+        root_columns: &mut Vec<ArrayRef>,
+        root_meta: &mut std::collections::HashMap<String, String>,
+    ) {
+        let batch = RecordBatch::new_empty(Arc::new(dc_converters_schema()));
+        root_fields.push(Field::new(
+            TABLE_DC_CONVERTERS,
+            DataType::Struct(batch.schema().fields().clone()),
+            true,
+        ));
+        root_columns.push(Arc::new(StructArray::new(
+            batch.schema().fields().clone(),
+            batch.columns().to_vec(),
+            None,
+        )) as ArrayRef);
+        root_meta.insert(row_count_metadata_key(TABLE_DC_CONVERTERS), "0".to_string());
+    }
 
     /// Optional local regression for empty nested dictionaries in CLP curve columns.
     /// Reads `*.rpf` from `RAPTRIX_EXTERNAL_RPF_DIR` only — no machine-local paths in source.
@@ -1894,6 +2031,7 @@ mod tests {
         for (name, _) in all_table_schemas() {
             root_meta.insert(row_count_metadata_key(name), "0".to_string());
         }
+        push_empty_dc_converters(&mut root_fields, &mut root_columns, &mut root_meta);
         let root_schema = Arc::new(Schema::new_with_metadata(root_fields, root_meta));
         let root_batch = RecordBatch::try_new(root_schema.clone(), root_columns)?;
 
@@ -1905,10 +2043,10 @@ mod tests {
         writer.finish()?;
 
         let err = read_rpf_tables(&output_path)
-            .expect_err("v0.9.3 reader should reject missing required nominal_kv fields");
+            .expect_err("reader should reject missing required nominal_kv fields");
         let message = format!("{err:#}");
         assert!(message.contains("missing non-nullable field 'to_nominal_kv'"));
-        assert_eq!(SCHEMA_VERSION, "v0.14.3");
+        assert_eq!(SCHEMA_VERSION, "v0.14.4");
         Ok(())
     }
 
@@ -1961,6 +2099,7 @@ mod tests {
         for (name, _) in all_table_schemas() {
             root_meta.insert(row_count_metadata_key(name), "0".to_string());
         }
+        push_empty_dc_converters(&mut root_fields, &mut root_columns, &mut root_meta);
         let root_schema = Arc::new(Schema::new_with_metadata(root_fields, root_meta));
         let root_batch = RecordBatch::try_new(root_schema.clone(), root_columns)?;
 
@@ -1981,6 +2120,31 @@ mod tests {
         assert_eq!(loads.column(6).null_count(), 0);
         assert_eq!(loads.column(7).null_count(), 0);
         assert_eq!(loads.column(8).null_count(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn write_without_dc_converters_is_rejected() -> Result<()> {
+        let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_missing_dc_converters");
+        std::fs::create_dir_all(&tmp_dir)?;
+        let output_path = tmp_dir.join("missing_dc.rpf");
+        let table_batches: HashMap<&'static str, RecordBatch> = all_table_schemas()
+            .into_iter()
+            .map(|(name, schema)| (name, RecordBatch::new_empty(Arc::new(schema))))
+            .collect();
+        let err = write_root_rpf(
+            &output_path,
+            &table_batches,
+            &RootWriteOptions {
+                include_dc_converters: false,
+                ..Default::default()
+            },
+        )
+        .expect_err("v0.14.4 file must include dc_converters");
+        assert!(
+            format!("{err:#}").contains("dc_converters"),
+            "unexpected error: {err:#}"
+        );
         Ok(())
     }
 
@@ -2024,6 +2188,7 @@ mod tests {
         for (name, _) in all_table_schemas() {
             root_meta.insert(row_count_metadata_key(name), "0".to_string());
         }
+        push_empty_dc_converters(&mut root_fields, &mut root_columns, &mut root_meta);
         let root_schema = Arc::new(Schema::new_with_metadata(root_fields, root_meta));
         let root_batch = RecordBatch::try_new(root_schema.clone(), root_columns)?;
 
@@ -2097,6 +2262,7 @@ mod tests {
         for (name, _) in all_table_schemas() {
             root_meta.insert(row_count_metadata_key(name), "0".to_string());
         }
+        push_empty_dc_converters(&mut root_fields, &mut root_columns, &mut root_meta);
         let root_schema = Arc::new(Schema::new_with_metadata(root_fields, root_meta));
         let root_batch = RecordBatch::try_new(root_schema.clone(), root_columns)?;
 
@@ -2550,6 +2716,7 @@ mod tests {
         for (name, _) in all_table_schemas() {
             root_meta.insert(row_count_metadata_key(name), "0".to_string());
         }
+        push_empty_dc_converters(&mut root_fields, &mut root_columns, &mut root_meta);
         let root_schema = Arc::new(Schema::new_with_metadata(root_fields, root_meta));
         let root_batch = RecordBatch::try_new(root_schema.clone(), root_columns)?;
 
@@ -2560,14 +2727,8 @@ mod tests {
         writer.write(&root_batch)?;
         writer.finish()?;
 
-        let tables = read_rpf_tables(&output_path)?;
-        let (_, contingencies) = tables
-            .iter()
-            .find(|(name, _)| name == TABLE_CONTINGENCIES)
-            .context("missing contingencies table")?;
-        assert_eq!(contingencies.schema().fields().len(), 10);
-        assert_eq!(contingencies.schema().field(8).name(), "tpl_category");
-        assert_eq!(contingencies.schema().field(9).name(), "reserved");
+        let err = read_rpf_tables(&output_path).expect_err("v0.13.1 stamp is rejected");
+        assert!(format!("{err:#}").contains("unsupported"));
         Ok(())
     }
 
@@ -2633,6 +2794,7 @@ mod tests {
         for (name, _) in all_table_schemas() {
             root_meta.insert(row_count_metadata_key(name), "0".to_string());
         }
+        push_empty_dc_converters(&mut root_fields, &mut root_columns, &mut root_meta);
         let root_schema = Arc::new(Schema::new_with_metadata(root_fields, root_meta));
         let root_batch = RecordBatch::try_new(root_schema.clone(), root_columns)?;
 
@@ -2643,29 +2805,8 @@ mod tests {
         writer.write(&root_batch)?;
         writer.finish()?;
 
-        let tables = read_rpf_tables(&output_path)?;
-        for (table, expected_width, first_tap) in [
-            (TABLE_TRANSFORMERS_2W, 35usize, 27usize),
-            (TABLE_TRANSFORMERS_3W, 37usize, 29usize),
-        ] {
-            let (_, batch) = tables
-                .iter()
-                .find(|(name, _)| *name == table)
-                .with_context(|| format!("missing {table}"))?;
-            assert_eq!(batch.schema().fields().len(), expected_width);
-            assert_eq!(batch.schema().field(first_tap).name(), "tap_min");
-            assert_eq!(batch.schema().field(first_tap + 2).name(), "tap_limit_unit");
-            assert_eq!(
-                batch.schema().field(first_tap + 5).name(),
-                "tap_control_mode"
-            );
-            for name in crate::TAP_CONTROL_COLUMNS {
-                let col = batch
-                    .column_by_name(name)
-                    .with_context(|| format!("{table}.{name}"))?;
-                assert_eq!(col.null_count(), col.len());
-            }
-        }
+        let err = read_rpf_tables(&output_path).expect_err("v0.14.1 stamp is rejected");
+        assert!(format!("{err:#}").contains("unsupported"));
         Ok(())
     }
 
@@ -2718,6 +2859,7 @@ mod tests {
         for (name, _) in all_table_schemas() {
             root_meta.insert(row_count_metadata_key(name), "0".to_string());
         }
+        push_empty_dc_converters(&mut root_fields, &mut root_columns, &mut root_meta);
         let root_schema = Arc::new(Schema::new_with_metadata(root_fields, root_meta));
         let root_batch = RecordBatch::try_new(root_schema.clone(), root_columns)?;
 
@@ -2728,20 +2870,8 @@ mod tests {
         writer.write(&root_batch)?;
         writer.finish()?;
 
-        let tables = read_rpf_tables(&output_path)?;
-        let (_, batch) = tables
-            .iter()
-            .find(|(name, _)| *name == TABLE_SWITCHED_SHUNTS)
-            .with_context(|| "missing switched_shunts")?;
-        assert_eq!(batch.schema().fields().len(), 11);
-        assert_eq!(batch.schema().field(9).name(), "shunt_control_mode");
-        assert_eq!(batch.schema().field(10).name(), "regulated_bus_id");
-        for name in crate::SHUNT_CONTROL_COLUMNS {
-            let col = batch
-                .column_by_name(name)
-                .with_context(|| format!("switched_shunts.{name}"))?;
-            assert_eq!(col.null_count(), col.len());
-        }
+        let err = read_rpf_tables(&output_path).expect_err("v0.14.2 stamp is rejected");
+        assert!(format!("{err:#}").contains("unsupported"));
         Ok(())
     }
 

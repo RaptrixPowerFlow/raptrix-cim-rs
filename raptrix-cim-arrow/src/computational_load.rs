@@ -20,7 +20,9 @@ use crate::schema::{
     VOLTAGE_MEASUREMENT_LOCATIONS, VOLTAGE_TRANSFER_ACTIONS, VOLTAGE_TRANSFER_LOAD_CLASSES,
     VOLTAGE_TRANSFER_POLARITIES, buildout_schedule_element_fields,
     computational_load_profiles_schema, disturbance_counter_struct_fields,
-    protection_settings_provenance_struct_fields, reconnection_params_struct_fields,
+    frequency_transfer_curve_element_fields, protection_settings_provenance_struct_fields,
+    reconnection_params_struct_fields, ride_through_frequency_band_fields,
+    ride_through_requirement_struct_fields, ride_through_voltage_band_fields,
     seasonal_envelope_element_fields, voltage_measurement_struct_fields,
     voltage_transfer_curve_element_fields,
 };
@@ -70,6 +72,44 @@ pub struct ReconnectionParams {
     pub delay_ms: Option<f32>,
     pub ramp_mw_per_min: Option<f32>,
     pub manual_reset_required: Option<bool>,
+    /// Fraction of pre-disturbance P, in (0, 1]. Both null or both set with `restore_time_s`.
+    pub restore_fraction: Option<f32>,
+    /// Seconds after voltage returns to the continuous band.
+    pub restore_time_s: Option<f32>,
+}
+
+/// One stage of a facility frequency transfer curve (v0.14.4+).
+#[derive(Debug, Clone)]
+pub struct FrequencyTransferCurveStage {
+    pub f_hz: f32,
+    pub t_ms: f32,
+    pub polarity: String,
+    pub action: String,
+    pub mw_fraction: Option<f32>,
+    pub load_class: Option<String>,
+}
+
+/// One must-remain-connected voltage band. `t_ms` null means continuous.
+#[derive(Debug, Clone)]
+pub struct RideThroughVoltageBand {
+    pub v_low_pu: f32,
+    pub v_high_pu: f32,
+    pub t_ms: Option<f32>,
+}
+
+/// One must-remain-connected frequency band. `t_ms` null means continuous.
+#[derive(Debug, Clone)]
+pub struct RideThroughFrequencyBand {
+    pub f_low_hz: f32,
+    pub f_high_hz: f32,
+    pub t_ms: Option<f32>,
+}
+
+/// Must-remain-connected envelope. Distinct from the facility transfer curves.
+#[derive(Debug, Clone, Default)]
+pub struct RideThroughRequirement {
+    pub voltage_bands: Option<Vec<RideThroughVoltageBand>>,
+    pub frequency_bands: Option<Vec<RideThroughFrequencyBand>>,
 }
 
 /// Voltage measurement / filter configuration (v0.13.1+).
@@ -126,6 +166,8 @@ pub struct ComputationalLoadProfileRow {
     pub reconnection_params: Option<ReconnectionParams>,
     pub voltage_measurement: Option<VoltageMeasurement>,
     pub protection_settings_provenance: Option<ProtectionSettingsProvenance>,
+    pub frequency_transfer_curve: Option<Vec<FrequencyTransferCurveStage>>,
+    pub ride_through_requirement: Option<RideThroughRequirement>,
 }
 
 /// Canonical stage order: under by ascending v_pu, then over by descending v_pu;
@@ -144,6 +186,34 @@ pub fn canonicalize_voltage_transfer_curve(stages: &mut [VoltageTransferCurveSta
         };
         if v_ord != Ordering::Equal {
             return v_ord;
+        }
+        let t = a.t_ms.partial_cmp(&b.t_ms).unwrap_or(Ordering::Equal);
+        if t != Ordering::Equal {
+            return t;
+        }
+        a.load_class
+            .as_deref()
+            .unwrap_or("all")
+            .cmp(b.load_class.as_deref().unwrap_or("all"))
+            .then_with(|| a.action.cmp(&b.action))
+    });
+}
+
+/// Same order as [`canonicalize_voltage_transfer_curve`], using `f_hz`.
+pub fn canonicalize_frequency_transfer_curve(stages: &mut [FrequencyTransferCurveStage]) {
+    use std::cmp::Ordering;
+    stages.sort_by(|a, b| {
+        let pol = a.polarity.cmp(&b.polarity);
+        if pol != Ordering::Equal {
+            return pol;
+        }
+        let f_ord = if a.polarity == "over" {
+            b.f_hz.partial_cmp(&a.f_hz).unwrap_or(Ordering::Equal)
+        } else {
+            a.f_hz.partial_cmp(&b.f_hz).unwrap_or(Ordering::Equal)
+        };
+        if f_ord != Ordering::Equal {
+            return f_ord;
         }
         let t = a.t_ms.partial_cmp(&b.t_ms).unwrap_or(Ordering::Equal);
         if t != Ordering::Equal {
@@ -264,6 +334,13 @@ fn append_null_to_struct_children(builder: &mut StructBuilder) {
                 builder
                     .field_builder::<TimestampMicrosecondBuilder>(i)
                     .map(|b| b.append_null())
+            })
+            .or_else(|| {
+                builder
+                    .field_builder::<ListBuilder<StructBuilder>>(i)
+                    .map(|b| {
+                        b.append(false);
+                    })
             });
     }
 }
@@ -295,6 +372,24 @@ pub fn build_computational_load_profiles_batch(
                 row.voltage_transfer_curve = None;
             } else {
                 canonicalize_voltage_transfer_curve(curve);
+            }
+        }
+        if let Some(curve) = row.frequency_transfer_curve.as_mut() {
+            if curve.is_empty() {
+                row.frequency_transfer_curve = None;
+            } else {
+                canonicalize_frequency_transfer_curve(curve);
+            }
+        }
+        if let Some(req) = row.ride_through_requirement.as_mut() {
+            if req.voltage_bands.as_ref().is_some_and(|b| b.is_empty()) {
+                req.voltage_bands = None;
+            }
+            if req.frequency_bands.as_ref().is_some_and(|b| b.is_empty()) {
+                req.frequency_bands = None;
+            }
+            if req.voltage_bands.is_none() && req.frequency_bands.is_none() {
+                row.ride_through_requirement = None;
             }
         }
     }
@@ -387,11 +482,42 @@ pub fn build_computational_load_profiles_batch(
     )
     .with_keys_field(Arc::new(Field::new("key", DataType::Utf8, false)))
     .with_values_field(Arc::new(Field::new("value", DataType::Float64, false)));
+    let freq_item = Field::new(
+        "item",
+        DataType::Struct(frequency_transfer_curve_element_fields().into()),
+        false,
+    );
     let mut voltage_curve = ListBuilder::new(StructBuilder::from_fields(
         voltage_transfer_curve_element_fields(),
         n,
     ))
     .with_field(Arc::new(curve_item));
+    let mut frequency_curve = ListBuilder::new(StructBuilder::from_fields(
+        frequency_transfer_curve_element_fields(),
+        n,
+    ))
+    .with_field(Arc::new(freq_item));
+    let voltage_band_item = Field::new(
+        "item",
+        DataType::Struct(ride_through_voltage_band_fields().into()),
+        false,
+    );
+    let frequency_band_item = Field::new(
+        "item",
+        DataType::Struct(ride_through_frequency_band_fields().into()),
+        false,
+    );
+    let mut voltage_bands = ListBuilder::new(StructBuilder::from_fields(
+        ride_through_voltage_band_fields(),
+        n,
+    ))
+    .with_field(Arc::new(voltage_band_item));
+    let mut frequency_bands = ListBuilder::new(StructBuilder::from_fields(
+        ride_through_frequency_band_fields(),
+        n,
+    ))
+    .with_field(Arc::new(frequency_band_item));
+    let mut requirement_present = Vec::with_capacity(n);
     let mut disturbance = StructBuilder::from_fields(disturbance_counter_struct_fields(), n);
     let mut reconnection_params =
         StructBuilder::from_fields(reconnection_params_struct_fields(), n);
@@ -586,6 +712,16 @@ pub fn build_computational_load_profiles_batch(
                         .expect("manual_reset_required"),
                     rp.manual_reset_required,
                 );
+                append_optional_f32(
+                    b.field_builder::<Float32Builder>(4)
+                        .expect("restore_fraction"),
+                    rp.restore_fraction,
+                );
+                append_optional_f32(
+                    b.field_builder::<Float32Builder>(5)
+                        .expect("restore_time_s"),
+                    rp.restore_time_s,
+                );
                 Ok(())
             },
         )?;
@@ -647,6 +783,66 @@ pub fn build_computational_load_profiles_batch(
                 Ok(())
             },
         )?;
+
+        match &row.frequency_transfer_curve {
+            None => frequency_curve.append(false),
+            Some(stages) => {
+                let values = frequency_curve.values();
+                for stage in stages {
+                    values
+                        .field_builder::<Float32Builder>(0)
+                        .expect("f_hz")
+                        .append_value(stage.f_hz);
+                    values
+                        .field_builder::<Float32Builder>(1)
+                        .expect("t_ms")
+                        .append_value(stage.t_ms);
+                    values
+                        .field_builder::<StringDictionaryBuilder<Int32Type>>(2)
+                        .expect("polarity")
+                        .append_value(&stage.polarity);
+                    values
+                        .field_builder::<StringDictionaryBuilder<Int32Type>>(3)
+                        .expect("action")
+                        .append_value(&stage.action);
+                    match stage.mw_fraction {
+                        Some(f) => values
+                            .field_builder::<Float32Builder>(4)
+                            .expect("mw_fraction")
+                            .append_value(f),
+                        None => values
+                            .field_builder::<Float32Builder>(4)
+                            .expect("mw_fraction")
+                            .append_null(),
+                    }
+                    match stage.load_class.as_deref() {
+                        Some(lc) => values
+                            .field_builder::<StringDictionaryBuilder<Int32Type>>(5)
+                            .expect("load_class")
+                            .append_value(lc),
+                        None => values
+                            .field_builder::<StringDictionaryBuilder<Int32Type>>(5)
+                            .expect("load_class")
+                            .append_null(),
+                    }
+                    values.append(true);
+                }
+                frequency_curve.append(true);
+            }
+        }
+
+        match &row.ride_through_requirement {
+            None => {
+                voltage_bands.append(false);
+                frequency_bands.append(false);
+                requirement_present.push(false);
+            }
+            Some(req) => {
+                append_band_list(&mut voltage_bands, req.voltage_bands.as_deref());
+                append_band_list(&mut frequency_bands, req.frequency_bands.as_deref());
+                requirement_present.push(true);
+            }
+        }
     }
 
     // Rebuild timestamp column with timezone if StructBuilder did not attach it.
@@ -688,9 +884,99 @@ pub fn build_computational_load_profiles_batch(
             Arc::new(reconnection_params.finish()),
             Arc::new(voltage_measurement.finish()),
             provenance_array,
+            Arc::new(frequency_curve.finish()),
+            Arc::new(finish_requirement(
+                voltage_bands,
+                frequency_bands,
+                &requirement_present,
+            )?),
         ],
     )
     .context("building computational_load_profiles batch")
+}
+
+fn append_band_list(list: &mut ListBuilder<StructBuilder>, bands: Option<&[impl BandEnds]>) {
+    let Some(bands) = bands else {
+        list.append(false);
+        return;
+    };
+    let values = list.values();
+    for band in bands {
+        values
+            .field_builder::<Float32Builder>(0)
+            .expect("low")
+            .append_value(band.low());
+        values
+            .field_builder::<Float32Builder>(1)
+            .expect("high")
+            .append_value(band.high());
+        match band.hold_ms() {
+            Some(t) => values
+                .field_builder::<Float32Builder>(2)
+                .expect("t_ms")
+                .append_value(t),
+            None => values
+                .field_builder::<Float32Builder>(2)
+                .expect("t_ms")
+                .append_null(),
+        }
+        values.append(true);
+    }
+    list.append(true);
+}
+
+fn finish_requirement(
+    mut voltage_bands: ListBuilder<StructBuilder>,
+    mut frequency_bands: ListBuilder<StructBuilder>,
+    present: &[bool],
+) -> Result<ArrayRef> {
+    use arrow::array::StructArray;
+    use arrow::buffer::NullBuffer;
+    let validity = if present.iter().any(|flag| !flag) {
+        Some(NullBuffer::from_iter(present.iter().copied()))
+    } else {
+        None
+    };
+    let array = StructArray::try_new(
+        ride_through_requirement_struct_fields().into(),
+        vec![
+            Arc::new(voltage_bands.finish()) as ArrayRef,
+            Arc::new(frequency_bands.finish()),
+        ],
+        validity,
+    )
+    .context("building ride_through_requirement")?;
+    Ok(Arc::new(array))
+}
+
+trait BandEnds {
+    fn low(&self) -> f32;
+    fn high(&self) -> f32;
+    fn hold_ms(&self) -> Option<f32>;
+}
+
+impl BandEnds for RideThroughVoltageBand {
+    fn low(&self) -> f32 {
+        self.v_low_pu
+    }
+    fn high(&self) -> f32 {
+        self.v_high_pu
+    }
+    fn hold_ms(&self) -> Option<f32> {
+        self.t_ms
+    }
+}
+
+impl BandEnds for RideThroughFrequencyBand {
+    fn low(&self) -> f32 {
+        self.f_low_hz
+    }
+    fn high(&self) -> f32 {
+        self.f_high_hz
+    }
+    fn hold_ms(&self) -> Option<f32> {
+        self.t_ms
+    }
 }
 
 fn ensure_provenance_tz(array: arrow::array::StructArray, utc_tz: &Arc<str>) -> Result<ArrayRef> {
@@ -904,10 +1190,12 @@ pub fn validate_computational_load_profiles_batch(
         }
 
         validate_voltage_transfer_curve_column(batch, row)?;
+        validate_frequency_transfer_curve_column(batch, row)?;
         validate_disturbance_counter_column(batch, row)?;
         validate_reconnection_params_column(batch, row)?;
         validate_voltage_measurement_column(batch, row)?;
         validate_provenance_column(batch, row)?;
+        validate_ride_through_requirement_column(batch, row)?;
     }
 
     Ok(())
@@ -1073,6 +1361,169 @@ fn validate_reconnection_params_column(batch: &RecordBatch, row: usize) -> Resul
                 bail!("computational_load_profiles row {row}: {name} must be finite and >= 0");
             }
         }
+    }
+    let restore_fraction = f32_at(st.column(4), row);
+    let restore_time_s = f32_at(st.column(5), row);
+    match (restore_fraction, restore_time_s) {
+        (None, None) => {}
+        (Some(fraction), Some(seconds)) => {
+            if !fraction.is_finite() || !(0.0 < fraction && fraction <= 1.0) {
+                bail!("computational_load_profiles row {row}: restore_fraction must be in (0, 1]");
+            }
+            if !seconds.is_finite() || seconds < 0.0 {
+                bail!(
+                    "computational_load_profiles row {row}: restore_time_s must be finite and >= 0"
+                );
+            }
+        }
+        _ => bail!(
+            "computational_load_profiles row {row}: restore_fraction and restore_time_s must both be set or both be null"
+        ),
+    }
+    Ok(())
+}
+
+fn validate_frequency_transfer_curve_column(batch: &RecordBatch, row: usize) -> Result<()> {
+    let col = batch
+        .column_by_name("frequency_transfer_curve")
+        .context("frequency_transfer_curve")?;
+    if col.is_null(row) {
+        return Ok(());
+    }
+    let list = col
+        .as_any()
+        .downcast_ref::<arrow::array::ListArray>()
+        .context("frequency_transfer_curve list")?;
+    let values = list.value(row);
+    if values.len() == 0 {
+        return Ok(());
+    }
+    let st = values
+        .as_any()
+        .downcast_ref::<arrow::array::StructArray>()
+        .context("frequency_transfer_curve struct")?;
+    let f_hz = st
+        .column(0)
+        .as_any()
+        .downcast_ref::<Float32Array>()
+        .unwrap();
+    let t_ms = st
+        .column(1)
+        .as_any()
+        .downcast_ref::<Float32Array>()
+        .unwrap();
+    for i in 0..st.len() {
+        let f = f_hz.value(i);
+        let t = t_ms.value(i);
+        if !f.is_finite() || f <= 0.0 {
+            bail!(
+                "computational_load_profiles row {row}: frequency_transfer_curve.f_hz must be finite and > 0"
+            );
+        }
+        if !t.is_finite() || t < 0.0 {
+            bail!(
+                "computational_load_profiles row {row}: frequency_transfer_curve.t_ms must be finite and >= 0"
+            );
+        }
+        let polarity = dict_value_at(st.column(2), i).unwrap_or_default();
+        let action = dict_value_at(st.column(3), i).unwrap_or_default();
+        validate_closed(
+            &polarity,
+            VOLTAGE_TRANSFER_POLARITIES,
+            row,
+            "frequency polarity",
+        )?;
+        validate_closed(&action, VOLTAGE_TRANSFER_ACTIONS, row, "frequency action")?;
+        if let Some(frac) = f32_at(st.column(4), i) {
+            if !frac.is_finite() || !(0.0 < frac && frac <= 1.0) {
+                bail!(
+                    "computational_load_profiles row {row}: frequency mw_fraction must be in (0,1]"
+                );
+            }
+        }
+        let load_class = dict_value_at(st.column(5), i).unwrap_or_else(|| "all".into());
+        validate_closed(
+            &load_class,
+            VOLTAGE_TRANSFER_LOAD_CLASSES,
+            row,
+            "frequency load_class",
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_band_pair(
+    low: f32,
+    high: f32,
+    t_ms: Option<f32>,
+    row: usize,
+    label: &str,
+) -> Result<()> {
+    if !low.is_finite() || !high.is_finite() || !(low > 0.0) || !(high > low) {
+        bail!(
+            "computational_load_profiles row {row}: {label} band requires finite edges with low < high"
+        );
+    }
+    if let Some(t) = t_ms {
+        if !t.is_finite() || t < 0.0 {
+            bail!(
+                "computational_load_profiles row {row}: {label} t_ms must be null or finite and >= 0"
+            );
+        }
+    }
+    Ok(())
+}
+
+fn validate_ride_through_requirement_column(batch: &RecordBatch, row: usize) -> Result<()> {
+    let col = batch
+        .column_by_name("ride_through_requirement")
+        .context("ride_through_requirement")?;
+    if col.is_null(row) {
+        return Ok(());
+    }
+    let st = col
+        .as_any()
+        .downcast_ref::<arrow::array::StructArray>()
+        .context("ride_through_requirement struct")?;
+    validate_band_list(st.column(0), row, "voltage")?;
+    validate_band_list(st.column(1), row, "frequency")?;
+    Ok(())
+}
+
+fn validate_band_list(col: &ArrayRef, row: usize, label: &str) -> Result<()> {
+    if col.is_null(row) {
+        return Ok(());
+    }
+    let list = col
+        .as_any()
+        .downcast_ref::<arrow::array::ListArray>()
+        .context("requirement band list")?;
+    let values = list.value(row);
+    if values.is_empty() {
+        return Ok(());
+    }
+    let st = values
+        .as_any()
+        .downcast_ref::<arrow::array::StructArray>()
+        .context("requirement band struct")?;
+    let low = st
+        .column(0)
+        .as_any()
+        .downcast_ref::<Float32Array>()
+        .unwrap();
+    let high = st
+        .column(1)
+        .as_any()
+        .downcast_ref::<Float32Array>()
+        .unwrap();
+    for i in 0..st.len() {
+        validate_band_pair(
+            low.value(i),
+            high.value(i),
+            f32_at(st.column(2), i),
+            row,
+            label,
+        )?;
     }
     Ok(())
 }
@@ -1267,6 +1718,8 @@ mod tests {
                 delay_ms: Some(5000.0),
                 ramp_mw_per_min: Some(50.0),
                 manual_reset_required: Some(true),
+                restore_fraction: Some(0.90),
+                restore_time_s: Some(2.0),
             }),
             voltage_measurement: Some(VoltageMeasurement {
                 basis: Some("positive_sequence_rms".into()),
@@ -1290,6 +1743,45 @@ mod tests {
             .downcast_ref::<arrow::array::ListArray>()
             .unwrap();
         assert_eq!(curve.value(0).len(), 3);
+        Ok(())
+    }
+
+    #[test]
+    fn one_sided_restore_and_inverted_band_fail() -> Result<()> {
+        let mut row = ComputationalLoadProfileRow {
+            bus_id: Some(1),
+            reconnection_params: Some(ReconnectionParams {
+                restore_fraction: Some(0.9),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let batch = build_computational_load_profiles_batch(&[row.clone()])?;
+        assert!(validate_computational_load_profiles_batch(&batch, Some(true)).is_err());
+
+        row.reconnection_params = None;
+        row.frequency_transfer_curve = Some(vec![FrequencyTransferCurveStage {
+            f_hz: 59.0,
+            t_ms: 1000.0,
+            polarity: "sideways".into(),
+            action: "transfer".into(),
+            mw_fraction: None,
+            load_class: None,
+        }]);
+        let batch = build_computational_load_profiles_batch(&[row.clone()])?;
+        assert!(validate_computational_load_profiles_batch(&batch, Some(true)).is_err());
+
+        row.frequency_transfer_curve = None;
+        row.ride_through_requirement = Some(RideThroughRequirement {
+            voltage_bands: Some(vec![RideThroughVoltageBand {
+                v_low_pu: 1.1,
+                v_high_pu: 0.9,
+                t_ms: None,
+            }]),
+            frequency_bands: None,
+        });
+        let batch = build_computational_load_profiles_batch(&[row])?;
+        assert!(validate_computational_load_profiles_batch(&batch, Some(true)).is_err());
         Ok(())
     }
 

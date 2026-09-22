@@ -5,7 +5,7 @@ Copyright (c) 2026 Raptrix Power
 
 # RPF Field Guide — Plain-English Reference
 
-**Schema contract: v0.14.3 (dual-read v0.14.2 / v0.14.1 / v0.14.0 / v0.13.x) | Format: Apache Arrow IPC**
+**Schema contract: v0.14.4 (readers accept v0.14.4 only) | Format: Apache Arrow IPC**
 
 This guide explains every table and field in an `.rpf` file in plain English. It is written for engineers who need to read, validate, or build tools against RPF files without digging into Arrow source code. For the normative type-level contract see [schema-contract.md](schema-contract.md). Migration notes for the v0.14.0 additive MINOR are in [MIGRATION.md](../MIGRATION.md).
 
@@ -47,7 +47,7 @@ These are key-value strings in the Arrow file header. Every RPF reader should ch
 
 | Key | Example value | What it means |
 |---|---|---|
-| `raptrix.version` | `v0.14.3` | The schema contract version this file was written to. Writers emit `v0.14.3`; readers accept `v0.14.3` / `0.14.3` / `v0.14.2` / `0.14.2` / `v0.14.1` / `0.14.1` / `v0.14.0` / `0.14.0` and `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`. Pre-0.13 files must be re-exported. |
+| `raptrix.version` | `v0.14.4` | The schema contract version this file was written to. Writers emit `v0.14.4`. Readers accept `v0.14.4` / `0.14.4` only. |
 | `rpf.identity.model` | `hybrid_solver_flat_v1` | **(v0.13.0+, optional)** Declares the hybrid identity model: dense `bus_id` foreign keys for solvers, plus optional equipment `mrid` where available. |
 | `raptrix.branding` | *(long string)* | Human-readable provenance string identifying the writing tool and copyright. |
 | `rpf.case_fingerprint` | `abc123...` | A deterministic hash of the case identity. Useful for de-duplication and reproducibility checks. |
@@ -205,6 +205,7 @@ Branches are the transmission lines between buses.
 | `name` | text | Human-readable line name. Null if not provided. |
 | `from_nominal_kv` | number | Required nominal kV at the from-end bus. Must be finite and strictly greater than 0. |
 | `to_nominal_kv` | number | Required nominal kV at the to-end bus. Must be finite and strictly greater than 0. |
+| `g_from`, `b_from`, `g_to`, `b_to` | number or null | **(v0.14.4+)** Per-end shunt conductance and susceptance in per-unit on `base_mva`. Null when the source has no per-end fields. Distinct from `b_shunt`, which is total line charging. |
 
 ---
 
@@ -416,7 +417,9 @@ One row per computational / large-load bus or load. Present when `metadata.compu
 | `voltage_sensitivity_hint`, transfer / reconnection / ride-through maps | Optional screening and ride-through hints for large-load studies. |
 | `voltage_transfer_curve` | **(v0.13.1+)** Typed multi-stage `(V,t)` transfer envelope: list of `{v_pu, t_ms, polarity, action, mw_fraction?, load_class?}`. Null/empty → legacy scalar threshold. |
 | `disturbance_counter` | **(v0.13.1+)** Optional 3-strike / rolling-window latch struct. |
-| `reconnection_params` | **(v0.13.1+)** Typed reconnection (`v_recover_pu`, `delay_ms`, `ramp_mw_per_min`, `manual_reset_required`). Opaque `reconnection_criteria` map retained. |
+| `reconnection_params` | **(v0.13.1+)** Typed reconnection (`v_recover_pu`, `delay_ms`, `ramp_mw_per_min`, `manual_reset_required`). **(v0.14.4+)** also `restore_fraction` in (0, 1] and `restore_time_s` (seconds), both null or both set. Not percentage points. Opaque `reconnection_criteria` map retained. |
+| `frequency_transfer_curve` | **(v0.14.4+)** Facility frequency stages `{f_hz, t_ms, polarity, action, mw_fraction?, load_class?}`. Same actions as the voltage curve. |
+| `ride_through_requirement` | **(v0.14.4+)** Must-remain-connected voltage and frequency bands. Separate from the facility transfer curves. |
 | `voltage_measurement` | **(v0.13.1+)** Measurement basis, filter `Tv` (ms), location, hysteresis. Default research filter ≈ 20 ms. |
 | `protection_settings_provenance` | **(v0.13.1+)** `site_verified` \| `oem_default` \| `study_assumption` plus optional `profile_id` / `effective_date`. |
 

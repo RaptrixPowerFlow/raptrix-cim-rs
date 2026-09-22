@@ -2,7 +2,7 @@
 
 ## Purpose
 
-raptrix-cim-rs turns CIM RDF/XML (including CGMES profile sets) into Arrow-native outputs for power-flow and related solver pipelines, with a locked **v0.14.0** Raptrix Power Interchange schema contract (`raptrix-cim-arrow` **0.7.0**; dual-read of v0.13.x).
+raptrix-cim-rs turns CIM RDF/XML (including CGMES profile sets) into Arrow-native outputs for power-flow and related solver pipelines, with a locked **v0.14.4** Raptrix Power Interchange schema contract (`raptrix-cim-arrow` **0.7.4**; readers accept v0.14.4 only).
 
 The architecture is IEC 61970 CIM 17+ based, with ENTSO-E CGMES v3.0.3 used as the public regression corpus.
 
@@ -24,16 +24,16 @@ The architecture is IEC 61970 CIM 17+ based, with ENTSO-E CGMES v3.0.3 used as t
 4. Resolve references needed for topology, voltages, and numeric rows (including optional BaseVoltage / geo joins).
 5. Collapse connectivity to solver-friendly topological buses when configured (default).
 6. Build Arrow arrays and RecordBatch values for the locked RPF root layout.
-7. Serialize with Raptrix schema metadata (`raptrix.version` / `rpf_version` = `v0.14.0`).
+7. Serialize with Raptrix schema metadata (`raptrix.version` / `rpf_version` = `v0.14.4`).
 
 Current serialization status:
 
 - Contract target container: `.rpf` Arrow IPC (streaming or memory-mapped).
-- Writers emit the locked v0.14.0 root; readers accept `v0.14.0` / `0.14.0` and retain v0.13.1 / v0.13.0 (pre-0.13 remains rejected).
+- Writers emit the locked v0.14.4 root; readers accept `v0.14.4` / `0.14.4` only.
 
 ## Core Modules
 
-- `raptrix-cim-arrow/src/schema.rs`: locked v0.14.0 table schemas, metadata constants, and table registry helpers.
+- `raptrix-cim-arrow/src/schema.rs`: locked v0.14.4 table schemas, metadata constants, and table registry helpers.
 - `raptrix-cim-arrow/src/io.rs`: generic `.rpf` root-file assembly, validation, and readback helpers.
 - `src/models`: CIM types and trait hierarchy.
 - `src/parser.rs`: parse helpers and profile-specific row mapping.

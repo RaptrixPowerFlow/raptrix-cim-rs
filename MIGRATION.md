@@ -4,6 +4,20 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 
 Copyright (c) 2026 Raptrix Power
 
+## v0.14.4 (readers accept only this stamp)
+
+Writers emit `v0.14.4`. `SUPPORTED_RPF_VERSIONS` is `v0.14.4` and `0.14.4` only. Re-emit any older file before reading it with this crate. `v0.15.0` is reserved for the first supported product freeze.
+
+| Area | What changed |
+| --- | --- |
+| `dc_lines_2w` | Still 15 columns. `p_setpoint_mw` stays rectifier DC power |
+| `dc_converters` | New table, always present. Zero rows when there are no terminals. `is_meter_end` does not move the setpoint |
+| `branches` | Trailing nullable `g_from`, `b_from`, `g_to`, `b_to` |
+| `computational_load_profiles` | `frequency_transfer_curve`, `ride_through_requirement`, `restore_fraction`, `restore_time_s` |
+| CIM writer | Null branch-end shunts, null new load fields, zero-row `dc_converters` |
+
+Details: [docs/dc-and-shunt-ends-0.14.4.md](docs/dc-and-shunt-ends-0.14.4.md).
+
 ## v0.14.3 (additive compatibility extension — dual-read of v0.14.2 / v0.14.1 / v0.14.0 / v0.13.x)
 
 Trailing nullable switched-shunt control on `switched_shunts`. Writers emit `v0.14.3`. Older files pad the new columns as null. CIM and PSLF leave both columns null.

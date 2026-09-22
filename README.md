@@ -115,7 +115,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 | Connectivity detail | `--connectivity-detail` | Granular ConnectivityNode bus mapping; emits optional `connectivity_groups` table |
 | Node-breaker | `--connectivity-detail --node-breaker` | Adds switch-topology detail tables for operational and viewer workflows |
 
-### Output tables (schema contract v0.14.3)
+### Output tables (schema contract v0.14.4)
 
 **18 canonical tables (always emitted):** `metadata`, `buses`, `branches`, `multi_section_lines`, `dc_lines_2w`, `generators`, `loads`, `fixed_shunts`, `switched_shunts`, `switched_shunt_banks`, `transformers_2w`, `transformers_3w`, `areas`, `zones`, `owners`, `contingencies`, `interfaces`, `dynamics_models`
 
@@ -131,6 +131,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 - `contingency_island_analysis` — optional contingency topology filter audit rows (v0.12.1+; API `RootWriteOptions.include_contingency_island_analysis`)
 - `protection_contingencies`, `topology_changes` — legacy compatibility tables (v0.11.0); optional when enabled; deprecated for new RAS writes
 - `contingency_sequences` — optional sequential N-1-1 pairs (v0.14.0+; API `RootWriteOptions.include_contingency_sequences`)
+- `dc_converters` — per-end DC terminals (v0.14.4+; emitted on every file, zero rows when the case has none; API `RootWriteOptions.include_dc_converters`, default true)
 
 RAS safety note: all public examples in this repository use synthetic demonstration data only. No CEII, utility identifiers, or protected topology data are included.
 
@@ -158,7 +159,7 @@ RAS safety note: all public examples in this repository use synthetic demonstrat
 
 ## Data Contract (Locked)
 
-- Current schema contract: **v0.14.3** (CGMES 3.0+ only). Additive switched-shunt control on the v0.14.2 tap-control cut: readers accept v0.14.3 and retain v0.14.2 / v0.14.1 / v0.14.0 / v0.13.x. Adds trailing nullable `shunt_control_mode` / `regulated_bus_id` on `switched_shunts`. CIM converters leave them null.
+- Current schema contract: **v0.14.4** (CGMES 3.0+ only). Readers accept `v0.14.4` / `0.14.4` only. Adds `dc_converters`, branch-end shunts `g_from` / `b_from` / `g_to` / `b_to`, and computational-load frequency / restore / requirement fields. `dc_lines_2w` stays 15 columns. CIM leaves the new shunt and load fields null.
 - Canonical source: raptrix-cim-arrow/src/schema.rs
 - Contract policy and semantics: docs/schema-contract.md
 - Plain-English field guide: [docs/rpf-field-guide.md](docs/rpf-field-guide.md)
@@ -172,9 +173,11 @@ RPF standardization here is intentional: it enables direct CIM-to-powerflow inte
 
 ### Versioning Policy
 
-Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is at schema **`v0.14.3`** and the converter crate release is **`0.7.3`**.
+Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is at schema **`v0.14.4`** and the converter crate release is **`0.7.4`**.
 
-Readers in this repository accept `v0.14.3` / `0.14.3` and retain `v0.14.2` / `0.14.2` / `v0.14.1` / `0.14.1` / `v0.14.0` / `0.14.0` / `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`. Pre-0.13 files must be re-emitted.
+Readers in this repository accept `v0.14.4` / `0.14.4` only. Other stamps must be re-emitted.
+
+**v0.14.4**: `dc_converters` plus trailing nullable branch-end shunts and computational-load frequency / restore / requirement fields. `p_setpoint_mw` stays rectifier DC power. See [docs/dc-and-shunt-ends-0.14.4.md](docs/dc-and-shunt-ends-0.14.4.md).
 
 **v0.14.3**: Trailing nullable `switched_shunts.shunt_control_mode` (`locked` / `discrete_voltage` / `continuous_voltage`) and `regulated_bus_id` (null = local). CIM / PSLF leave both null. MODSW ≥ 3 → null + `unknown_modsw`. Do not conflate with file-level `default_shunt_control_mode`.
 

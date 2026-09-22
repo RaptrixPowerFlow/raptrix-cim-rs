@@ -7,7 +7,15 @@ Copyright (c) 2026 Raptrix Power
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Arrow schema definitions for the Raptrix Power Interchange v0.14.3 profile.
+//! Arrow schema definitions for the Raptrix Power Interchange v0.14.4 profile.
+//!
+//! ## v0.14.4 — converter ends, branch-end shunts, CLP ride-through
+//! Readers accept `v0.14.4` / `0.14.4` only. `dc_lines_2w` stays 15 columns.
+//! Optional-per-end data lives in `dc_converters` (always emitted, zero rows
+//! allowed). `branches` gains trailing nullable `g_from` / `b_from` / `g_to` /
+//! `b_to`. `computational_load_profiles` gains `frequency_transfer_curve`,
+//! `ride_through_requirement`, and two children on `reconnection_params`.
+//! `v0.15.0` is reserved for the first supported product freeze.
 //!
 //! ## v0.14.3 — switched-shunt control (additive compatibility extension)
 //! Trailing nullable `shunt_control_mode` (Utf8 dict: `locked` /
@@ -124,22 +132,16 @@ use crate::shunt_control::shunt_control_fields;
 use crate::tap_control::tap_control_fields;
 
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / Raptrix Power Interchange v0.14.3 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow / Raptrix Power Interchange v0.14.4 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.";
 
 /// Canonical RPF format version tag embedded as file-level metadata.
-pub const RPF_VERSION: &str = "v0.14.3";
+pub const RPF_VERSION: &str = "v0.14.4";
 
 /// Supported RPF versions accepted by generic Arrow IPC readers.
 ///
-/// v0.14.3 is a compatibility-extension on v0.14.2 (trailing nullable
-/// switched-shunt control columns). Readers accept `v0.14.3` / `0.14.3` and
-/// retain `v0.14.2` / `0.14.2` / `v0.14.1` / `0.14.1` / `v0.14.0` / `0.14.0`
-/// plus `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`. Pre-0.13 files remain
-/// rejected. Older files pad new columns as null.
-pub const SUPPORTED_RPF_VERSIONS: &[&str] = &[
-    "v0.14.3", "0.14.3", "v0.14.2", "0.14.2", "v0.14.1", "0.14.1", "v0.14.0", "0.14.0", "v0.13.1",
-    "0.13.1", "v0.13.0", "0.13.0",
-];
+/// v0.14.4 is the only accepted stamp (`v0.14.4` and `0.14.4`). Every other
+/// stamp is rejected, including files written before this contract.
+pub const SUPPORTED_RPF_VERSIONS: &[&str] = &["v0.14.4", "0.14.4"];
 
 /// Closed vocabulary for `voltage_transfer_curve.polarity`.
 pub const VOLTAGE_TRANSFER_POLARITIES: &[&str] = &["under", "over"];
@@ -147,6 +149,15 @@ pub const VOLTAGE_TRANSFER_POLARITIES: &[&str] = &["under", "over"];
 pub const VOLTAGE_TRANSFER_ACTIONS: &[&str] = &["transfer", "trip", "partial_transfer"];
 /// Closed vocabulary for `voltage_transfer_curve.load_class`.
 pub const VOLTAGE_TRANSFER_LOAD_CLASSES: &[&str] = &["it", "mechanical", "all"];
+/// Closed vocabulary for `dc_converters.role`.
+pub const DC_CONVERTER_ROLES: &[&str] = &["rectifier", "inverter"];
+/// Closed vocabulary for `dc_converters.converter_kind`.
+pub const DC_CONVERTER_KINDS: &[&str] = &["lcc", "vsc"];
+/// Closed vocabulary for `dc_converters.ac_control`. Null is also valid.
+pub const DC_CONVERTER_AC_CONTROLS: &[&str] = &["v_ac", "q"];
+/// Writer warning when PSS/E `METER` is blank or not `R` / `I`.
+/// The flag stays false on both ends and `p_setpoint_mw` stays rectifier `SETVL`.
+pub const UNKNOWN_DC_METER_WARNING: &str = "unknown_dc_meter";
 /// Closed vocabulary for `voltage_measurement.basis`.
 pub const VOLTAGE_MEASUREMENT_BASES: &[&str] = &["positive_sequence_rms", "minimum_phase_rms"];
 /// Closed vocabulary for `voltage_measurement.location`.
@@ -308,6 +319,9 @@ pub const METADATA_KEY_FEATURE_CONTINGENCY_ISLAND_ANALYSIS: &str =
 /// File-level feature flag: optional `contingency_sequences` root table is present (v0.14.0+).
 pub const METADATA_KEY_FEATURE_CONTINGENCY_SEQUENCES: &str =
     "raptrix.features.contingency_sequences";
+/// File-level feature flag: `dc_converters` root table is present (v0.14.4+).
+/// Writers stamp `true` on every v0.14.4 file, including a zero-row table.
+pub const METADATA_KEY_FEATURE_DC_CONVERTERS: &str = "raptrix.features.dc_converters";
 /// Optional metadata key declaring canonical RAS schema mode (v0.12.1+).
 /// Current value: `canonical_v12`.
 pub const METADATA_KEY_RAS_SCHEMA_MODE: &str = "rpf.ras.schema_mode";
@@ -320,8 +334,10 @@ pub const TABLE_BUSES: &str = "buses";
 pub const TABLE_BRANCHES: &str = "branches";
 /// Canonical multi-section logical line table name (v0.8.8+).
 pub const TABLE_MULTI_SECTION_LINES: &str = "multi_section_lines";
-/// Canonical two-terminal DC line table name (v0.8.8+).
+/// Canonical two-terminal DC line table name (v0.8.8+). Width stays 15 in v0.14.4.
 pub const TABLE_DC_LINES_2W: &str = "dc_lines_2w";
+/// Per-end DC converter rows (v0.14.4+). Always emitted; zero rows when a case has no terminals.
+pub const TABLE_DC_CONVERTERS: &str = "dc_converters";
 /// Canonical generators table name.
 pub const TABLE_GENERATORS: &str = "generators";
 /// Canonical loads table name.
@@ -959,6 +975,13 @@ pub fn branches_schema() -> Schema {
             Field::new("is_bes", DataType::Boolean, true),
             Field::new("is_bps", DataType::Boolean, true),
             Field::new("is_bptf", DataType::Boolean, true),
+            // v0.14.4: per-end line shunts in pu on metadata.base_mva.
+            // Null = source has no per-end fields. buses.g_shunt / b_shunt stay the derived aggregate.
+            // b_shunt above remains total line charging.
+            Field::new("g_from", DataType::Float64, true),
+            Field::new("b_from", DataType::Float64, true),
+            Field::new("g_to", DataType::Float64, true),
+            Field::new("b_to", DataType::Float64, true),
         ],
         schema_metadata(),
     )
@@ -1016,6 +1039,46 @@ pub fn dc_lines_2w_schema() -> Schema {
         ],
         schema_metadata(),
     )
+}
+
+/// `dc_converters` table schema (v0.14.4+).
+///
+/// One row per AC terminal of a two-terminal line. `dc_lines_2w` stays the tie.
+/// `p_setpoint_mw` on the line is rectifier DC power even when `is_meter_end` is
+/// true on the inverter. Q(V) uses `n_bridges`, `ebas_kv`, `tr`, and `tap` only.
+pub fn dc_converters_schema() -> Schema {
+    Schema::new_with_metadata(
+        vec![
+            Field::new("dc_line_id", DataType::Int32, false),
+            Field::new("bus_id", DataType::Int32, false),
+            Field::new("role", DataType::Utf8, false),
+            Field::new("converter_kind", DataType::Utf8, false),
+            Field::new("n_bridges", DataType::Int32, true),
+            Field::new("ebas_kv", DataType::Float64, true),
+            Field::new("tr", DataType::Float64, true),
+            Field::new("tap", DataType::Float64, true),
+            Field::new("tap_min", DataType::Float64, true),
+            Field::new("tap_max", DataType::Float64, true),
+            Field::new("xc_ohm", DataType::Float64, true),
+            Field::new("alpha_deg", DataType::Float64, true),
+            Field::new("gamma_deg", DataType::Float64, true),
+            Field::new("is_meter_end", DataType::Boolean, false),
+            Field::new("ac_control", DataType::Utf8, true),
+            Field::new("ac_setpoint", DataType::Float64, true),
+            Field::new("q_min_mvar", DataType::Float64, true),
+            Field::new("q_max_mvar", DataType::Float64, true),
+            Field::new("s_max_mva", DataType::Float64, true),
+            Field::new("i_max_ka", DataType::Float64, true),
+            Field::new("loss_const_mw", DataType::Float64, true),
+            Field::new("loss_i_mw_per_ka", DataType::Float64, true),
+        ],
+        schema_metadata(),
+    )
+}
+
+/// Returns the `dc_converters` table schema in root-write order.
+pub fn dc_converter_table_schemas() -> Vec<(&'static str, Schema)> {
+    vec![(TABLE_DC_CONVERTERS, dc_converters_schema())]
 }
 
 /// `generators` table schema.
@@ -1582,7 +1645,81 @@ pub fn reconnection_params_struct_fields() -> Vec<Field> {
         Field::new("delay_ms", DataType::Float32, true),
         Field::new("ramp_mw_per_min", DataType::Float32, true),
         Field::new("manual_reset_required", DataType::Boolean, true),
+        // v0.14.4: both null, or both set. Fraction is (0, 1], not percentage points.
+        Field::new("restore_fraction", DataType::Float32, true),
+        Field::new("restore_time_s", DataType::Float32, true),
     ]
+}
+
+/// Named fields for one `frequency_transfer_curve` stage (v0.14.4+).
+/// Same stage shape as voltage, with the threshold in absolute hertz.
+pub fn frequency_transfer_curve_element_fields() -> Vec<Field> {
+    vec![
+        Field::new("f_hz", DataType::Float32, false),
+        Field::new("t_ms", DataType::Float32, false),
+        Field::new("polarity", dict_utf8(), false),
+        Field::new("action", dict_utf8(), false),
+        Field::new("mw_fraction", DataType::Float32, true),
+        Field::new("load_class", dict_utf8(), true),
+    ]
+}
+
+/// `List<Struct{...}>` for multi-stage frequency transfer curves.
+pub fn frequency_transfer_curve_list_type() -> DataType {
+    DataType::List(Arc::new(Field::new(
+        "item",
+        DataType::Struct(frequency_transfer_curve_element_fields().into()),
+        false,
+    )))
+}
+
+pub(crate) fn ride_through_voltage_band_fields() -> Vec<Field> {
+    vec![
+        Field::new("v_low_pu", DataType::Float32, false),
+        Field::new("v_high_pu", DataType::Float32, false),
+        Field::new("t_ms", DataType::Float32, true),
+    ]
+}
+
+pub(crate) fn ride_through_frequency_band_fields() -> Vec<Field> {
+    vec![
+        Field::new("f_low_hz", DataType::Float32, false),
+        Field::new("f_high_hz", DataType::Float32, false),
+        Field::new("t_ms", DataType::Float32, true),
+    ]
+}
+
+/// Named fields for nullable `ride_through_requirement` (v0.14.4+).
+///
+/// This is the must-remain-connected envelope. It is separate from
+/// `voltage_transfer_curve` / `frequency_transfer_curve`, which record what the
+/// facility is set to do.
+pub fn ride_through_requirement_struct_fields() -> Vec<Field> {
+    vec![
+        Field::new(
+            "voltage_bands",
+            DataType::List(Arc::new(Field::new(
+                "item",
+                DataType::Struct(ride_through_voltage_band_fields().into()),
+                false,
+            ))),
+            true,
+        ),
+        Field::new(
+            "frequency_bands",
+            DataType::List(Arc::new(Field::new(
+                "item",
+                DataType::Struct(ride_through_frequency_band_fields().into()),
+                false,
+            ))),
+            true,
+        ),
+    ]
+}
+
+/// Nullable struct type for `ride_through_requirement`.
+pub fn ride_through_requirement_struct_type() -> DataType {
+    DataType::Struct(ride_through_requirement_struct_fields().into())
 }
 
 /// Nullable struct type for `reconnection_params`.
@@ -1671,7 +1808,7 @@ pub fn computational_load_profiles_schema() -> Schema {
             Field::new("transfer_delay_ms", DataType::Float32, true),
             Field::new("reconnection_criteria", map_string_f64(), true),
             Field::new("ride_through_capability", map_string_f64(), true),
-            // v0.13.1 Ashburn-class typed protection extensions (trailing only)
+            // v0.13.1 typed protection extensions (trailing only)
             Field::new(
                 "voltage_transfer_curve",
                 voltage_transfer_curve_list_type(),
@@ -1695,6 +1832,18 @@ pub fn computational_load_profiles_schema() -> Schema {
             Field::new(
                 "protection_settings_provenance",
                 protection_settings_provenance_struct_type(),
+                true,
+            ),
+            // v0.14.4: facility frequency behavior, sibling of voltage_transfer_curve.
+            Field::new(
+                "frequency_transfer_curve",
+                frequency_transfer_curve_list_type(),
+                true,
+            ),
+            // v0.14.4: must-remain-connected envelope. Not the facility transfer curve.
+            Field::new(
+                "ride_through_requirement",
+                ride_through_requirement_struct_type(),
                 true,
             ),
         ],
@@ -2044,6 +2193,7 @@ pub fn table_schema(table_name: &str) -> Option<Schema> {
         TABLE_BRANCHES => Some(branches_schema()),
         TABLE_MULTI_SECTION_LINES => Some(multi_section_lines_schema()),
         TABLE_DC_LINES_2W => Some(dc_lines_2w_schema()),
+        TABLE_DC_CONVERTERS => Some(dc_converters_schema()),
         TABLE_GENERATORS => Some(generators_schema()),
         TABLE_SCENARIO_CONTEXT => Some(scenario_context_schema()),
         TABLE_LOADS => Some(loads_schema()),
@@ -2215,10 +2365,11 @@ pub fn branch_schema() -> Schema {
 mod tests {
     use super::{
         RPF_VERSION, SCHEMA_VERSION, SUPPORTED_RPF_VERSIONS, all_table_schemas, branches_schema,
-        buses_schema, contingencies_schema, diagram_objects_schema, diagram_points_schema,
-        dict_utf8, dynamics_models_schema, facts_devices_schema, facts_solved_schema,
-        generators_schema, loads_schema, normalize_facts_device_type, perc1_params_struct_type,
-        table_schema,
+        buses_schema, contingencies_schema, dc_converters_schema, dc_lines_2w_schema,
+        diagram_objects_schema, diagram_points_schema, dict_utf8, dynamics_models_schema,
+        facts_devices_schema, facts_solved_schema, generators_schema, loads_schema,
+        normalize_facts_device_type, perc1_params_struct_type, reconnection_params_struct_fields,
+        reconnection_params_struct_type, table_schema,
     };
     use arrow::datatypes::DataType;
 
@@ -2284,31 +2435,38 @@ mod tests {
             "contingency_sequences must resolve via table_schema()"
         );
         assert!(
+            table_schema("dc_converters").is_some(),
+            "dc_converters must resolve via table_schema()"
+        );
+        assert!(
             !all.iter().any(|(n, _)| *n == "protection_contingencies"
                 || *n == "topology_changes"
                 || *n == "remedial_action_schemes"
                 || *n == "contingency_island_analysis"
-                || *n == "contingency_sequences"),
-            "optional RAS/protection/island/sequence tables must NOT appear in all_table_schemas()"
+                || *n == "contingency_sequences"
+                || *n == "dc_converters"),
+            "optional extension tables must NOT appear in all_table_schemas()"
         );
 
-        // version gate: v0.14.3 dual-reads 0.14.2 / 0.14.1 / 0.14.0 / 0.13.x; pre-0.13 rejected
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.14.3"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.14.3"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.14.2"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.14.2"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.14.1"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.14.1"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.14.0"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.14.0"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.13.1"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.13.1"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"v0.13.0"));
-        assert!(SUPPORTED_RPF_VERSIONS.contains(&"0.13.0"));
-        assert!(!SUPPORTED_RPF_VERSIONS.contains(&"v0.12.5"));
-        assert_eq!(SUPPORTED_RPF_VERSIONS.len(), 12);
-        assert_eq!(RPF_VERSION, "v0.14.3");
+        assert_eq!(SUPPORTED_RPF_VERSIONS, &["v0.14.4", "0.14.4"]);
+        assert!(!SUPPORTED_RPF_VERSIONS.contains(&"v0.14.3"));
+        assert!(!SUPPORTED_RPF_VERSIONS.contains(&"v0.13.0"));
+        assert_eq!(RPF_VERSION, "v0.14.4");
         assert_eq!(SCHEMA_VERSION, RPF_VERSION);
+        assert_eq!(dc_lines_2w_schema().fields().len(), 15);
+        assert_eq!(dc_converters_schema().fields().len(), 22);
+        assert_eq!(
+            reconnection_params_struct_fields()[4].name(),
+            "restore_fraction"
+        );
+        assert_eq!(
+            reconnection_params_struct_fields()[5].name(),
+            "restore_time_s"
+        );
+        assert_ne!(
+            DataType::Struct(reconnection_params_struct_fields()[..4].to_vec().into()),
+            reconnection_params_struct_type()
+        );
     }
 
     #[test]
@@ -2699,7 +2857,9 @@ mod tests {
         assert_eq!(names[ride_idx + 3], "reconnection_params");
         assert_eq!(names[ride_idx + 4], "voltage_measurement");
         assert_eq!(names[ride_idx + 5], "protection_settings_provenance");
-        assert_eq!(cl.fields().len(), ride_idx + 6);
+        assert_eq!(names[ride_idx + 6], "frequency_transfer_curve");
+        assert_eq!(names[ride_idx + 7], "ride_through_requirement");
+        assert_eq!(cl.fields().len(), ride_idx + 8);
         assert!(matches!(
             cl.field_with_name("voltage_transfer_curve")
                 .unwrap()
@@ -2775,7 +2935,7 @@ mod tests {
     #[test]
     fn branches_schema_appends_facts_columns() {
         let branches = branches_schema();
-        assert_eq!(branches.fields().len(), 32);
+        assert_eq!(branches.fields().len(), 36);
         assert_eq!(branches.field(17).name(), "device_type");
         assert_eq!(branches.field(18).name(), "control_mode");
         assert_eq!(branches.field(19).name(), "control_target_flow_mw");
@@ -2793,6 +2953,13 @@ mod tests {
         assert_eq!(branches.field(30).name(), "is_bps");
         assert_eq!(branches.field(31).name(), "is_bptf");
         assert!(branches.field(31).is_nullable());
+        assert_eq!(branches.field(32).name(), "g_from");
+        assert_eq!(branches.field(33).name(), "b_from");
+        assert_eq!(branches.field(34).name(), "g_to");
+        assert_eq!(branches.field(35).name(), "b_to");
+        assert_eq!(branches.field(32).data_type(), &DataType::Float64);
+        assert!(branches.field(35).is_nullable());
+        assert_eq!(branches.field(6).name(), "b_shunt");
     }
 
     #[test]

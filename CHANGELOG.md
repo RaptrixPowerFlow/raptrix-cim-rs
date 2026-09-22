@@ -11,6 +11,12 @@ Copyright (c) 2026 Raptrix Power
 
 ## Unreleased
 
+## Converter 0.7.4 — RPF v0.14.4 converter ends, branch-end shunts, load ride-through (2026-09-22)
+
+### Converter release: Crate version 0.7.4 (raptrix-cim-arrow) / 0.7.4 (raptrix-cim-rs) | Arrow schema v0.14.4
+
+Writers emit **v0.14.4**. Readers accept **`v0.14.4` / `0.14.4` only**. `dc_lines_2w` stays 15 columns. New root table `dc_converters` (always emitted; zero rows when a case has no terminals) carries per-end bridge count, commutating kV, ratio, tap, stored commutating reactance and angles, `is_meter_end`, and nullable VSC carriage. `is_meter_end` does not move `p_setpoint_mw`. `branches` gains nullable `g_from` / `b_from` / `g_to` / `b_to`. `computational_load_profiles` gains `frequency_transfer_curve`, `ride_through_requirement`, and restore fraction / time on `reconnection_params`. CIM leaves branch-end shunts and the new load fields null, and writes a zero-row converter table. See `docs/dc-and-shunt-ends-0.14.4.md`.
+
 ## Converter 0.7.3 — RPF v0.14.3 switched-shunt control (2026-09-09)
 
 ### Converter release: Crate version 0.7.3 (raptrix-cim-arrow) / 0.7.3 (raptrix-cim-rs) | Arrow schema v0.14.3
@@ -104,7 +110,7 @@ Copyright (c) 2026 Raptrix Power
   (`cargo run -p raptrix-cim-arrow --example read_rpf -- <path.rpf>`) that reports per-table row/
   column counts or a full error chain, for triaging exactly this class of real-world file issue.
 
-## Converter 0.6.2 — RPF v0.13.1 Ashburn-class transfer curves (2026-08-03)
+## Converter 0.6.2 — RPF v0.13.1 facility transfer curves (2026-08-03)
 
 ### Converter release: Crate version 0.6.2 (raptrix-cim-arrow) / 0.6.2 (raptrix-cim-rs) | Arrow schema v0.13.1
 

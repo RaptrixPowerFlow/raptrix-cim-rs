@@ -2139,6 +2139,7 @@ pub fn write_complete_rpf_with_options(
             include_protection_contingencies: false,
             include_topology_changes: false,
             include_contingency_sequences: false,
+            include_dc_converters: true,
         },
         &additional_root_metadata,
     )?;
@@ -3014,6 +3015,33 @@ fn parse_eq_topology_rows(
                 .and_then(|topo_key| equipment_base_voltage_by_mrid.get(*topo_key))
         });
         let Some(base_voltage_mrid) = base_voltage_mrid else {
+            continue;
+        };
+        let Some(nominal_kv) = base_voltage_by_mrid.get(base_voltage_mrid).copied() else {
+            continue;
+        };
+        bus_nominal_kv_by_key.insert(*bus_key, nominal_kv);
+        bus_voltage_label_by_key.insert(*bus_key, format_kv_label(nominal_kv));
+    }
+
+    // A busbar ConnectivityNode often has no equipment BaseVoltage. Its
+    // VoltageLevel does. Use that only when the bus still has no kV.
+    let mut container_by_connectivity: HashMap<&str, &str> = HashMap::new();
+    for node in &connectivity_nodes {
+        if let Some(container) = node.container_mrid.as_deref() {
+            container_by_connectivity
+                .entry(node.connectivity_node_mrid.as_str())
+                .or_insert(container);
+        }
+    }
+    for bus_key in &sorted_bus_keys {
+        if bus_nominal_kv_by_key.contains_key(*bus_key) {
+            continue;
+        }
+        let Some(container) = container_by_connectivity.get(*bus_key) else {
+            continue;
+        };
+        let Some(base_voltage_mrid) = equipment_base_voltage_by_mrid.get(*container) else {
             continue;
         };
         let Some(nominal_kv) = base_voltage_by_mrid.get(base_voltage_mrid).copied() else {
@@ -4689,6 +4717,11 @@ fn build_branches_batch(rows: &[BranchRow<'_>]) -> Result<RecordBatch> {
         new_null_array(schema.field(29).data_type(), rows.len()),
         new_null_array(schema.field(30).data_type(), rows.len()),
         new_null_array(schema.field(31).data_type(), rows.len()),
+        // v0.14.4: CIM has no per-end GI/BI/GJ/BJ. Charging stays on b_shunt.
+        new_null_array(schema.field(32).data_type(), rows.len()),
+        new_null_array(schema.field(33).data_type(), rows.len()),
+        new_null_array(schema.field(34).data_type(), rows.len()),
+        new_null_array(schema.field(35).data_type(), rows.len()),
     ];
 
     RecordBatch::try_new(schema, arrays).context("failed to build branches record batch")
@@ -5789,10 +5822,11 @@ mod tests {
 
         let summary = summarize_rpf(&output_path)?;
         assert!(summary.has_all_canonical_tables);
-        assert_eq!(summary.tables.len(), all_table_schemas().len());
-        assert_eq!(summary.total_batches, all_table_schemas().len());
+        assert_eq!(summary.tables.len(), all_table_schemas().len() + 1);
+        assert_eq!(summary.total_batches, all_table_schemas().len() + 1);
         assert_eq!(summary.table_rows("branches"), Some(2));
         assert_eq!(summary.table_rows("buses"), Some(4));
+        assert_eq!(summary.table_rows("dc_converters"), Some(0));
 
         Ok(())
     }
@@ -5843,12 +5877,13 @@ mod tests {
         write_complete_rpf(&[&eq_path_str], &output_path_str)?;
 
         let tables = read_rpf_tables(&output_path)?;
-        assert_eq!(tables.len(), all_table_schemas().len());
+        assert_eq!(tables.len(), all_table_schemas().len() + 1);
 
-        let expected_table_names: Vec<String> = all_table_schemas()
+        let mut expected_table_names: Vec<String> = all_table_schemas()
             .into_iter()
             .map(|(name, _)| name.to_string())
             .collect();
+        expected_table_names.push("dc_converters".to_string());
         let actual_table_names: Vec<String> = tables.iter().map(|(name, _)| name.clone()).collect();
         assert_eq!(actual_table_names, expected_table_names);
 
@@ -6008,7 +6043,7 @@ mod tests {
             .map(|(_, batch)| batch)
             .context("expected branches batch in perf round-trip output")?;
 
-        assert_eq!(tables.len(), all_table_schemas().len());
+        assert_eq!(tables.len(), all_table_schemas().len() + 1);
         assert_eq!(branches_batch.num_rows(), branch_count);
 
         println!("RPF write: {} branches in {} ms", branch_count, write_ms,);
@@ -6058,7 +6093,7 @@ mod tests {
             .map(|(_, batch)| batch)
             .context("expected branches batch in 10k perf round-trip output")?;
 
-        assert_eq!(tables.len(), all_table_schemas().len());
+        assert_eq!(tables.len(), all_table_schemas().len() + 1);
         assert_eq!(branches_batch.num_rows(), branch_count);
 
         println!(

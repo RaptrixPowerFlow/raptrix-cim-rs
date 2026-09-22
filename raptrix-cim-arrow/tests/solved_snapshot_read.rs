@@ -7,7 +7,7 @@ Copyright (c) 2026 Raptrix Power
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Solved-snapshot dialect read-compatibility tests (v0.13.0 contract).
+//! Solved-snapshot dialect read tests for the v0.14.4 contract.
 //!
 //! Current PowerFlow solved-snapshot exports differ from the canonical writer
 //! layout in documented, read-tolerated ways:
@@ -23,7 +23,7 @@ Copyright (c) 2026 Raptrix Power
 //!   appended.
 //!
 //! The fixture built here is fully synthetic (no real network data).
-//! Pre-v0.13.0 version stamps are rejected (clean-cut gate).
+//! The file stamp is v0.14.4. Any other stamp is rejected.
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -268,6 +268,12 @@ fn write_synthetic_solved_snapshot(path: &std::path::Path, version: &str) -> Res
             overrides: vec![],
         },
         FixtureTable {
+            name: "dc_converters",
+            fields: canonical("dc_converters"),
+            rows: 0,
+            overrides: vec![],
+        },
+        FixtureTable {
             name: "feasibility_certificate_buses",
             fields: snapshotize_schema(&feasibility_certificate_buses_schema()),
             rows: 0,
@@ -317,11 +323,11 @@ fn write_synthetic_solved_snapshot(path: &std::path::Path, version: &str) -> Res
 }
 
 #[test]
-fn reads_synthetic_v0130_solved_snapshot_layout() -> Result<()> {
-    let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_v0130_snapshot_read");
+fn reads_synthetic_solved_snapshot_layout() -> Result<()> {
+    let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_v0144_snapshot_read");
     std::fs::create_dir_all(&tmp_dir)?;
-    let path = tmp_dir.join("synthetic_v0130_solved_snapshot.rpf");
-    write_synthetic_solved_snapshot(&path, "v0.13.0")?;
+    let path = tmp_dir.join("synthetic_v0144_solved_snapshot.rpf");
+    write_synthetic_solved_snapshot(&path, "v0.14.4")?;
 
     let tables = read_rpf_tables(&path)?;
     let by_name: HashMap<&str, &RecordBatch> = tables
@@ -371,6 +377,10 @@ fn reads_synthetic_v0130_solved_snapshot_layout() -> Result<()> {
     let dc = by_name.get("dc_lines_2w").context("dc_lines_2w missing")?;
     assert_eq!(dc.schema().fields().len(), 11);
     assert_eq!(dc.schema().field(4).name(), "is_vsc");
+    let converters = by_name
+        .get("dc_converters")
+        .context("dc_converters missing")?;
+    assert_eq!(converters.num_rows(), 0);
 
     let banks = by_name
         .get("switched_shunt_banks")

@@ -207,6 +207,8 @@ pub struct SwitchSpec {
 pub struct ConnectivityNodeSpec {
     pub connectivity_node_mrid: String,
     pub topological_node_mrid: Option<String>,
+    /// `ConnectivityNode.ConnectivityNodeContainer`, usually a VoltageLevel.
+    pub container_mrid: Option<String>,
 }
 
 /// Parsed dynamic-model payload used for DY-profile-driven dynamics rows.
@@ -332,6 +334,7 @@ pub fn equipment_base_voltage_refs_from_reader<R: Read>(
         "cim:NonConformLoad",
         "cim:PowerTransformer",
         "cim:TopologicalNode",
+        "cim:VoltageLevel",
     ] {
         if !contains_exact_element_tag(&xml, tag) {
             continue;
@@ -347,6 +350,7 @@ pub fn equipment_base_voltage_refs_from_reader<R: Read>(
                 .conducting_equipment_base_voltage
                 .or(raw.equipment_base_voltage)
                 .or(raw.topological_node_base_voltage)
+                .or(raw.voltage_level_base_voltage)
             else {
                 continue;
             };
@@ -812,6 +816,10 @@ pub fn connectivity_nodes_from_reader<R: Read>(mut reader: R) -> Result<Vec<Conn
             connectivity_node_mrid,
             topological_node_mrid: node
                 .topological_node
+                .as_ref()
+                .map(|reference| normalize_cgmes_ref(&reference.resource)),
+            container_mrid: node
+                .container
                 .as_ref()
                 .map(|reference| normalize_cgmes_ref(&reference.resource)),
         });
@@ -1375,6 +1383,8 @@ struct RawConnectivityNode {
     about: Option<String>,
     #[serde(rename = "ConnectivityNode.TopologicalNode", default)]
     topological_node: Option<RdfResourceRef>,
+    #[serde(rename = "ConnectivityNode.ConnectivityNodeContainer", default)]
+    container: Option<RdfResourceRef>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1435,6 +1445,8 @@ struct RawEquipmentBaseVoltageRef {
         default
     )]
     topological_node_base_voltage: Option<RdfResourceRef>,
+    #[serde(rename = "VoltageLevel.BaseVoltage", default)]
+    voltage_level_base_voltage: Option<RdfResourceRef>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1814,6 +1826,25 @@ mod tests {
     use super::*;
     use crate::models::base::IdentifiedObject;
     use std::time::Instant;
+
+    #[test]
+    fn voltage_level_supplies_connectivity_node_container() {
+        let xml = r##"
+            <cim:VoltageLevel rdf:ID="_vl">
+              <cim:VoltageLevel.BaseVoltage rdf:resource="#_bv"/>
+            </cim:VoltageLevel>
+            <cim:ConnectivityNode rdf:ID="_cn">
+              <cim:ConnectivityNode.ConnectivityNodeContainer rdf:resource="#_vl"/>
+            </cim:ConnectivityNode>
+        "##;
+        let levels = equipment_base_voltage_refs_from_reader(std::io::Cursor::new(xml)).unwrap();
+        assert_eq!(levels.len(), 1);
+        assert_eq!(levels[0].equipment_mrid, "_vl");
+        assert_eq!(levels[0].base_voltage_mrid, "_bv");
+        let nodes = connectivity_nodes_from_reader(std::io::Cursor::new(xml)).unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].container_mrid.as_deref(), Some("_vl"));
+    }
 
     #[test]
     fn parse_ac_line_segment_full() {

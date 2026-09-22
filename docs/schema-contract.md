@@ -3,13 +3,21 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 Copyright (c) 2026 Raptrix Power
 -->
 
-# Schema Contract (Locked contract: v0.14.3 — CGMES 3.0+ Only; dual-read v0.14.2 / v0.14.1 / v0.14.0 / v0.13.x)
+# Schema Contract (Locked contract: v0.14.4 — CGMES 3.0+ Only)
 
 This repository is the authoritative source of truth for the Raptrix Power Interchange (`.rpf`) wire contract used by CIM-first conversion pipelines.
 
-**v0.14.3** is the current contract release (switched-shunt control on the v0.14.2 tap-control cut). `SUPPORTED_RPF_VERSIONS` accepts **`v0.14.3` / `0.14.3` and retains `v0.14.2` / `0.14.2` / `v0.14.1` / `0.14.1` / `v0.14.0` / `0.14.0` / `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`**. Pre-0.13 files remain rejected. Older files pad new trailing columns as null.
+**v0.14.4** is the current contract. `SUPPORTED_RPF_VERSIONS` accepts **`v0.14.4` / `0.14.4` only**. Any other stamp is rejected. `v0.15.0` is reserved for the first supported product freeze.
 
-See [switched-shunt-control-0.14.3.md](switched-shunt-control-0.14.3.md) for the accepted note. Do not implement Q-band / `discrete_reactive` in this revision. Do not conflate per-device `shunt_control_mode` with file-level `default_shunt_control_mode`.
+See [dc-and-shunt-ends-0.14.4.md](dc-and-shunt-ends-0.14.4.md). Switched-shunt control from v0.14.3 remains in force: do not implement Q-band / `discrete_reactive` in this revision, and do not conflate per-device `shunt_control_mode` with file-level `default_shunt_control_mode`.
+
+## v0.14.4
+
+- `dc_lines_2w` stays 15 columns. `p_setpoint_mw` is rectifier DC power, including when `dc_converters.is_meter_end` is true on the inverter.
+- `dc_converters` is emitted on every v0.14.4 file (zero rows when there are no terminals). A missing table fails validation. Feature flag `raptrix.features.dc_converters=true`.
+- `branches` gains trailing nullable `g_from`, `b_from`, `g_to`, `b_to` (pu on `base_mva`). `b_shunt` remains line charging. Bus shunt aggregates stay derived.
+- `computational_load_profiles` gains `frequency_transfer_curve`, `ride_through_requirement`, and `reconnection_params.restore_fraction` / `restore_time_s`.
+- The 11-column `dc_lines_2w` snapshot dialect is unchanged.
 
 ## v0.14.3 Additive Changes
 
@@ -360,7 +368,7 @@ The solver (`raptrix-core`) holds a **projection** of an `.rpf` — only the ele
 - Breaking file-format changes (required column rename/removal/reorder, required table rename/removal/reorder, type change for required fields) require a MAJOR contract bump.
 - Additive changes (new optional columns, new optional tables, new optional metadata keys) require at least a MINOR bump.
 - PATCH bumps are reserved for non-structural fixes: bug fixes, metadata text fixes, and documentation clarifications without wire-shape changes.
-- **Compatibility-extension exception (v0.13.1):** trailing nullable columns on `computational_load_profiles` for Ashburn-class voltage-transfer curves are stamped as `v0.13.1` while dual-reading `v0.13.0`. This is an explicit exception to the MINOR-bump rule above, documented because conforming readers already ignore unknown trailing columns and a clean-cut `0.14.0` would force unnecessary case re-exports. Future additive work should prefer a true MINOR (`0.14.0+`) unless the same dual-read exception is re-approved.
+- The v0.13.1 computational-load columns were a one-release stamp. Current readers accept `v0.14.4` / `0.14.4` only. `v0.15.0` is the first supported product freeze.
 
 ## 0.9.3 Nominal-kV Guidance
 
@@ -377,8 +385,8 @@ Every `.rpf` file must include:
 
 Current locked values:
 
-- `raptrix.version = 0.14.3` (writers); readers also accept `v0.14.3` / `0.14.3` / `v0.14.2` / `0.14.2` / `v0.14.1` / `0.14.1` / `v0.14.0` / `0.14.0` / `v0.13.1` / `0.13.1` / `v0.13.0` / `0.13.0`
-- `raptrix.branding = Raptrix CIM-Arrow / Raptrix Power Interchange v0.14.3 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.`
+- `raptrix.version = v0.14.4` (writers). Readers accept `v0.14.4` / `0.14.4` only.
+- `raptrix.branding = Raptrix CIM-Arrow / Raptrix Power Interchange v0.14.4 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.`
 - `rpf.case_fingerprint = <required deterministic case identity fingerprint>`
 - `rpf.validation_mode = topology_only | solved_ready`
 - `rpf.case_mode = flat_start_planning | warm_start_planning | solved_snapshot | hour_ahead_advisory` (v0.8.4+, required; `hour_ahead_advisory` added in v0.9.0)
@@ -399,6 +407,7 @@ Optional file-level metadata keys:
 - `raptrix.features.remedial_action_schemes = true` when optional `remedial_action_schemes` table is emitted (v0.12.1+)
 - `raptrix.features.contingency_island_analysis = true` when optional `contingency_island_analysis` table is emitted (v0.12.1+)
 - `raptrix.features.contingency_sequences = true` when optional `contingency_sequences` table is emitted (v0.14.0+)
+- `raptrix.features.dc_converters = true` when `dc_converters` is present (every v0.14.4 file, including zero rows)
 - `rpf.ras.schema_mode = canonical_v12` when canonical v0.12 RAS rows are emitted (v0.12.1+)
 - `rpf.mrid_support = v1` when stable equipment `mrid` columns are present in table schemas (v0.12.2+)
 - `rpf.rows.<table_name> = <row_count>` for each emitted table

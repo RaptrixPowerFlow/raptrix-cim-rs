@@ -534,6 +534,10 @@ fn branches_batch() -> Result<RecordBatch> {
             new_null_array(&DataType::Boolean, n),
             new_null_array(&DataType::Boolean, n),
             new_null_array(&DataType::Boolean, n),
+            new_null_array(&DataType::Float64, n),
+            new_null_array(&DataType::Float64, n),
+            new_null_array(&DataType::Float64, n),
+            new_null_array(&DataType::Float64, n),
         ],
     )
     .context("branches batch")

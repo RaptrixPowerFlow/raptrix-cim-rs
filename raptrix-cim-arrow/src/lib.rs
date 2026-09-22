@@ -32,6 +32,7 @@
 pub mod computational_load;
 pub mod contingencies;
 pub mod contingency_sequences;
+pub mod dc_converter;
 pub mod dynamics;
 pub mod facility_membership;
 pub mod ffi;
@@ -44,8 +45,10 @@ pub mod tap_control;
 
 pub use computational_load::{
     BuildoutEntry, ComputationalLoadProfileRow, DisturbanceCounter, FACILITY_CLASSES,
-    ProtectionSettingsProvenance, ReconnectionParams, SeasonalEnvelopeEntry, VoltageMeasurement,
-    VoltageTransferCurveStage, build_computational_load_profiles_batch,
+    FrequencyTransferCurveStage, ProtectionSettingsProvenance, ReconnectionParams,
+    RideThroughFrequencyBand, RideThroughRequirement, RideThroughVoltageBand,
+    SeasonalEnvelopeEntry, VoltageMeasurement, VoltageTransferCurveStage,
+    build_computational_load_profiles_batch, canonicalize_frequency_transfer_curve,
     canonicalize_voltage_transfer_curve, patch_metadata_computational_load_mode,
     validate_computational_load_profiles_batch,
 };
@@ -57,6 +60,9 @@ pub use contingencies::{
 pub use contingency_sequences::{
     ContingencySequenceRow, SequenceFkContext, build_contingency_sequences_batch,
     read_contingency_sequences_batch, validate_contingency_sequences_batch,
+};
+pub use dc_converter::{
+    DcConverterRow, build_dc_converters_batch, empty_dc_converters_batch, validate_dc_converters,
 };
 pub use dynamics::{
     ClassicalParams, DynamicsModelRow as DynamicsModelRowFull, Perc1Params,
