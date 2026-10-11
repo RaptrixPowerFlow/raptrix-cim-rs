@@ -960,6 +960,9 @@ Ordered N-1-1 pairs. v0.14 writers MAY omit this table. Endpoints SHOULD be sing
 
 ### dynamics_models
 
+CIM DY ingestion (CGMES 3.0 / CIM100 and CIM16-namespace Dynamics files) resolves exciter, governor, and stabilizer blocks to the equipment mRID and, when `dyn_dictionary` has a 1:1 class, writes the PSS/E `model_type` with `source_dy=1`. Classes without a PSS/E equivalent keep the CIM class name and `psse_equiv=0`. `classical_params` is filled for machine rows. Vendor classes enter through `convert --dy-extension-map`.
+
+
 - `bus_id`: Int32, required
 - `gen_id`: Dictionary<Int32, Utf8>, required
 - `model_type`: Dictionary<Int32, Utf8>, required

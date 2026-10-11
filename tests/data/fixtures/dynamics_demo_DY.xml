@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/CIM100#">
+  <cim:SynchronousMachineTimeConstantReactance rdf:ID="SMD1">
+    <cim:SynchronousMachineDynamics.SynchronousMachine rdf:resource="#_GEN"/>
+    <cim:RotatingMachineDynamics.inertia>4.2</cim:RotatingMachineDynamics.inertia>
+    <cim:RotatingMachineDynamics.damping>0.0</cim:RotatingMachineDynamics.damping>
+    <cim:SynchronousMachineTimeConstantReactance.xDirectTrans>0.30</cim:SynchronousMachineTimeConstantReactance.xDirectTrans>
+    <cim:SynchronousMachineTimeConstantReactance.rotorType>roundRotor</cim:SynchronousMachineTimeConstantReactance.rotorType>
+  </cim:SynchronousMachineTimeConstantReactance>
+  <cim:ExcIEEEST4B rdf:ID="AVR1">
+    <cim:ExcitationSystemDynamics.SynchronousMachineDynamics rdf:resource="#SMD1"/>
+    <cim:ExcIEEEST4B.tr>0.02</cim:ExcIEEEST4B.tr>
+    <cim:ExcIEEEST4B.kpr>20.0</cim:ExcIEEEST4B.kpr>
+  </cim:ExcIEEEST4B>
+  <cim:GovCT1 rdf:ID="GOV1">
+    <cim:TurbineGovernorDynamics.SynchronousMachineDynamics rdf:resource="#SMD1"/>
+    <cim:GovCT1.r>0.05</cim:GovCT1.r>
+  </cim:GovCT1>
+</rdf:RDF>

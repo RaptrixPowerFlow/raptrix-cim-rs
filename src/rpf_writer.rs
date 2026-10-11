@@ -5638,6 +5638,47 @@ fn build_contingencies_batch(rows: &[ContingencyRow<'_>]) -> Result<RecordBatch>
 /// drift on `dynamics_models` wire encoding. `perc1_params` is always null here (stub-generation
 /// never derives PERC1 data); `classical_params` is populated when the caller's row snapshot has
 /// one (see `dynamics_rows_from_generators_and_dy`).
+fn classical_params_from_row(
+    model_type: &str,
+    params: &[(Cow<'_, str>, f64)],
+) -> Option<raptrix_cim_arrow::dynamics::ClassicalParams> {
+    let machine = matches!(
+        model_type,
+        "GENROU"
+            | "GENROE"
+            | "GENSAL"
+            | "GENSAE"
+            | "GENCLS"
+            | "SynchronousMachineDynamics"
+            | "SynchronousMachineTimeConstantReactance"
+            | "SynchronousMachineDetailed"
+            | "SYNC_MACHINE_EQ"
+    );
+    if !machine {
+        return None;
+    }
+    let get = |names: &[&str]| {
+        params
+            .iter()
+            .find(|(k, _)| names.iter().any(|n| k.eq_ignore_ascii_case(n)))
+            .map(|(_, v)| *v)
+            .filter(|v| v.is_finite())
+    };
+    let h = get(&["H", "h", "inertia"]);
+    let d = get(&["D", "d", "damping"]);
+    let xd = get(&["xd_prime", "xdprime"]);
+    let mbase = get(&["mbase_mva", "mbase"]);
+    if h.is_none() && d.is_none() && xd.is_none() && mbase.is_none() {
+        return None;
+    }
+    Some(raptrix_cim_arrow::dynamics::ClassicalParams {
+        h,
+        d,
+        xd_prime: xd,
+        mbase_mva: mbase,
+    })
+}
+
 fn build_dynamics_models_batch(rows: &[DynamicsModelRow<'_>]) -> Result<RecordBatch> {
     let full_rows: Vec<raptrix_cim_arrow::dynamics::DynamicsModelRow> = rows
         .iter()
@@ -5651,7 +5692,7 @@ fn build_dynamics_models_batch(rows: &[DynamicsModelRow<'_>]) -> Result<RecordBa
                 .map(|(k, v)| (k.to_string(), *v))
                 .collect(),
             perc1_params: None,
-            classical_params: None,
+            classical_params: classical_params_from_row(&row.model_type, &row.params),
         })
         .collect();
     raptrix_cim_arrow::dynamics::build_dynamics_models_batch(&full_rows)

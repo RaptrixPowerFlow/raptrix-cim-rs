@@ -1007,55 +1007,303 @@ pub fn resource_geo_from_reader<R: Read>(mut reader: R) -> Result<Vec<ResourceGe
     Ok(out)
 }
 
-/// Parses selected DY profile model blocks and resolves attached equipment mRID.
+/// One vendor class mapped onto a `model_type` and canonical parameter names.
+#[derive(Debug, Clone)]
+pub struct DyExtension {
+    pub namespace: String,
+    pub class_name: String,
+    pub model_type: String,
+    pub attrs: BTreeMap<String, String>,
+}
+
+static DY_EXTENSIONS: std::sync::Mutex<Vec<DyExtension>> = std::sync::Mutex::new(Vec::new());
+thread_local! {
+    static DY_UNRESOLVED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static DY_UNMAPPED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Install the `convert --dy-extension-map` table. Empty clears it.
+pub fn set_dy_extensions(extensions: Vec<DyExtension>) {
+    if let Ok(mut guard) = DY_EXTENSIONS.lock() {
+        *guard = extensions;
+    }
+}
+
+pub fn dy_unresolved_rows() -> usize {
+    DY_UNRESOLVED.with(|c| c.get())
+}
+
+pub fn dy_unmapped_classes() -> usize {
+    DY_UNMAPPED.with(|c| c.get())
+}
+
+/// JSON array: `[{"namespace","class","model_type","attrs":{...}}]`.
+pub fn dy_extensions_from_json(text: &str) -> Result<Vec<DyExtension>> {
+    let raw: Vec<serde_json::Value> = serde_json::from_str(text)?;
+    let mut out = Vec::new();
+    for row in raw {
+        let namespace = row
+            .get("namespace")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let class_name = row
+            .get("class")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let model_type = row
+            .get("model_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let mut attrs = BTreeMap::new();
+        if let Some(map) = row.get("attrs").and_then(|v| v.as_object()) {
+            for (k, v) in map {
+                if let Some(s) = v.as_str() {
+                    attrs.insert(k.clone(), s.to_string());
+                }
+            }
+        }
+        if !class_name.is_empty() && !model_type.is_empty() {
+            out.push(DyExtension {
+                namespace,
+                class_name,
+                model_type,
+                attrs,
+            });
+        }
+    }
+    Ok(out)
+}
+
+struct DyNode {
+    class_name: String,
+    namespace: String,
+    numbers: BTreeMap<String, f64>,
+    enums: BTreeMap<String, String>,
+    links: Vec<(String, String)>,
+}
+
+fn local_name(qname: &str) -> &str {
+    qname.rsplit(':').next().unwrap_or(qname)
+}
+
+fn is_dynamics_class(class_name: &str) -> bool {
+    class_name.ends_with("Dynamics")
+        || class_name.starts_with("SynchronousMachine")
+        || class_name.starts_with("AsynchronousMachine")
+        || class_name.starts_with("Exc")
+        || class_name.starts_with("Gov")
+        || class_name.starts_with("Pss")
+        || class_name.starts_with("Wind")
+        || class_name.contains("LoadAggregate")
+        || class_name.contains("LoadComposite")
+        || class_name.contains("PFVAr")
+        || class_name.contains("TimeConstantReactance")
+}
+
+fn dy_namespace_code(uri: &str) -> f64 {
+    if uri.contains("CIM100") {
+        100.0
+    } else if uri.contains("CIM-schema-cim16") || uri.contains("CIM16") {
+        16.0
+    } else {
+        0.0
+    }
+}
+
+/// Parses DY profile model blocks and resolves each block to an equipment mRID.
 ///
-/// This first-pass parser extracts dynamic model identity and the equipment link
-/// reference so writer logic can map DY rows onto generator dynamics output.
+/// Pass 1 collects every element. Pass 2 follows association chains
+/// (exciter → machine dynamics → synchronous machine) and names columns from
+/// the shared dynamics dictionary when the CIM class has a 1:1 PSS/E model.
 pub fn dy_model_specs_from_reader<R: Read>(mut reader: R) -> Result<Vec<DyModelSpec>> {
     let mut xml = String::new();
     reader.read_to_string(&mut xml)?;
 
+    let mut nodes: HashMap<String, DyNode> = HashMap::new();
+    let mut order: Vec<String> = Vec::new();
+    let mut xml_reader = Reader::from_str(&xml);
+    xml_reader.config_mut().trim_text(true);
+    let mut buf = Vec::new();
+    let mut depth = 0i32;
+    let mut current_id: Option<String> = None;
+    let mut child_tag: Option<String> = None;
+    let mut prefixes: HashMap<String, String> = HashMap::new();
+
+    loop {
+        match xml_reader.read_event_into(&mut buf) {
+            Ok(Event::Start(tag)) => {
+                depth += 1;
+                let qname = String::from_utf8_lossy(tag.name().as_ref()).into_owned();
+                if depth == 1 {
+                    for attr in tag.attributes().flatten() {
+                        let key = String::from_utf8_lossy(attr.key.as_ref()).into_owned();
+                        let val = attr
+                            .unescape_value()
+                            .map(|v| v.into_owned())
+                            .unwrap_or_default();
+                        if let Some(prefix) = key.strip_prefix("xmlns:") {
+                            prefixes.insert(prefix.to_string(), val);
+                        } else if key == "xmlns" {
+                            prefixes.insert(String::new(), val);
+                        }
+                    }
+                } else if depth == 2 {
+                    let class_name = local_name(&qname).to_string();
+                    if class_name != "RDF" {
+                        let mut id = String::new();
+                        for attr in tag.attributes().flatten() {
+                            let key = String::from_utf8_lossy(attr.key.as_ref()).into_owned();
+                            let val = attr
+                                .unescape_value()
+                                .map(|v| v.into_owned())
+                                .unwrap_or_default();
+                            if key.ends_with("ID") || key.ends_with("about") {
+                                id = normalize_cgmes_ref(&val);
+                            }
+                        }
+                        if id.is_empty() {
+                            id = format!("_anon_{}", order.len());
+                        }
+                        let ns_prefix = qname.split(':').next().unwrap_or("");
+                        let namespace = if qname.contains(':') {
+                            prefixes.get(ns_prefix).cloned().unwrap_or_default()
+                        } else {
+                            prefixes.get("").cloned().unwrap_or_default()
+                        };
+                        order.push(id.clone());
+                        nodes.insert(
+                            id.clone(),
+                            DyNode {
+                                class_name,
+                                namespace,
+                                numbers: BTreeMap::new(),
+                                enums: BTreeMap::new(),
+                                links: Vec::new(),
+                            },
+                        );
+                        current_id = Some(id);
+                    }
+                } else if depth == 3 && current_id.is_some() {
+                    child_tag = Some(local_name(&qname).to_string());
+                    if let Some(id) = &current_id
+                        && let Some(node) = nodes.get_mut(id)
+                    {
+                        for attr in tag.attributes().flatten() {
+                            let key = String::from_utf8_lossy(attr.key.as_ref()).into_owned();
+                            if key.ends_with("resource") {
+                                let val = attr
+                                    .unescape_value()
+                                    .map(|v| v.into_owned())
+                                    .unwrap_or_default();
+                                let prop = child_tag.clone().unwrap_or_default();
+                                node.links
+                                    .push((prop, normalize_cgmes_ref(&val)));
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Event::Empty(tag)) => {
+                if depth == 2 && current_id.is_some() {
+                    let qname = String::from_utf8_lossy(tag.name().as_ref()).into_owned();
+                    let prop = local_name(&qname).to_string();
+                    if let Some(id) = &current_id
+                        && let Some(node) = nodes.get_mut(id)
+                    {
+                        for attr in tag.attributes().flatten() {
+                            let key = String::from_utf8_lossy(attr.key.as_ref()).into_owned();
+                            if key.ends_with("resource") {
+                                let val = attr
+                                    .unescape_value()
+                                    .map(|v| v.into_owned())
+                                    .unwrap_or_default();
+                                node.links.push((prop.clone(), normalize_cgmes_ref(&val)));
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Event::Text(text)) => {
+                if depth == 3
+                    && let (Some(id), Some(prop)) = (&current_id, &child_tag)
+                    && let Some(node) = nodes.get_mut(id)
+                {
+                    let Ok(raw) = text.xml10_content() else {
+                        buf.clear();
+                        continue;
+                    };
+                    let raw = raw.trim();
+                    if let Ok(value) = raw.parse::<f64>() {
+                        let key = canonicalize_dy_param_name(&node.class_name, prop);
+                        if !key.is_empty() {
+                            node.numbers.insert(key, value);
+                        }
+                    } else if !raw.is_empty() {
+                        node.enums
+                            .insert(prop.rsplit('.').next().unwrap_or(prop).to_string(), raw.to_string());
+                    }
+                }
+            }
+            Ok(Event::End(_)) => {
+                if depth == 3 {
+                    child_tag = None;
+                }
+                if depth == 2 {
+                    current_id = None;
+                }
+                depth -= 1;
+            }
+            Ok(Event::Eof) => break,
+            Ok(_) => {}
+            Err(err) => bail!("DY XML read failed: {err}"),
+        }
+        buf.clear();
+    }
+
+    let extensions = DY_EXTENSIONS.lock().map(|g| g.clone()).unwrap_or_default();
+    let mut unresolved = 0usize;
+    let mut unmapped = 0usize;
     let mut rows = Vec::new();
-    for (tag, model_type) in [
-        (
-            "cim:SynchronousMachineDynamics",
-            "SynchronousMachineDynamics",
-        ),
-        (
-            "cim:AsynchronousMachineDynamics",
-            "AsynchronousMachineDynamics",
-        ),
-        ("cim:ExcitationSystemDynamics", "ExcitationSystemDynamics"),
-        ("cim:TurbineGovernorDynamics", "TurbineGovernorDynamics"),
-        (
-            "cim:PowerSystemStabilizerDynamics",
-            "PowerSystemStabilizerDynamics",
-        ),
-        // Extension example: Studio-originated custom dynamic model family.
-        ("cim:RaptrixSmartValveDynamics", "raptrix.smart_valve.v1"),
-    ] {
-        if !contains_exact_element_tag(&xml, tag) {
+    for id in &order {
+        let Some(node) = nodes.get(id) else {
+            continue;
+        };
+        let extension_hit = extensions.iter().any(|ext| ext.class_name == node.class_name);
+        if !is_dynamics_class(&node.class_name) && !extension_hit {
             continue;
         }
-
-        for fragment in extract_elements(&xml, tag)? {
-            let raw: RawDyModel<'_> = from_str(fragment)?;
-            let Some(equipment_mrid) = raw.resolved_equipment_mrid() else {
-                continue;
-            };
-            let mut params = extract_numeric_dy_params(fragment, model_type);
-            if params.is_empty() {
-                // Keep a deterministic numeric marker so params map is non-empty.
-                params.push(("dy_present".to_string(), 1.0));
-            }
-
-            rows.push(DyModelSpec {
-                equipment_mrid,
-                model_type: model_type.to_string(),
-                params,
-            });
+        let Some(equipment) = resolve_dy_equipment(id, &nodes, 0) else {
+            unresolved += 1;
+            eprintln!(
+                "[cim-dy] unresolved {} ({id})",
+                node.class_name
+            );
+            continue;
+        };
+        let (model_type, mapped) = classify_dy_model(node, &extensions);
+        if !mapped {
+            unmapped += 1;
         }
+        let mut params = mapped_params(node, &model_type, &extensions);
+        let ns = dy_namespace_code(&node.namespace);
+        if ns > 0.0 {
+            params.push(("dy_cim_namespace_code".to_string(), ns));
+        }
+        params.push(("source_dy".to_string(), 1.0));
+        if params.iter().all(|(k, _)| k == "source_dy" || k == "dy_cim_namespace_code") {
+            params.push(("dy_present".to_string(), 1.0));
+        }
+        rows.push(DyModelSpec {
+            equipment_mrid: equipment,
+            model_type,
+            params,
+        });
     }
+    DY_UNRESOLVED.with(|c| c.set(unresolved));
+    DY_UNMAPPED.with(|c| c.set(unmapped));
 
     rows.sort_unstable_by(|left, right| {
         left.equipment_mrid
@@ -1065,10 +1313,112 @@ pub fn dy_model_specs_from_reader<R: Read>(mut reader: R) -> Result<Vec<DyModelS
     rows.dedup_by(|left, right| {
         left.equipment_mrid == right.equipment_mrid && left.model_type == right.model_type
     });
-
     Ok(rows)
 }
 
+fn resolve_dy_equipment(
+    id: &str,
+    nodes: &HashMap<String, DyNode>,
+    depth: u8,
+) -> Option<String> {
+    if depth > 6 {
+        return None;
+    }
+    let node = nodes.get(id)?;
+    if depth > 0 && !is_dynamics_class(&node.class_name) {
+        return Some(id.to_string());
+    }
+    for (_prop, target) in &node.links {
+        if nodes.contains_key(target) {
+            if let Some(found) = resolve_dy_equipment(target, nodes, depth + 1) {
+                return Some(found);
+            }
+        } else {
+            return Some(target.clone());
+        }
+    }
+    None
+}
+
+fn classify_dy_model(node: &DyNode, extensions: &[DyExtension]) -> (String, bool) {
+    if node.class_name == "RaptrixSmartValveDynamics" {
+        return ("raptrix.smart_valve.v1".to_string(), true);
+    }
+    if let Some(ext) = extensions.iter().find(|ext| {
+        ext.class_name == node.class_name
+            && (ext.namespace.is_empty() || node.namespace.contains(ext.namespace.as_str()) || ext.namespace == node.namespace)
+    }) {
+        return (ext.model_type.clone(), true);
+    }
+    if let Some(def) = raptrix_cim_arrow::dyn_dictionary::lookup_cim_class(&node.class_name) {
+        return (def.psse_name.to_string(), true);
+    }
+    if node.class_name == "SynchronousMachineTimeConstantReactance"
+        || node.class_name == "SynchronousMachineDetailed"
+    {
+        let salient = node
+            .enums
+            .get("rotorType")
+            .map(|v| v.contains("salient"))
+            .unwrap_or(false);
+        let model = if salient { "GENSAL" } else { "GENROU" };
+        return (model.to_string(), true);
+    }
+    (node.class_name.clone(), false)
+}
+
+fn mapped_params(node: &DyNode, model_type: &str, extensions: &[DyExtension]) -> Vec<(String, f64)> {
+    let mut params = Vec::new();
+    if let Some(ext) = extensions.iter().find(|ext| ext.model_type == model_type) {
+        for (attr, value) in &node.numbers {
+            let key = ext
+                .attrs
+                .get(attr)
+                .cloned()
+                .unwrap_or_else(|| attr.clone());
+            params.push((key, *value));
+        }
+    } else if model_type == "GENROU" || model_type == "GENSAL" {
+        for (attr, value) in &node.numbers {
+            let key = match attr.as_str() {
+                "inertia" | "h" => "H",
+                "damping" | "d" => "D",
+                "x_direct_trans" | "xd_prime" => "xd_prime",
+                "x_quad_trans" | "xq_prime" => "xq_prime",
+                "x_direct_subtrans" => "xd_dprime",
+                "x_direct_sync" => "xd",
+                "x_quad_sync" => "xq",
+                other => other,
+            };
+            params.push((key.to_string(), *value));
+        }
+        if let Some(rotor) = node.enums.get("rotorType") {
+            params.push((
+                "rotor_type".to_string(),
+                if rotor.contains("salient") { 2.0 } else { 1.0 },
+            ));
+        }
+    } else {
+        for (attr, value) in &node.numbers {
+            params.push((attr.clone(), *value));
+        }
+    }
+    if let Some(def) = raptrix_cim_arrow::dyn_dictionary::lookup_psse(model_type) {
+        if let Some(code_class) = def.cim_class {
+            let _ = code_class;
+        }
+        params.push(("source_cim_class".to_string(), f64::from(def.code)));
+        params.push(("psse_equiv".to_string(), 1.0));
+    } else if model_type == "GENROU" || model_type == "GENSAL" || model_type == "GENCLS" {
+        params.push(("psse_equiv".to_string(), 1.0));
+    } else if model_type != "raptrix.smart_valve.v1" {
+        params.push(("psse_equiv".to_string(), 0.0));
+        params.push(("model_mapped".to_string(), 0.0));
+    }
+    params
+}
+
+#[allow(dead_code)]
 fn extract_numeric_dy_params(fragment: &str, model_type: &str) -> Vec<(String, f64)> {
     let mut reader = Reader::from_str(fragment);
     reader.config_mut().trim_text(true);
@@ -1559,6 +1909,7 @@ impl RawLocation<'_> {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct RawDyModel<'a> {
     #[serde(rename = "DynamicsFunctionBlock.PowerSystemResource", default)]
@@ -1624,6 +1975,7 @@ impl RawDiagramObject<'_> {
 }
 
 impl RawDyModel<'_> {
+    #[allow(dead_code)]
     fn resolved_equipment_mrid(&self) -> Option<String> {
         self.power_system_resource
             .as_ref()
@@ -2061,10 +2413,73 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].equipment_mrid, "GEN_SMART");
         assert_eq!(rows[0].model_type, "raptrix.smart_valve.v1");
-
         let params: BTreeMap<_, _> = rows[0].params.iter().cloned().collect();
         assert_eq!(params.get("k_gain"), Some(&2.5));
         assert_eq!(params.get("t_open_s"), Some(&0.3));
+    }
+
+    #[test]
+    fn concrete_exciter_resolves_through_machine_dynamics() {
+        let xml = r##"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/CIM100#">
+    <cim:SynchronousMachineTimeConstantReactance rdf:ID="SMD1">
+        <cim:SynchronousMachineDynamics.SynchronousMachine rdf:resource="#GEN_A"/>
+        <cim:RotatingMachineDynamics.inertia>4.2</cim:RotatingMachineDynamics.inertia>
+        <cim:SynchronousMachineTimeConstantReactance.xDirectTrans>0.3</cim:SynchronousMachineTimeConstantReactance.xDirectTrans>
+        <cim:SynchronousMachineTimeConstantReactance.rotorType>roundRotor</cim:SynchronousMachineTimeConstantReactance.rotorType>
+    </cim:SynchronousMachineTimeConstantReactance>
+    <cim:ExcIEEEST4B rdf:ID="EX1">
+        <cim:ExcitationSystemDynamics.SynchronousMachineDynamics rdf:resource="#SMD1"/>
+        <cim:ExcIEEEST4B.tr>0.02</cim:ExcIEEEST4B.tr>
+        <cim:ExcIEEEST4B.kpr>20</cim:ExcIEEEST4B.kpr>
+    </cim:ExcIEEEST4B>
+</rdf:RDF>"##;
+        let rows = dy_model_specs_from_reader(xml.as_bytes()).expect("parse");
+        assert_eq!(rows.len(), 2);
+        let machine = rows.iter().find(|r| r.model_type == "GENROU").expect("genrou");
+        assert_eq!(machine.equipment_mrid, "GEN_A");
+        let params: BTreeMap<_, _> = machine.params.iter().cloned().collect();
+        assert_eq!(params.get("H"), Some(&4.2));
+        assert_eq!(params.get("xd_prime"), Some(&0.3));
+        assert_eq!(params.get("dy_cim_namespace_code"), Some(&100.0));
+        let exc = rows.iter().find(|r| r.model_type == "ESST4B").expect("esst4b");
+        assert_eq!(exc.equipment_mrid, "GEN_A");
+        assert_eq!(exc.params.iter().find(|(k, _)| k == "tr").map(|(_, v)| *v), Some(0.02));
+    }
+
+    #[test]
+    fn cim16_namespace_code_and_extension_map() {
+        let xml = r##"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#">
+    <cim:VendorExciter rdf:ID="VX">
+        <cim:ExcitationSystemDynamics.SynchronousMachineDynamics rdf:resource="#GEN_B"/>
+        <cim:VendorExciter.Ka>12</cim:VendorExciter.Ka>
+    </cim:VendorExciter>
+</rdf:RDF>"##;
+        set_dy_extensions(vec![DyExtension {
+            namespace: "CIM-schema-cim16".to_string(),
+            class_name: "VendorExciter".to_string(),
+            model_type: "VENDOR_EXC".to_string(),
+            attrs: BTreeMap::from([("ka".to_string(), "ka".to_string())]),
+        }]);
+        let rows = dy_model_specs_from_reader(xml.as_bytes()).expect("parse");
+        set_dy_extensions(Vec::new());
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].model_type, "VENDOR_EXC");
+        assert_eq!(rows[0].equipment_mrid, "GEN_B");
+        let params: BTreeMap<_, _> = rows[0].params.iter().cloned().collect();
+        assert_eq!(params.get("dy_cim_namespace_code"), Some(&16.0));
+        assert_eq!(params.get("ka"), Some(&12.0));
+    }
+
+    #[test]
+    fn unresolved_dy_row_is_counted() {
+        let xml = r##"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/CIM100#">
+    <cim:ExcIEEEST4B rdf:ID="EX_ORPHAN">
+        <cim:ExcIEEEST4B.tr>0.01</cim:ExcIEEEST4B.tr>
+    </cim:ExcIEEEST4B>
+</rdf:RDF>"##;
+        let rows = dy_model_specs_from_reader(xml.as_bytes()).expect("parse");
+        assert!(rows.is_empty());
+        assert_eq!(dy_unresolved_rows(), 1);
     }
 
     #[test]

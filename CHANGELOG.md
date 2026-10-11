@@ -11,6 +11,17 @@ Copyright (c) 2026 Raptrix Power
 
 ## Unreleased
 
+## Converter 0.7.5 — named dynamics dictionary (schema stays v0.14.4) (2026-10-11)
+
+### Converter release: Crate version 0.7.5 (raptrix-cim-arrow) / 0.7.5 (raptrix-cim-rs) | Arrow schema v0.14.4
+
+The interchange stamp stays **v0.14.4**. This crate adds a PSS/E dynamics dictionary and a CIM Dynamics reader. No new required table and no new required column.
+
+- `raptrix-cim-arrow::dyn_dictionary` names ICON/CON columns for the synchronous, exciter, governor, PSS, and WECC renewable models whose record lengths are fixed. `export_dyn_dictionary` writes the JSON the solver parity test reads.
+- DY ingestion accepts CIM100 and CIM16-namespace Dynamics files. An exciter, governor, or stabilizer follows its association chain to the equipment mRID. A class with a 1:1 PSS/E equivalent is stored under that `model_type` with `source_dy=1`. A class without that equivalent keeps the CIM name and `psse_equiv=0`.
+- Machine rows fill nullable `classical_params` (`H`, `D`, `xd_prime`, `mbase_mva`).
+- `convert --dy-extension-map` reads a JSON vendor map. The map is process-global for that conversion.
+
 ## Converter 0.7.4 — RPF v0.14.4 converter ends, branch-end shunts, load ride-through (2026-09-22)
 
 ### Converter release: Crate version 0.7.4 (raptrix-cim-arrow) / 0.7.4 (raptrix-cim-rs) | Arrow schema v0.14.4

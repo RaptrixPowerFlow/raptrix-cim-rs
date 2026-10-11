@@ -141,6 +141,11 @@ struct ConvertArgs {
     #[arg(long)]
     dy: Option<PathBuf>,
 
+    /// JSON file mapping vendor DY classes onto a model_type.
+    /// `[{"namespace","class","model_type","attrs":{"Ka":"ka"}}]`.
+    #[arg(long)]
+    dy_extension_map: Option<PathBuf>,
+
     /// DL profile path carrying IEC 61970-453 diagram layout payloads.
     #[arg(long)]
     dl: Option<PathBuf>,
@@ -465,6 +470,14 @@ fn run_view(args: ViewArgs) -> Result<()> {
 }
 
 fn run_convert(args: ConvertArgs) -> Result<()> {
+    if let Some(path) = &args.dy_extension_map {
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("failed to read DY extension map {}", path.display()))?;
+        let extensions = raptrix_cim_rs::parser::dy_extensions_from_json(&text)?;
+        raptrix_cim_rs::parser::set_dy_extensions(extensions);
+    } else {
+        raptrix_cim_rs::parser::set_dy_extensions(Vec::new());
+    }
     let cwd = std::env::current_dir().context("failed to resolve current working directory")?;
     let output_path = normalize_output_path(&args.output, &cwd);
     validate_output_path(&output_path)?;

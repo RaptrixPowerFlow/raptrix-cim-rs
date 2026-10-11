@@ -33,6 +33,7 @@ pub mod computational_load;
 pub mod contingencies;
 pub mod contingency_sequences;
 pub mod dc_converter;
+pub mod dyn_dictionary;
 pub mod dynamics;
 pub mod facility_membership;
 pub mod ffi;
