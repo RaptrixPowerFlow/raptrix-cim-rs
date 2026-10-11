@@ -44,26 +44,48 @@ const fn def(
 
 // Synchronous machines. H and D keep that spelling. xd_prime is the legacy key.
 const GENROU_CONS: &[&str] = &[
-    "tpdo", "tppdo", "tpqo", "tppqo", "H", "D", "xd", "xq", "xd_prime", "xq_prime",
-    "xd_dprime", "xl", "s10", "s12",
+    "tpdo",
+    "tppdo",
+    "tpqo",
+    "tppqo",
+    "H",
+    "D",
+    "xd",
+    "xq",
+    "xd_prime",
+    "xq_prime",
+    "xd_dprime",
+    "xl",
+    "s10",
+    "s12",
 ];
 const GENSAL_CONS: &[&str] = &[
-    "tpdo", "tppdo", "tppqo", "H", "D", "xd", "xq", "xd_prime", "xd_dprime", "xl", "s10",
+    "tpdo",
+    "tppdo",
+    "tppqo",
+    "H",
+    "D",
+    "xd",
+    "xq",
+    "xd_prime",
+    "xd_dprime",
+    "xl",
+    "s10",
     "s12",
 ];
 const GENCLS_CONS: &[&str] = &["H", "D"];
 
 const ESST4B_CONS: &[&str] = &[
-    "tr", "kpr", "kir", "vrmax", "vrmin", "ta", "kpm", "kim", "vmmax", "vmmin", "kg", "kp",
-    "ki", "vbmax", "kc", "xl", "thetap",
+    "tr", "kpr", "kir", "vrmax", "vrmin", "ta", "kpm", "kim", "vmmax", "vmmin", "kg", "kp", "ki",
+    "vbmax", "kc", "xl", "thetap",
 ];
 const EXST1_CONS: &[&str] = &[
     "tr", "vimax", "vimin", "tc", "tb", "ka", "ta", "vrmax", "vrmin", "kc", "kf", "tf",
 ];
 const ESST1A_ICONS: &[&str] = &["uel", "vos"];
 const ESST1A_CONS: &[&str] = &[
-    "tr", "vimax", "vimin", "tb", "tc", "tb1", "tc1", "vamax", "vamin", "ka", "ta", "ilr",
-    "klr", "vrmax", "vrmin", "kf", "tf", "kc",
+    "tr", "vimax", "vimin", "tb", "tc", "tb1", "tc1", "vamax", "vamin", "ka", "ta", "ilr", "klr",
+    "vrmax", "vrmin", "kf", "tf", "kc",
 ];
 const IEEET1_CONS: &[&str] = &[
     "tr", "ka", "ta", "vrmax", "vrmin", "ke", "te", "kf", "tf", "sw", "e1", "se1", "e2", "se2",
@@ -83,8 +105,8 @@ const EXAC1_CONS: &[&str] = &[
     "se1", "e2", "se2",
 ];
 const EXAC2_CONS: &[&str] = &[
-    "tr", "tb", "tc", "ka", "ta", "vamax", "vamin", "kb", "vrmax", "vrmin", "te", "kl", "kh",
-    "kf", "tf", "kc", "kd", "ke", "vlr", "e1", "se1", "e2", "se2",
+    "tr", "tb", "tc", "ka", "ta", "vamax", "vamin", "kb", "vrmax", "vrmin", "te", "kl", "kh", "kf",
+    "tf", "kc", "kd", "ke", "vlr", "e1", "se1", "e2", "se2",
 ];
 const ESAC1A_CONS: &[&str] = &[
     "tr", "tb", "tc", "vamax", "vamin", "ka", "ta", "vrmax", "vrmin", "te", "e1", "se1", "e2",
@@ -105,9 +127,9 @@ const ESST3A_CONS: &[&str] = &[
 
 const GGOV1_ICONS: &[&str] = &["rselect", "flag"];
 const GGOV1_CONS: &[&str] = &[
-    "r", "tpelec", "maxerr", "minerr", "kpgov", "kigov", "kdgov", "tdgov", "vmax", "vmin",
-    "tact", "kturb", "wfnl", "tb", "tc", "teng", "tfload", "kpload", "kiload", "ldref", "dm",
-    "ropen", "rclose", "kimw", "aset", "ka", "ta", "trate", "db", "tsa", "tsb", "rup", "rdown",
+    "r", "tpelec", "maxerr", "minerr", "kpgov", "kigov", "kdgov", "tdgov", "vmax", "vmin", "tact",
+    "kturb", "wfnl", "tb", "tc", "teng", "tfload", "kpload", "kiload", "ldref", "dm", "ropen",
+    "rclose", "kimw", "aset", "ka", "ta", "trate", "db", "tsa", "tsb", "rup", "rdown",
 ];
 const IEEEG1_ICONS: &[&str] = &["jbus", "jid"];
 const IEEEG1_CONS: &[&str] = &[
@@ -127,21 +149,28 @@ const PSS2A_CONS: &[&str] = &[
 ];
 const IEEEST_ICONS: &[&str] = &["mode", "rembus"];
 const IEEEST_CONS: &[&str] = &[
-    "a1", "a2", "a3", "a4", "a5", "a6", "t1", "t2", "t3", "t4", "t5", "t6", "ks", "lsmax",
-    "lsmin", "vcu", "vcl",
+    "a1", "a2", "a3", "a4", "a5", "a6", "t1", "t2", "t3", "t4", "t5", "t6", "ks", "lsmax", "lsmin",
+    "vcu", "vcl",
 ];
 
 const REGCA1_ICONS: &[&str] = &["lvplsw"];
 const REGCA1_CONS: &[&str] = &[
-    "tg", "rrpwr", "brkpt", "zerox", "lvpl1", "volim", "lvpnt1", "lvpnt0", "iolim", "tfltr",
-    "khv", "iqrmax", "iqrmin", "accel",
+    "tg", "rrpwr", "brkpt", "zerox", "lvpl1", "volim", "lvpnt1", "lvpnt0", "iolim", "tfltr", "khv",
+    "iqrmax", "iqrmin", "accel",
 ];
-const REECA1_ICONS: &[&str] = &["remote_bus_id", "pfflag", "vflag", "qflag", "pflag", "pqflag"];
+const REECA1_ICONS: &[&str] = &[
+    "remote_bus_id",
+    "pfflag",
+    "vflag",
+    "qflag",
+    "pflag",
+    "pqflag",
+];
 const REECA1_CONS: &[&str] = &[
-    "vdip", "vup", "trv", "dbd1", "dbd2", "kqv", "iqh1", "iql1", "vref0", "iqfrz", "thld",
-    "thld2", "tp", "qmax", "qmin", "vmax", "vmin", "kqp", "kqi", "kvp", "kvi", "vbias", "tiq",
-    "dpmax", "dpmin", "pmax", "pmin", "imax", "tpord", "vq1", "iq1", "vq2", "iq2", "vq3", "iq3",
-    "vq4", "iq4", "vp1", "ip1", "vp2", "ip2", "vp3", "ip3", "vp4", "ip4",
+    "vdip", "vup", "trv", "dbd1", "dbd2", "kqv", "iqh1", "iql1", "vref0", "iqfrz", "thld", "thld2",
+    "tp", "qmax", "qmin", "vmax", "vmin", "kqp", "kqi", "kvp", "kvi", "vbias", "tiq", "dpmax",
+    "dpmin", "pmax", "pmin", "imax", "tpord", "vq1", "iq1", "vq2", "iq2", "vq3", "iq3", "vq4",
+    "iq4", "vp1", "ip1", "vp2", "ip2", "vp3", "ip3", "vp4", "ip4",
 ];
 const REPCA1_ICONS: &[&str] = &[
     "remote_bus_id",
@@ -175,9 +204,23 @@ pub static DYN_MODELS: &[DynModelDef] = &[
     def(3, "GENSAL", "sync_machine", &[], GENSAL_CONS, None),
     def(4, "GENSAE", "sync_machine", &[], GENSAL_CONS, None),
     def(5, "GENCLS", "sync_machine", &[], GENCLS_CONS, None),
-    def(10, "ESST4B", "exciter", &[], ESST4B_CONS, Some("ExcIEEEST4B")),
+    def(
+        10,
+        "ESST4B",
+        "exciter",
+        &[],
+        ESST4B_CONS,
+        Some("ExcIEEEST4B"),
+    ),
     def(11, "EXST1", "exciter", &[], EXST1_CONS, Some("ExcST1")),
-    def(12, "ESST1A", "exciter", ESST1A_ICONS, ESST1A_CONS, Some("ExcIEEEST1A")),
+    def(
+        12,
+        "ESST1A",
+        "exciter",
+        ESST1A_ICONS,
+        ESST1A_CONS,
+        Some("ExcIEEEST1A"),
+    ),
     def(13, "IEEET1", "exciter", &[], IEEET1_CONS, Some("ExcIEEET1")),
     def(14, "IEEEX1", "exciter", &[], IEEEX1_CONS, Some("ExcIEEEX1")),
     def(15, "SEXS", "exciter", &[], SEXS_CONS, Some("ExcSEXS")),
@@ -185,13 +228,48 @@ pub static DYN_MODELS: &[DynModelDef] = &[
     def(17, "EXPIC1", "exciter", &[], EXPIC1_CONS, Some("ExcPIC")),
     def(18, "EXAC1", "exciter", &[], EXAC1_CONS, Some("ExcAC1A")),
     def(19, "EXAC2", "exciter", &[], EXAC2_CONS, Some("ExcAC2A")),
-    def(20, "ESAC1A", "exciter", &[], ESAC1A_CONS, Some("ExcIEEEAC1A")),
-    def(21, "ESAC6A", "exciter", &[], ESAC6A_CONS, Some("ExcIEEEAC6A")),
+    def(
+        20,
+        "ESAC1A",
+        "exciter",
+        &[],
+        ESAC1A_CONS,
+        Some("ExcIEEEAC1A"),
+    ),
+    def(
+        21,
+        "ESAC6A",
+        "exciter",
+        &[],
+        ESAC6A_CONS,
+        Some("ExcIEEEAC6A"),
+    ),
     def(22, "ESDC1A", "exciter", &[], ESDC_CONS, Some("ExcIEEEDC1A")),
     def(23, "ESDC2A", "exciter", &[], ESDC_CONS, Some("ExcIEEEDC2A")),
-    def(24, "ESST3A", "exciter", &[], ESST3A_CONS, Some("ExcIEEEST3A")),
-    def(30, "GGOV1", "governor", GGOV1_ICONS, GGOV1_CONS, Some("GovCT1")),
-    def(31, "IEEEG1", "governor", IEEEG1_ICONS, IEEEG1_CONS, Some("GovSteamIEEE1")),
+    def(
+        24,
+        "ESST3A",
+        "exciter",
+        &[],
+        ESST3A_CONS,
+        Some("ExcIEEEST3A"),
+    ),
+    def(
+        30,
+        "GGOV1",
+        "governor",
+        GGOV1_ICONS,
+        GGOV1_CONS,
+        Some("GovCT1"),
+    ),
+    def(
+        31,
+        "IEEEG1",
+        "governor",
+        IEEEG1_ICONS,
+        IEEEG1_CONS,
+        Some("GovSteamIEEE1"),
+    ),
     def(32, "HYGOV", "governor", &[], HYGOV_CONS, None),
     def(33, "TGOV1", "governor", &[], TGOV1_CONS, Some("GovSteam0")),
     def(34, "GAST", "governor", &[], GAST_CONS, Some("GovGAST")),
@@ -211,16 +289,28 @@ pub static DYN_MODELS: &[DynModelDef] = &[
 pub static MACHINE_CIM_ATTRS: &[(&str, &str)] = &[
     ("RotatingMachineDynamics.inertia", "H"),
     ("RotatingMachineDynamics.damping", "D"),
-    ("SynchronousMachineTimeConstantReactance.xDirectTrans", "xd_prime"),
-    ("SynchronousMachineTimeConstantReactance.xQuadTrans", "xq_prime"),
-    ("SynchronousMachineTimeConstantReactance.xDirectSubtrans", "xd_dprime"),
+    (
+        "SynchronousMachineTimeConstantReactance.xDirectTrans",
+        "xd_prime",
+    ),
+    (
+        "SynchronousMachineTimeConstantReactance.xQuadTrans",
+        "xq_prime",
+    ),
+    (
+        "SynchronousMachineTimeConstantReactance.xDirectSubtrans",
+        "xd_dprime",
+    ),
     ("SynchronousMachineTimeConstantReactance.tpdo", "tpdo"),
     ("SynchronousMachineTimeConstantReactance.tppdo", "tppdo"),
     ("SynchronousMachineTimeConstantReactance.tpqo", "tpqo"),
     ("SynchronousMachineTimeConstantReactance.tppqo", "tppqo"),
     ("SynchronousMachineTimeConstantReactance.xDirectSync", "xd"),
     ("SynchronousMachineTimeConstantReactance.xQuadSync", "xq"),
-    ("SynchronousMachineTimeConstantReactance.satDirectSubtransX", "xl"),
+    (
+        "SynchronousMachineTimeConstantReactance.satDirectSubtransX",
+        "xl",
+    ),
 ];
 
 pub fn lookup_psse(name: &str) -> Option<&'static DynModelDef> {

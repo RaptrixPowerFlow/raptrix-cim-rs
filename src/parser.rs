@@ -1199,8 +1199,7 @@ pub fn dy_model_specs_from_reader<R: Read>(mut reader: R) -> Result<Vec<DyModelS
                                     .map(|v| v.into_owned())
                                     .unwrap_or_default();
                                 let prop = child_tag.clone().unwrap_or_default();
-                                node.links
-                                    .push((prop, normalize_cgmes_ref(&val)));
+                                node.links.push((prop, normalize_cgmes_ref(&val)));
                             }
                         }
                     }
@@ -1242,8 +1241,10 @@ pub fn dy_model_specs_from_reader<R: Read>(mut reader: R) -> Result<Vec<DyModelS
                             node.numbers.insert(key, value);
                         }
                     } else if !raw.is_empty() {
-                        node.enums
-                            .insert(prop.rsplit('.').next().unwrap_or(prop).to_string(), raw.to_string());
+                        node.enums.insert(
+                            prop.rsplit('.').next().unwrap_or(prop).to_string(),
+                            raw.to_string(),
+                        );
                     }
                 }
             }
@@ -1271,16 +1272,15 @@ pub fn dy_model_specs_from_reader<R: Read>(mut reader: R) -> Result<Vec<DyModelS
         let Some(node) = nodes.get(id) else {
             continue;
         };
-        let extension_hit = extensions.iter().any(|ext| ext.class_name == node.class_name);
+        let extension_hit = extensions
+            .iter()
+            .any(|ext| ext.class_name == node.class_name);
         if !is_dynamics_class(&node.class_name) && !extension_hit {
             continue;
         }
         let Some(equipment) = resolve_dy_equipment(id, &nodes, 0) else {
             unresolved += 1;
-            eprintln!(
-                "[cim-dy] unresolved {} ({id})",
-                node.class_name
-            );
+            eprintln!("[cim-dy] unresolved {} ({id})", node.class_name);
             continue;
         };
         let (model_type, mapped) = classify_dy_model(node, &extensions);
@@ -1293,7 +1293,10 @@ pub fn dy_model_specs_from_reader<R: Read>(mut reader: R) -> Result<Vec<DyModelS
             params.push(("dy_cim_namespace_code".to_string(), ns));
         }
         params.push(("source_dy".to_string(), 1.0));
-        if params.iter().all(|(k, _)| k == "source_dy" || k == "dy_cim_namespace_code") {
+        if params
+            .iter()
+            .all(|(k, _)| k == "source_dy" || k == "dy_cim_namespace_code")
+        {
             params.push(("dy_present".to_string(), 1.0));
         }
         rows.push(DyModelSpec {
@@ -1316,11 +1319,7 @@ pub fn dy_model_specs_from_reader<R: Read>(mut reader: R) -> Result<Vec<DyModelS
     Ok(rows)
 }
 
-fn resolve_dy_equipment(
-    id: &str,
-    nodes: &HashMap<String, DyNode>,
-    depth: u8,
-) -> Option<String> {
+fn resolve_dy_equipment(id: &str, nodes: &HashMap<String, DyNode>, depth: u8) -> Option<String> {
     if depth > 6 {
         return None;
     }
@@ -1346,7 +1345,9 @@ fn classify_dy_model(node: &DyNode, extensions: &[DyExtension]) -> (String, bool
     }
     if let Some(ext) = extensions.iter().find(|ext| {
         ext.class_name == node.class_name
-            && (ext.namespace.is_empty() || node.namespace.contains(ext.namespace.as_str()) || ext.namespace == node.namespace)
+            && (ext.namespace.is_empty()
+                || node.namespace.contains(ext.namespace.as_str())
+                || ext.namespace == node.namespace)
     }) {
         return (ext.model_type.clone(), true);
     }
@@ -1367,15 +1368,15 @@ fn classify_dy_model(node: &DyNode, extensions: &[DyExtension]) -> (String, bool
     (node.class_name.clone(), false)
 }
 
-fn mapped_params(node: &DyNode, model_type: &str, extensions: &[DyExtension]) -> Vec<(String, f64)> {
+fn mapped_params(
+    node: &DyNode,
+    model_type: &str,
+    extensions: &[DyExtension],
+) -> Vec<(String, f64)> {
     let mut params = Vec::new();
     if let Some(ext) = extensions.iter().find(|ext| ext.model_type == model_type) {
         for (attr, value) in &node.numbers {
-            let key = ext
-                .attrs
-                .get(attr)
-                .cloned()
-                .unwrap_or_else(|| attr.clone());
+            let key = ext.attrs.get(attr).cloned().unwrap_or_else(|| attr.clone());
             params.push((key, *value));
         }
     } else if model_type == "GENROU" || model_type == "GENSAL" {
@@ -2435,15 +2436,24 @@ mod tests {
 </rdf:RDF>"##;
         let rows = dy_model_specs_from_reader(xml.as_bytes()).expect("parse");
         assert_eq!(rows.len(), 2);
-        let machine = rows.iter().find(|r| r.model_type == "GENROU").expect("genrou");
+        let machine = rows
+            .iter()
+            .find(|r| r.model_type == "GENROU")
+            .expect("genrou");
         assert_eq!(machine.equipment_mrid, "GEN_A");
         let params: BTreeMap<_, _> = machine.params.iter().cloned().collect();
         assert_eq!(params.get("H"), Some(&4.2));
         assert_eq!(params.get("xd_prime"), Some(&0.3));
         assert_eq!(params.get("dy_cim_namespace_code"), Some(&100.0));
-        let exc = rows.iter().find(|r| r.model_type == "ESST4B").expect("esst4b");
+        let exc = rows
+            .iter()
+            .find(|r| r.model_type == "ESST4B")
+            .expect("esst4b");
         assert_eq!(exc.equipment_mrid, "GEN_A");
-        assert_eq!(exc.params.iter().find(|(k, _)| k == "tr").map(|(_, v)| *v), Some(0.02));
+        assert_eq!(
+            exc.params.iter().find(|(k, _)| k == "tr").map(|(_, v)| *v),
+            Some(0.02)
+        );
     }
 
     #[test]
