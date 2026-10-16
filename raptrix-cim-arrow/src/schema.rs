@@ -7,10 +7,16 @@ Copyright (c) 2026 Raptrix Power
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Arrow schema definitions for the Raptrix Power Interchange v0.14.4 profile.
+//! Arrow schema definitions for the Raptrix Power Interchange v0.14.5 profile.
+//!
+//! ## v0.14.5 — dynamics parameter vocabulary (clean cut)
+//! Readers accept `v0.14.5` / `0.14.5` only. Tables and columns match v0.14.4.
+//! `dynamics_models.params` keys are locked: positional `p1`..`pN`, dictionary
+//! names that do not collide with those keys, and `WTTQA1` breakpoints
+//! `pwr1`..`pwr4`. v0.14.4 files are rejected. `v0.15.0` stays reserved.
 //!
 //! ## v0.14.4 — converter ends, branch-end shunts, CLP ride-through
-//! Readers accept `v0.14.4` / `0.14.4` only. `dc_lines_2w` stays 15 columns.
+//! Historical. Current readers reject this stamp. `dc_lines_2w` stays 15 columns.
 //! Optional-per-end data lives in `dc_converters` (always emitted, zero rows
 //! allowed). `branches` gains trailing nullable `g_from` / `b_from` / `g_to` /
 //! `b_to`. `computational_load_profiles` gains `frequency_transfer_curve`,
@@ -132,16 +138,17 @@ use crate::shunt_control::shunt_control_fields;
 use crate::tap_control::tap_control_fields;
 
 /// Human-readable branding string embedded as file-level metadata.
-pub const BRANDING: &str = "Raptrix CIM-Arrow / Raptrix Power Interchange v0.14.4 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.";
+pub const BRANDING: &str = "Raptrix CIM-Arrow / Raptrix Power Interchange v0.14.5 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.";
 
 /// Canonical RPF format version tag embedded as file-level metadata.
-pub const RPF_VERSION: &str = "v0.14.4";
+pub const RPF_VERSION: &str = "v0.14.5";
 
 /// Supported RPF versions accepted by generic Arrow IPC readers.
 ///
-/// v0.14.4 is the only accepted stamp (`v0.14.4` and `0.14.4`). Every other
-/// stamp is rejected, including files written before this contract.
-pub const SUPPORTED_RPF_VERSIONS: &[&str] = &["v0.14.4", "0.14.4"];
+/// v0.14.5 is the only accepted stamp (`v0.14.5` and `0.14.5`). Every other
+/// stamp is rejected, including v0.14.4 files written before the dynamics
+/// vocabulary lock.
+pub const SUPPORTED_RPF_VERSIONS: &[&str] = &["v0.14.5", "0.14.5"];
 
 /// Closed vocabulary for `voltage_transfer_curve.polarity`.
 pub const VOLTAGE_TRANSFER_POLARITIES: &[&str] = &["under", "over"];
@@ -320,7 +327,7 @@ pub const METADATA_KEY_FEATURE_CONTINGENCY_ISLAND_ANALYSIS: &str =
 pub const METADATA_KEY_FEATURE_CONTINGENCY_SEQUENCES: &str =
     "raptrix.features.contingency_sequences";
 /// File-level feature flag: `dc_converters` root table is present (v0.14.4+).
-/// Writers stamp `true` on every v0.14.4 file, including a zero-row table.
+/// Writers stamp `true` on every current file, including a zero-row table.
 pub const METADATA_KEY_FEATURE_DC_CONVERTERS: &str = "raptrix.features.dc_converters";
 /// Optional metadata key declaring canonical RAS schema mode (v0.12.1+).
 /// Current value: `canonical_v12`.
@@ -2448,10 +2455,11 @@ mod tests {
             "optional extension tables must NOT appear in all_table_schemas()"
         );
 
-        assert_eq!(SUPPORTED_RPF_VERSIONS, &["v0.14.4", "0.14.4"]);
+        assert_eq!(SUPPORTED_RPF_VERSIONS, &["v0.14.5", "0.14.5"]);
+        assert!(!SUPPORTED_RPF_VERSIONS.contains(&"v0.14.4"));
         assert!(!SUPPORTED_RPF_VERSIONS.contains(&"v0.14.3"));
         assert!(!SUPPORTED_RPF_VERSIONS.contains(&"v0.13.0"));
-        assert_eq!(RPF_VERSION, "v0.14.4");
+        assert_eq!(RPF_VERSION, "v0.14.5");
         assert_eq!(SCHEMA_VERSION, RPF_VERSION);
         assert_eq!(dc_lines_2w_schema().fields().len(), 15);
         assert_eq!(dc_converters_schema().fields().len(), 22);

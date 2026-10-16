@@ -5,9 +5,9 @@ Copyright (c) 2026 Raptrix Power
 
 # RPF v0.14.4 — converter ends, branch-end shunts, load ride-through
 
-**Status: locked. Crate 0.7.4 / RPF v0.14.4.**
+**Status: column shape locked in v0.14.4. Current readers accept v0.14.5 only (crate 0.7.6).**
 
-Readers accept `v0.14.4` and `0.14.4` only. `v0.15.0` is reserved for the first supported product freeze. Files stamped with any other version must be re-emitted.
+This note describes the v0.14.4 columns. v0.14.5 keeps them and locks the dynamics parameter vocabulary. Readers accept `v0.14.5` and `0.14.5` only. `v0.15.0` is reserved for the first supported product freeze. Files stamped with any other version must be re-emitted.
 
 ## Two-terminal DC
 

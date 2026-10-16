@@ -546,7 +546,7 @@ mod tests {
                 .map(String::as_str),
             Some("true")
         );
-        assert_eq!(meta.get("rpf_version").map(String::as_str), Some("v0.14.4"));
+        assert_eq!(meta.get("rpf_version").map(String::as_str), Some("v0.14.5"));
     }
 
     #[test]

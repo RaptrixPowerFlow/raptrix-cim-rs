@@ -7,7 +7,7 @@ Copyright (c) 2026 Raptrix Power
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Solved-snapshot dialect read tests for the v0.14.4 contract.
+//! Solved-snapshot dialect read tests for the v0.14.5 contract.
 //!
 //! Current PowerFlow solved-snapshot exports differ from the canonical writer
 //! layout in documented, read-tolerated ways:
@@ -23,7 +23,7 @@ Copyright (c) 2026 Raptrix Power
 //!   appended.
 //!
 //! The fixture built here is fully synthetic (no real network data).
-//! The file stamp is v0.14.4. Any other stamp is rejected.
+//! The file stamp is v0.14.5. Any other stamp is rejected.
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -327,7 +327,7 @@ fn reads_synthetic_solved_snapshot_layout() -> Result<()> {
     let tmp_dir = std::env::temp_dir().join("raptrix_cim_arrow_v0144_snapshot_read");
     std::fs::create_dir_all(&tmp_dir)?;
     let path = tmp_dir.join("synthetic_v0144_solved_snapshot.rpf");
-    write_synthetic_solved_snapshot(&path, "v0.14.4")?;
+    write_synthetic_solved_snapshot(&path, "v0.14.5")?;
 
     let tables = read_rpf_tables(&path)?;
     let by_name: HashMap<&str, &RecordBatch> = tables

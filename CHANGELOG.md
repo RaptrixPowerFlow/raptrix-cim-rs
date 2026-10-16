@@ -11,6 +11,18 @@ Copyright (c) 2026 Raptrix Power
 
 ## Unreleased
 
+## Converter 0.7.6 — RPF v0.14.5 dynamics vocabulary (2026-10-16)
+
+### Converter release: Crate version 0.7.6 (raptrix-cim-arrow) / 0.7.6 (raptrix-cim-rs) | Arrow schema v0.14.5
+
+Writers emit **v0.14.5**. Readers accept **`v0.14.5` / `0.14.5` only**. v0.14.4 and every older stamp are rejected. Re-export. There is no key alias and no pad-forward. Tables and columns are unchanged. `v0.15.0` stays reserved.
+
+- Positional `dynamics_models.params` keys are `p1`..`pN`. `p0` is not legal.
+- Dictionary names must not equal `pN`, `iconN`, `conN`, or the provenance keys (`source_dyr`, `source_dy`, `params_named`, `icon_count`, `con_count`, `dict_code`, `token_count_mismatch`, `source_cim_class`, `psse_equiv`, `model_mapped`).
+- `WTTQA1` power breakpoints are `pwr1`..`pwr4`. The ANDES names `p1`..`p4` collided with positional keys, so a first-key lookup of `p1` returned the flag. `spd1`..`spd4` are unchanged.
+- `classical_params` for `GENROU`, `GENROE`, `GENSAL`, `GENSAE`, and `GENCLS` uses dictionary columns `H`, `D`, and `xd_prime`. `GENCLS` has no `xd_prime`.
+- CIM Dynamics writes dictionary or CIM attribute names once. It does not also write a positional `pN` copy of a named column.
+
 ## Converter 0.7.5 — named dynamics dictionary (schema stays v0.14.4) (2026-10-11)
 
 ### Converter release: Crate version 0.7.5 (raptrix-cim-arrow) / 0.7.5 (raptrix-cim-rs) | Arrow schema v0.14.4

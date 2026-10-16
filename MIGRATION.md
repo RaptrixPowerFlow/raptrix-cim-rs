@@ -4,9 +4,20 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 
 Copyright (c) 2026 Raptrix Power
 
-## v0.14.4 (readers accept only this stamp)
+## v0.14.5 (readers accept only this stamp)
 
-Writers emit `v0.14.4`. `SUPPORTED_RPF_VERSIONS` is `v0.14.4` and `0.14.4` only. Re-emit any older file before reading it with this crate. `v0.15.0` is reserved for the first supported product freeze.
+Writers emit `v0.14.5`. `SUPPORTED_RPF_VERSIONS` is `v0.14.5` and `0.14.5` only. Re-emit any older file, including v0.14.4, before reading it with this crate. There is no key alias. `v0.15.0` is reserved for the first supported product freeze.
+
+| Area | What changed |
+| --- | --- |
+| Tables and columns | Unchanged from v0.14.4 |
+| `dynamics_models.params` | Positional keys are `p1`..`pN`. Dictionary names must not collide with `pN` / `iconN` / `conN` / provenance keys. `WTTQA1` breakpoints are `pwr1`..`pwr4` |
+| `classical_params` | `GENROU` / `GENROE` / `GENSAL` / `GENSAE` / `GENCLS` use dictionary `H`, `D`, `xd_prime` |
+| Version gate | `v0.14.4` is rejected |
+
+## v0.14.4 (historical — readers no longer accept this stamp)
+
+Writers of crate 0.7.4 emitted `v0.14.4`. Current readers reject that stamp.
 
 | Area | What changed |
 | --- | --- |

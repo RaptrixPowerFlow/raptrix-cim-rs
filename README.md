@@ -115,7 +115,7 @@ Profiles beyond EQ are optional — any subset can be provided and missing profi
 | Connectivity detail | `--connectivity-detail` | Granular ConnectivityNode bus mapping; emits optional `connectivity_groups` table |
 | Node-breaker | `--connectivity-detail --node-breaker` | Adds switch-topology detail tables for operational and viewer workflows |
 
-### Output tables (schema contract v0.14.4)
+### Output tables (schema contract v0.14.5)
 
 **18 canonical tables (always emitted):** `metadata`, `buses`, `branches`, `multi_section_lines`, `dc_lines_2w`, `generators`, `loads`, `fixed_shunts`, `switched_shunts`, `switched_shunt_banks`, `transformers_2w`, `transformers_3w`, `areas`, `zones`, `owners`, `contingencies`, `interfaces`, `dynamics_models`
 
@@ -159,7 +159,7 @@ RAS safety note: all public examples in this repository use synthetic demonstrat
 
 ## Data Contract (Locked)
 
-- Current schema contract: **v0.14.4** (CGMES 3.0+ only). Readers accept `v0.14.4` / `0.14.4` only. Adds `dc_converters`, branch-end shunts `g_from` / `b_from` / `g_to` / `b_to`, and computational-load frequency / restore / requirement fields. `dc_lines_2w` stays 15 columns. CIM leaves the new shunt and load fields null.
+- Current schema contract: **v0.14.5** (CGMES 3.0+ only). Readers accept `v0.14.5` / `0.14.5` only. Columns match v0.14.4 (`dc_converters`, branch-end shunts, computational-load ride-through). The v0.14.5 break is the locked `dynamics_models.params` vocabulary (`p1`..`pN`, `WTTQA1` `pwr1`..`pwr4`). Re-export v0.14.4 files. CIM leaves the new shunt and load fields null.
 - Canonical source: raptrix-cim-arrow/src/schema.rs
 - Contract policy and semantics: docs/schema-contract.md
 - Plain-English field guide: [docs/rpf-field-guide.md](docs/rpf-field-guide.md)
@@ -173,11 +173,13 @@ RPF standardization here is intentional: it enables direct CIM-to-powerflow inte
 
 ### Versioning Policy
 
-Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is at schema **`v0.14.4`** and the converter crate release is **`0.7.4`**.
+Raptrix uses split versioning by design: schema contract version and crate release version evolve independently. The file-format contract is at schema **`v0.14.5`** and the converter crate release is **`0.7.6`**.
 
-Readers in this repository accept `v0.14.4` / `0.14.4` only. Other stamps must be re-emitted.
+Readers in this repository accept `v0.14.5` / `0.14.5` only. Other stamps must be re-emitted.
 
-**v0.14.4**: `dc_converters` plus trailing nullable branch-end shunts and computational-load frequency / restore / requirement fields. `p_setpoint_mw` stays rectifier DC power. See [docs/dc-and-shunt-ends-0.14.4.md](docs/dc-and-shunt-ends-0.14.4.md).
+**v0.14.5**: same tables and columns as v0.14.4. Locked dynamics parameter names. `WTTQA1` breakpoints are `pwr1`..`pwr4`. Positional keys are `p1`..`pN`.
+
+**v0.14.4**: `dc_converters` plus trailing nullable branch-end shunts and computational-load frequency / restore / requirement fields. `p_setpoint_mw` stays rectifier DC power. See [docs/dc-and-shunt-ends-0.14.4.md](docs/dc-and-shunt-ends-0.14.4.md). Current readers reject this stamp.
 
 **v0.14.3**: Trailing nullable `switched_shunts.shunt_control_mode` (`locked` / `discrete_voltage` / `continuous_voltage`) and `regulated_bus_id` (null = local). CIM / PSLF leave both null. MODSW ≥ 3 → null + `unknown_modsw`. Do not conflate with file-level `default_shunt_control_mode`.
 

@@ -2454,6 +2454,20 @@ mod tests {
             exc.params.iter().find(|(k, _)| k == "tr").map(|(_, v)| *v),
             Some(0.02)
         );
+        for row in &rows {
+            let mut seen = std::collections::BTreeSet::new();
+            for (key, _) in &row.params {
+                assert!(seen.insert(key.clone()), "duplicate dynamics key {key}");
+                let positional = key.strip_prefix('p').is_some_and(|rest| {
+                    !rest.is_empty() && rest.bytes().all(|c| c.is_ascii_digit())
+                });
+                assert!(
+                    !positional,
+                    "{} must not emit positional {key}",
+                    row.model_type
+                );
+            }
+        }
     }
 
     #[test]

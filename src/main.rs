@@ -34,7 +34,7 @@ use raptrix_cim_rs::rpf_writer::{
     write_complete_rpf_with_options,
 };
 
-const ENHANCE_LONG_ABOUT: &str = "Read an existing v0.14.4 .rpf, apply a JSON enhancement spec, and \
+const ENHANCE_LONG_ABOUT: &str = "Read an existing v0.14.5 .rpf, apply a JSON enhancement spec, and \
 write a new .rpf. Pure authoring: no schema is invented, and every table other than the ones the \
 spec touches is preserved unchanged.\n\n\
 Spec JSON shape:\n\
@@ -206,7 +206,7 @@ struct ConvertArgs {
 /// Arguments for the `enhance` subcommand.
 #[derive(Debug, clap::Args)]
 struct EnhanceArgs {
-    /// Input v0.14.4 `.rpf` file to enhance.
+    /// Input v0.14.5 `.rpf` file to enhance.
     #[arg(long)]
     input: PathBuf,
 

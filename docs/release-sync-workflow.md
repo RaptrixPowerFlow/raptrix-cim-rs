@@ -51,10 +51,10 @@ Run this workflow on any of the following changes:
 
 ## Versioning Rules
 
-- Current gate: readers accept **v0.14.4** / **0.14.4** only. **v0.15.0** is the first supported product freeze, not the v0.14.4 cut.
-- PATCH: non-structural fixes (bug fixes, docs, metadata text fixes)
-- MINOR: additive format changes (new optional fields/tables/metadata keys)
-- MAJOR: breaking wire-shape changes (required field or table rename/removal/reorder/type change)
+- Current gate: readers accept **v0.14.5** / **0.14.5** only. **v0.15.0** is the first supported product freeze, not this vocabulary cut.
+- PATCH: same tables and columns. Includes a locked `params` vocabulary change that rejects the previous stamp. No dual-read and no key alias.
+- MINOR: wire-shape changes (new required or optional fields/tables/metadata keys, or a type change). `v0.15.0` stays reserved for the product freeze.
+- MAJOR: breaking wire-shape changes (required field or table rename/removal/reorder/type change) once the contract leaves 0.x.
 - The v0.13.1 stamp was a one-release exception for trailing computational-load columns. It is not a precedent for the current gate.
 
 ## Canonical Release Steps

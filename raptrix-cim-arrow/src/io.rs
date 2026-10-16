@@ -133,7 +133,7 @@ pub struct RootWriteOptions {
     /// When true, append optional `contingency_sequences` table (v0.14.0+).
     pub include_contingency_sequences: bool,
     /// When true, append `dc_converters` (v0.14.4+). Defaults to true.
-    /// A v0.14.4 file that omits the table fails validation. Zero rows is valid.
+    /// A current file that omits the table fails validation. Zero rows is valid.
     pub include_dc_converters: bool,
 }
 
@@ -2046,7 +2046,7 @@ mod tests {
             .expect_err("reader should reject missing required nominal_kv fields");
         let message = format!("{err:#}");
         assert!(message.contains("missing non-nullable field 'to_nominal_kv'"));
-        assert_eq!(SCHEMA_VERSION, "v0.14.4");
+        assert_eq!(SCHEMA_VERSION, "v0.14.5");
         Ok(())
     }
 
@@ -2140,7 +2140,7 @@ mod tests {
                 ..Default::default()
             },
         )
-        .expect_err("v0.14.4 file must include dc_converters");
+        .expect_err("current file must include dc_converters");
         assert!(
             format!("{err:#}").contains("dc_converters"),
             "unexpected error: {err:#}"

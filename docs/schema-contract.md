@@ -3,13 +3,24 @@ Raptrix CIM-Arrow — High-performance open CIM profile by Raptrix Power
 Copyright (c) 2026 Raptrix Power
 -->
 
-# Schema Contract (Locked contract: v0.14.4 — CGMES 3.0+ Only)
+# Schema Contract (Locked contract: v0.14.5 — CGMES 3.0+ Only)
 
 This repository is the authoritative source of truth for the Raptrix Power Interchange (`.rpf`) wire contract used by CIM-first conversion pipelines.
 
-**v0.14.4** is the current contract. `SUPPORTED_RPF_VERSIONS` accepts **`v0.14.4` / `0.14.4` only**. Any other stamp is rejected. `v0.15.0` is reserved for the first supported product freeze.
+**v0.14.5** is the current contract. `SUPPORTED_RPF_VERSIONS` accepts **`v0.14.5` / `0.14.5` only**. Any other stamp, including v0.14.4, is rejected. Re-export. There is no key alias and no pad-forward. `v0.15.0` is reserved for the first supported product freeze.
 
-See [dc-and-shunt-ends-0.14.4.md](dc-and-shunt-ends-0.14.4.md). Switched-shunt control from v0.14.3 remains in force: do not implement Q-band / `discrete_reactive` in this revision, and do not conflate per-device `shunt_control_mode` with file-level `default_shunt_control_mode`.
+See [dc-and-shunt-ends-0.14.4.md](dc-and-shunt-ends-0.14.4.md) for the column shape this stamp inherits. Switched-shunt control from v0.14.3 remains in force: do not implement Q-band / `discrete_reactive` in this revision, and do not conflate per-device `shunt_control_mode` with file-level `default_shunt_control_mode`.
+
+## v0.14.5
+
+Same tables and columns as v0.14.4. The break is the locked `dynamics_models.params` vocabulary. A v0.14.4 file can hold either the old colliding names or the corrected names, so that stamp is no longer accepted.
+
+- Positional tail is `p1`..`pN` (1-based). `p0` is not a legal key.
+- When the record length matches `dyn_dictionary`, writers also store those names plus `params_named=1`, `dict_code`, `icon_count`, and `con_count`. A length mismatch stays positional and sets `token_count_mismatch=1`.
+- Dictionary names must not equal `pN`, `iconN`, `conN`, or the provenance keys `source_dyr`, `source_dy`, `params_named`, `icon_count`, `con_count`, `dict_code`, `token_count_mismatch`, `source_cim_class`, `psse_equiv`, `model_mapped`.
+- `WTTQA1` power breakpoints are `pwr1`..`pwr4`. `spd1`..`spd4` stay. Do not read `p1`..`p4` as those breakpoints.
+- `classical_params` for `GENROU`, `GENROE`, `GENSAL`, `GENSAE`, and `GENCLS` comes from dictionary columns `H`, `D`, and `xd_prime`. `GENCLS` has no `xd_prime`.
+- CIM Dynamics writes dictionary or CIM attribute names plus provenance. It does not also write a positional `pN` copy of a named column.
 
 ## v0.14.4
 
@@ -367,8 +378,8 @@ The solver (`raptrix-core`) holds a **projection** of an `.rpf` — only the ele
 - The `.rpf` contract is forward compatible for additive changes only. Readers must ignore unknown trailing root columns and unknown file metadata keys.
 - Breaking file-format changes (required column rename/removal/reorder, required table rename/removal/reorder, type change for required fields) require a MAJOR contract bump.
 - Additive changes (new optional columns, new optional tables, new optional metadata keys) require at least a MINOR bump.
-- PATCH bumps are reserved for non-structural fixes: bug fixes, metadata text fixes, and documentation clarifications without wire-shape changes.
-- The v0.13.1 computational-load columns were a one-release stamp. Current readers accept `v0.14.4` / `0.14.4` only. `v0.15.0` is the first supported product freeze.
+- PATCH bumps keep the same tables and columns. That includes a locked `params` vocabulary change that makes the previous stamp unsafe. The previous stamp is not retained.
+- The v0.13.1 computational-load columns were a one-release stamp. Current readers accept `v0.14.5` / `0.14.5` only. `v0.15.0` is the first supported product freeze.
 
 ## 0.9.3 Nominal-kV Guidance
 
@@ -385,8 +396,8 @@ Every `.rpf` file must include:
 
 Current locked values:
 
-- `raptrix.version = v0.14.4` (writers). Readers accept `v0.14.4` / `0.14.4` only.
-- `raptrix.branding = Raptrix CIM-Arrow / Raptrix Power Interchange v0.14.4 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.`
+- `raptrix.version = v0.14.5` (writers). Readers accept `v0.14.5` / `0.14.5` only.
+- `raptrix.branding = Raptrix CIM-Arrow / Raptrix Power Interchange v0.14.5 - High-performance open CIM profile (CGMES 3.0+) by Raptrix Power. Copyright (c) 2026 Raptrix Power.`
 - `rpf.case_fingerprint = <required deterministic case identity fingerprint>`
 - `rpf.validation_mode = topology_only | solved_ready`
 - `rpf.case_mode = flat_start_planning | warm_start_planning | solved_snapshot | hour_ahead_advisory` (v0.8.4+, required; `hour_ahead_advisory` added in v0.9.0)
@@ -978,10 +989,18 @@ Dynamics population rules for downstream consumers:
 - When no generator-linked dynamics can be derived from DY or EQ, writers MAY emit a placeholder row and set `raptrix.features.dynamics_stub = true`.
 - `model_type` is an open string vocabulary. Writers MAY emit CIM class names (for example `SynchronousMachineDynamics`) or extension names (for example `raptrix.smart_valve.v1`).
 - For non-CIM extensions, writers SHOULD use namespaced `model_type` values and namespaced `params` keys to avoid collisions.
+- Positional keys are `p1`..`pN` (1-based). `p0` is not legal. CIM Dynamics does not emit a positional copy of a named column.
+- When `params_named = 1`, dictionary names are also present. Those names must not collide with `pN`, `iconN`, `conN`, or provenance keys. `WTTQA1` breakpoints are `pwr1`..`pwr4`.
+- A length mismatch stays positional and sets `token_count_mismatch = 1`.
+- `classical_params` for `GENROU`, `GENROE`, `GENSAL`, `GENSAE`, and `GENCLS` is filled from dictionary `H`, `D`, and `xd_prime` (`GENCLS` has no `xd_prime`).
 - Provenance keys currently emitted in `params` are:
   - `source_dy = 1.0` for DY-linked rows
+  - `source_dyr = 1.0` for PSS/E DYR rows
   - `source_eq_fallback = 1.0` for EQ fallback rows
   - `source_stub = 1.0` for placeholder rows
+  - `params_named`, `dict_code`, `icon_count`, `con_count` on dictionary rows
+  - `token_count_mismatch = 1.0` when a dictionary model’s token count does not match
+  - `source_cim_class`, `psse_equiv`, `model_mapped` on the CIM path
 
 ### facts_devices
 

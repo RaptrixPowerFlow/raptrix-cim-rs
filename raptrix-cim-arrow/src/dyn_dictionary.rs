@@ -192,9 +192,11 @@ const WTPTA1_CONS: &[&str] = &[
     "kiw", "kpw", "kic", "kpc", "kcc", "tp", "tetamax", "tetamin", "rtetamax", "rtetamin",
 ];
 const WTTQA1_ICONS: &[&str] = &["tflag"];
+// Power breakpoints are pwr1..pwr4. ANDES names them p1..p4, which collide
+// with the converter's positional keys params["p1"]..params["pN"].
 const WTTQA1_CONS: &[&str] = &[
-    "kpp", "kip", "tp", "twref", "temax", "temin", "p1", "spd1", "p2", "spd2", "p3", "spd3", "p4",
-    "spd4", "trate",
+    "kpp", "kip", "tp", "twref", "temax", "temin", "pwr1", "spd1", "pwr2", "spd2", "pwr3", "spd3",
+    "pwr4", "spd4", "trate",
 ];
 
 /// Named models. `code` is stable for a given `psse_name`.
@@ -398,5 +400,57 @@ mod tests {
         let m = lookup_psse("REECA1").unwrap();
         assert_eq!(m.cons[0], "vdip");
         assert!(m.icons.contains(&"remote_bus_id"));
+    }
+
+    #[test]
+    fn wttqa1_power_breakpoints_do_not_reuse_positional_keys() {
+        let m = lookup_psse("WTTQA1").unwrap();
+        assert_eq!(
+            &m.cons[6..14],
+            &[
+                "pwr1", "spd1", "pwr2", "spd2", "pwr3", "spd3", "pwr4", "spd4"
+            ]
+        );
+    }
+
+    #[test]
+    fn column_names_do_not_use_reserved_param_keys() {
+        const RESERVED: &[&str] = &[
+            "source_dyr",
+            "params_named",
+            "icon_count",
+            "con_count",
+            "dict_code",
+            "token_count_mismatch",
+            "source_dy",
+            "source_cim_class",
+            "psse_equiv",
+            "model_mapped",
+        ];
+        let reserved_shape = |name: &str, prefix: &str| {
+            let Some(rest) = name.get(prefix.len()..) else {
+                return false;
+            };
+            name.len() > prefix.len()
+                && name[..prefix.len()].eq_ignore_ascii_case(prefix)
+                && !rest.is_empty()
+                && rest.bytes().all(|c| c.is_ascii_digit())
+        };
+        for model in DYN_MODELS {
+            for name in model.icons.iter().chain(model.cons.iter()) {
+                assert!(
+                    !RESERVED.iter().any(|key| key.eq_ignore_ascii_case(name)),
+                    "{} column {name} reuses a metadata key",
+                    model.psse_name
+                );
+                assert!(
+                    !reserved_shape(name, "p")
+                        && !reserved_shape(name, "icon")
+                        && !reserved_shape(name, "con"),
+                    "{} column {name} collides with a positional key",
+                    model.psse_name
+                );
+            }
+        }
     }
 }
